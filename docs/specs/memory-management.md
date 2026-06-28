@@ -2,7 +2,7 @@
 
 ## Overview
 
-Three-layer memory architecture designed for high-throughput message processing with minimal allocation overhead.
+Three-layer memory architecture designed for high-throughput event processing with minimal allocation overhead.
 
 ```
 ┌──────────────────┐
@@ -76,15 +76,22 @@ static INTERN_TABLE: Lazy<InternTable> = Lazy::new(|| {
 ## Message Lifecycle
 
 ```
-1. flowrulz_msg_alloc(size)  → Slab pool returns buffer
-2. Write message JSON into slab buffer
-3. flowrulz_execute(plan, body)
-   ├─ Arena reset
-   ├─ VM dispatch loop (TypeGuard validates schema)
-   ├─ Span emitted per opcode
-   └─ Result in body
-4. Read result from body
-5. flowrulz_msg_release(body) → Buffer back to slab pool
+1. Event arrives (opaque payload bytes)
+2. flowrulz_execute(plan, body, msg_id, corr_id, trace_id, ...)
+   │
+   ├── Create ExecutionContext::from_body(body)
+   │   ├── event.id = msg_id
+   │   ├── event.metadata.correlation_id = corr_id
+   │   ├── event.metadata.trace_id = trace_id
+   │   └── event.metadata.partition/offset
+   │
+   ├── Arena reset
+   ├── VM dispatch loop (operates on ctx.body)
+   ├── Service calls store results in ctx.outputs
+   ├── Span emitted per opcode
+   ├── TypeGuard validates schema
+   │
+   └── Read result from ctx.body
 ```
 
 ## Span Ring Buffer

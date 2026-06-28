@@ -24,7 +24,7 @@ The Rust library is built as both `cdylib` and `rlib`. The `cdylib` (`libflowrul
 ## Test
 
 ```bash
-# All tests (Rust 86 + Go all packages)
+# All tests (Rust 111 + Go all packages)
 make test
 
 # Rust only
@@ -50,33 +50,37 @@ Criterion benchmarks: compile (5 DSL variants), VM execute, full pipeline, gate 
 ```
 rust/src/
 ├── lib.rs              # C FFI exports, module declarations
-├── bytecode/           # Instruction set, plan types, type system
+├── bytecode/           # Instruction set, plan types, event model, type system
 │   ├── mod.rs
+│   ├── event.rs        # Event, Mode, EventMetadata — universal message type
+│   ├── execution.rs    # ExecutionContext — event + body + variables + outputs
 │   ├── opcode.rs       # Opcode enum (0–22) + GateOp, ChunkMode, RetryStrategy
 │   ├── instruction.rs  # 8-byte packed Instruction
 │   ├── consts.rs       # ConstantPool
 │   ├── services.rs     # ServiceTable
-│   ├── dag_table.rs    # DAGTable + DAGFailurePolicy + MergeStrategy
+│   ├── dag_table.rs    # DAGTable + DAGNode + DAGFailurePolicy + MergeStrategy
 │   ├── mapexpr.rs      # MapExpr
-│   ├── resolved_type.rs# ResolvedType enum, FieldSchema, Schema
+│   ├── resolved_type.rs# ResolvedType enum (incl. Enum), FieldSchema, Schema
 │   └── plan.rs         # ExecutionPlan
 ├── dsl/                # Language toolchain
 │   ├── mod.rs
 │   ├── lexer.rs        # Tokenizer
 │   ├── parser.rs       # AST builder
 │   ├── optimizer.rs    # AST optimizations
-│   └── compiler.rs     # AST → ExecutionPlan (complexity scoring, schema)
+│   └── compiler.rs     # AST → ExecutionPlan (complexity scoring, schema, type checking)
 ├── executor/           # Virtual machine
-│   ├── mod.rs          # VM dispatch loop + TypeGuard handler
+│   ├── mod.rs          # VM dispatch loop + TypeGuard handler (operates on ExecutionContext)
+│   ├── context.rs      # Re-exports bytecode::execution::ExecutionContext
+│   ├── runtime.rs      # ExecutionRuntime — Chunk/Buffer orchestration
 │   ├── next.rs         # Service call + retry
 │   ├── parallel.rs     # Parallel fan-out
 │   ├── gate.rs         # Conditional branch
 │   ├── emit.rs         # Fire-and-forget
 │   ├── map.rs          # Field transformation
-│   ├── dag.rs          # DAG execution
+│   ├── dag.rs          # DAG execution (parent merging, failure policies, merge strategies)
 │   ├── chunk.rs        # Chunk processing
 │   ├── helpers.rs      # JSON utilities
-│   └── expr.rs         # Expression engine (21 builtins)
+│   └── expr.rs         # Expression engine (22 builtins)
 ├── ffi.rs              # extern "C" exports for Go bridge
 ├── tracing/            # Span ring buffer
 │   ├── mod.rs          # Span struct + thread_local buffer + emit_span
@@ -88,16 +92,21 @@ rust/src/
     └── intern.rs       # String interning
 
 go/
-├── cmd/flowrulz/           # Entry point (HTTP admin + consumer)
+├── cmd/flowrulz/           # Entry point (uses execnode package)
+├── flow/                   # Client SDK (Publish, Request, Execute, Stream)
+│   └── client.go
 └── internal/
     ├── bridge/             # cgo bindings to Rust FFI
     │   ├── bridge.go       # Go wrappers + sync.Map caller dispatch
     │   ├── caller_bridge.c # C helper for function pointer callback
     │   └── bridge_test.go  # Integration tests
     ├── engine/             # Rule lifecycle, versioning, lane routing, persistence
-    ├── flow/               # Flow orchestrator with state machine
+    ├── execnode/           # ExecutionNode: process wrapping engine + transport + admin
     ├── transport/          # Kafka consumer/producer
     ├── admin/              # HTTP API (rules CRUD, validate, promote, lanes)
+    ├── flow/               # Flow orchestrator with state machine
+    ├── registry/           # ServiceRegistry — service name → healthy endpoints, LB, health checks
+    ├── replyrouter/        # ReplyRouter — correlation ID → pending request channel, timeout/cleanup
     ├── observability/      # Metrics counters
     └── reliability/        # Circuit breaker
 ```

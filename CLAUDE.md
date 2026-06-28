@@ -23,6 +23,8 @@ make clean     # cargo clean + remove binary
 - C FFI prefix: `flowrulz_` — all exported functions use `#[no_mangle] pub extern "C"`
 - Bridge: `sync.Map callerMap` + `atomic.Uint64 nextExecID` — no mutex in hot path
 - Span tracing: `thread_local!` ring buffer, lock-free atomic head/tail, drained via `flowrulz_get_spans`
+- **Service Registry** (`go/internal/registry/`): Maps service names → healthy endpoints, round-robin/random/least-loaded LB, passive+active health checks
+- **Reply Router** (`go/internal/replyrouter/`): Per-node pending request tracker by correlation_id, timeout-based cleanup, duplicate detection
 
 ## Key Layers
 
@@ -40,6 +42,19 @@ make clean     # cargo clean + remove binary
 | ExecNode | `go/internal/execnode/` | Data plane process: engine + transport + admin + lifecycle |
 | Admin | `go/internal/admin/` | HTTP API with API key auth, rule CRUD, validate, lanes |
 | SDK | `go/flow/` | Client SDK — `Publish`, `Request`, `Execute`, `Stream` |
+| Registry | `go/internal/registry/` | `ServiceRegistry` — service name → healthy endpoints, LB, health checks |
+| ReplyRouter | `go/internal/replyrouter/` | `ReplyRouter` — correlation ID → pending request channel, timeout/cleanup |
+
+## Cluster Model
+
+- **Single-leader cluster** — no Raft, no Paxos. Leader = lowest-ID alive node.
+- **Membership**: Seed-based discovery; heartbeat via `_flowrulz_members` internal Kafka topic (compacted).
+- **Leader election**: Sort alive nodes by ID ascending — lowest is leader. On leader failure, next-lowest promotes itself.
+- **Plan distribution**: Leader publishes ExecutionPlan to `_flowrulz_plans` → followers ACK on `_flowrulz_acks` → leader activates.
+- **Partition ownership**: Kafka consumer group protocol per lane. Leader tracks partition → node mapping.
+- **Service Registry**: Nodes register services in heartbeat. Leader aggregates → publishes combined registry.
+- **Reply Router**: Per-node component tracking pending request/reply by correlation_id. Replies hash to origin node's partition.
+- **Node lifecycle**: Join (announce → catch-up → consume), Drain (rebalance → drain execs → leave), Crash (rejoin with same ID → catch-up).
 
 ## Conventions
 

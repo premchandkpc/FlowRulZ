@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Rust core exposes a C-compatible FFI interface for the Go I/O shell. All functions use `extern "C"` with C-compatible types.
+The Rust core exposes a C-compatible FFI interface for the Go data plane. All functions use `extern "C"` with C-compatible types. The VM operates on `ExecutionContext` (Event + body + variables + outputs) rather than a raw JSON body.
 
 ## Memory Ownership Convention
 
@@ -24,7 +24,7 @@ int flowrulz_compile(
 );
 ```
 
-Returns a bincode-serialized `ExecutionPlan`.
+Returns a bincode-serialized `ExecutionPlan`. The compiler pipeline: lex → parse → optimize → compile (with type checking) → bincode serialize.
 
 ### Execution
 
@@ -43,6 +43,8 @@ int flowrulz_execute(
 );
 ```
 
+Creates an `ExecutionContext` from the body bytes and event metadata (msg_id → event.id, corr_id → event.metadata.correlation_id, trace_id → event.metadata.trace_id, partition/offset → event metadata). Runs the VM on the context, returns `ctx.body` in the output buffer.
+
 Optional context params (`msg_id`, `corr_id`, `trace_id`) default to empty when null.
 
 ### Callback Signature
@@ -56,7 +58,7 @@ int caller_callback(
 );
 ```
 
-The `ctx_id` matches the one passed to `flowrulz_execute`. Service names are interned; the host can look up the name via `flowrulz_intern_lookup`.
+The `ctx_id` matches the one passed to `flowrulz_execute`. Service names are interned; the host can look up the name via `flowrulz_intern_lookup`. The response replaces `ctx.body` and is also stored in `ctx.outputs["service_name"]`.
 
 ### Message Memory
 

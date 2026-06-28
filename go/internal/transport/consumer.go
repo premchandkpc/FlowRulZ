@@ -5,16 +5,16 @@ import (
 	"log"
 )
 
-type Handler func(ctx context.Context, msg []byte) ([]byte, error)
-
 type Consumer struct {
-	handler Handler
+	handler MessageHandler
 	topic   string
 	msgCh   chan []byte
 	stopCh  chan struct{}
 }
 
-func NewConsumer(topic string, handler Handler) *Consumer {
+func (c *Consumer) Topic() string { return c.topic }
+
+func NewConsumer(topic string, handler MessageHandler) *Consumer {
 	return &Consumer{
 		handler: handler,
 		topic:   topic,

@@ -1,15 +1,45 @@
 # Kafka Semantics Specification
 
-**Status:** Reference for transport implementation. The Go transport layer is responsible for all Kafka concerns; the Rust VM is transport-agnostic.
+**Status:** Kafka is the durable event log for FlowRulZ. FlowRulZ is a consumer group with programmable execution. The Control Plane manages rules; Data Plane nodes consume from Kafka, execute rules, and produce results.
+
+## Architecture
+
+```
+                    FlowRulZ Cluster
+
+         ┌──────────────────────────────┐
+         │       Control Plane          │
+         │  Rule Registry + Compiler     │
+         │  Scheduler + Leader Election   │
+         └──────────┬───────────────────┘
+                    │ distribute plans
+                    ▼
+         ┌──────────────────────────────┐
+         │        Data Plane            │
+         │  Partition Workers           │
+         │  ExecutionRuntime            │
+         │  Service Callers             │
+         └──────────┬───────────────────┘
+                    │ consume / produce
+                    ▼
+              Kafka Cluster
+         ┌──────────────────┐
+         │  Topics          │
+         │  Partitions      │
+         │  Replication     │
+         └──────────────────┘
+```
+
+FlowRulZ does NOT implement its own storage, WAL, or replication. Kafka handles durability. FlowRulZ handles routing, execution, and reply handling.
 
 ## Consumer Groups
 
 ```
 flowrulz
 └── consumer-group
-    ├── partition-0 ── worker-0 ── rule-vm
-    ├── partition-1 ── worker-1 ── rule-vm
-    └── partition-2 ── worker-2 ── rule-vm
+    ├── partition-0 ── ExecutionNode worker-0 ── Runtime
+    ├── partition-1 ── ExecutionNode worker-1 ── Runtime
+    └── partition-2 ── ExecutionNode worker-2 ── Runtime
 ```
 
 - One consumer group per deployment
@@ -41,7 +71,7 @@ Lane assignment is done in `engine.Deploy()` via `flowrulz_plan_complexity` FFI.
 ### Commit Timing
 
 ```
-Message Received → Execute Rule → Produce Output → Commit Offset
+Message Received → Create ExecutionContext → Execute Rule → Produce Output → Commit Offset
 ```
 
 ## Batch Poll
@@ -107,6 +137,7 @@ Retry topic naming: `{input-topic}-retry-{delay}s`
 - Messages from the same partition processed sequentially by the same worker
 - No reordering within a partition
 - Output produced with same key as input to preserve partition affinity
+- Event id and correlation_id propagate through the system for tracing
 
 ## Health Checks
 
@@ -119,4 +150,4 @@ GET /health
 
 ## Admin API
 
-See `docs/specs/admin-api.md` or the Admin section in `CLAUDE.md`.
+See `docs/specs/flow-architecture.md` for Admin API details.

@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `ExecutionPlan` is the compiled output of the DSL compiler. Bincode-serialized for FFI transfer.
+The `ExecutionPlan` is the compiled output of the DSL compiler. Bincode-serialized for FFI transfer. Every operation — publish, request, rule execution — becomes an ExecutionPlan. The difference is only which bytecode gets emitted.
 
 ## Instruction Encoding
 
@@ -69,7 +69,7 @@ pub struct Instruction {
 
 ### TypeGuard
 
-Opcode 22 validates the message body against the schema stored in `ExecutionPlan.schema`. When `strict=1`, a missing schema produces an error. Reads the plan's schema directly (no field/value operands).
+Opcode 22 validates the message body against the schema stored in `ExecutionPlan.schema`. When `strict=1`, a missing schema produces an error. Reads the plan's schema directly (no field/value operands). Validates enum values against allowed set.
 
 The schema is also used by the compiler's pre-pass for **compile-time type inference** — validating Gate operators and Map expressions against declared field types before any bytecode is emitted (`type_check_gate()` and `type_check_map()` in `rust/src/dsl/compiler.rs`).
 
@@ -92,7 +92,43 @@ pub struct ExecutionPlan {
 }
 ```
 
-### ConstantPool
+## Event & ExecutionContext
+
+The VM operates on an `ExecutionContext` rather than a raw body:
+
+```rust
+pub struct Event {
+    pub id: String,
+    pub topic: String,
+    pub payload: Vec<u8>,
+    pub headers: HashMap<String, String>,
+    pub metadata: EventMetadata,
+}
+
+pub enum Mode {
+    Publish = 0,
+    Request = 1,
+    Reply = 2,
+    Stream = 3,
+    Workflow = 4,
+    Internal = 5,
+}
+
+pub struct ExecutionContext {
+    pub event: Event,
+    pub body: Vec<u8>,
+    pub variables: HashMap<String, Vec<u8>>,
+    pub outputs: HashMap<String, Vec<u8>>,
+    pub headers: HashMap<String, String>,
+    pub failed: bool,
+    pub errors: Vec<String>,
+    pub hop_count: u16,
+    pub retry_count: u32,
+    pub deadline_ms: u64,
+}
+```
+
+## ConstantPool
 
 ```rust
 pub struct ConstantPool {
@@ -101,7 +137,7 @@ pub struct ConstantPool {
 }
 ```
 
-### ServiceTable
+## ServiceTable
 
 ```rust
 pub struct ServiceTable {
@@ -115,7 +151,7 @@ pub struct ServiceEntry {
 }
 ```
 
-### DAGTable
+## DAGTable
 
 ```rust
 pub struct DAGTable {
@@ -126,6 +162,12 @@ pub struct DAGTable {
     pub node_timeouts: Vec<u32>,
     pub merge_strategy: MergeStrategy,
     pub distributed: bool,
+}
+
+pub struct DAGNode {
+    pub id: u16,
+    pub service_id: u16,
+    pub parent_ids: Vec<u16>,
 }
 
 pub enum DAGFailurePolicy {
@@ -142,7 +184,9 @@ pub enum MergeStrategy {
 }
 ```
 
-### Schema & ResolvedType
+`parent_ids` on DAGNode is populated during compile from the deps map, with `#[serde(default)]` for backward compatibility.
+
+## Schema & ResolvedType
 
 ```rust
 pub struct Schema {
@@ -164,9 +208,11 @@ pub enum ResolvedType {
     Array,
     Null,
     Any,
+    Enum(Vec<String>),  // enum[val1|val2|...]
 }
+```
 
-**Compile-time use:** `Schema` is read by the compiler's pre-pass to type-check Gate operators (`type_check_gate()`) and Map expressions (`type_check_map()`) before final bytecode emission. See `rust/src/dsl/compiler.rs`.
+**Compile-time use:** `Schema` is read by the compiler's pre-pass to type-check Gate operators (`type_check_gate()`) and Map expressions (`type_check_map()`) before final bytecode emission. Enum values are validated at runtime by the TypeGuard opcode.
 
 ### RetryConfig / ChunkConfig
 

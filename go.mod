@@ -1,3 +1,3 @@
-module flowRulZ
+module flowrulz
 
-go 1.22
+go 1.26.4

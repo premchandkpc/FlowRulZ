@@ -3,7 +3,7 @@ package engine
 import (
 	"sync"
 
-	"flowRulZ/go/internal/bridge"
+	"flowrulz/go/internal/bridge"
 )
 
 type Rule struct {

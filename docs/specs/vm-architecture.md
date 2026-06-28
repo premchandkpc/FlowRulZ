@@ -2,7 +2,7 @@
 
 ## Overview
 
-The FlowRule VM is a **register-less, stackless bytecode interpreter** that walks a linear `Vec<Instruction>` with an instruction pointer (IP). It processes a single JSON message through a compiled `ExecutionPlan`.
+The FlowRulZ VM is a **register-less, stackless bytecode interpreter** that walks a linear `Vec<Instruction>` with an instruction pointer (IP). It processes a single JSON message through a compiled `ExecutionPlan`.
 
 ## Execution Model
 

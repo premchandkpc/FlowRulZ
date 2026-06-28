@@ -46,6 +46,11 @@ make clean     # cargo clean + remove binary
 - Schema DSL: `schema:{field:type,!required_field:type}` — emits `TypeGuard` opcode (22)
 - Compile-time type inference: when `schema:{...}` is present, the compiler pre-pass validates Gate operators (`type_check_gate()`) and Map expressions (`type_check_map()`) against declared field types, emitting `TypeMismatch` errors for incompatible operations
 - DAGTable fields: `failure_policy` (AbortAll/ContinueOthers/SkipDependents), `node_timeouts`, `merge_strategy` (LastWins/ArrayConcat/DeepMerge/ExplicitMap), `distributed`
+- DAGNode has `parent_ids: Vec<u16>` — populated during compile from deps, used at runtime to merge parent results into downstream node input
+- DAG exec_dag.rs implements all three failure policies: AbortAll (immediate error), ContinueOthers (record failure, continue), SkipDependents (skip nodes with failed parents)
+- DAG merge_dag_results implements MergeStrategy: LastWins (keyed JSON object), ArrayConcat (JSON array), DeepMerge (recursive), ExplicitMap (same as LastWins, no explicit map config yet)
+- Schema DSL: `enum[val1|val2|...]` syntax for `ResolvedType::Enum(Vec<String>)`
+- Persistence: atomic write via write-to-temp-then-rename pattern (`saveRules()` uses `os.WriteFile` to `.tmp` then `os.Rename`)
 
 ## Expression Builtins
 

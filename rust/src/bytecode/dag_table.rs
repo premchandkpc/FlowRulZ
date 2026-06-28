@@ -2,6 +2,8 @@
 pub struct DAGNode {
     pub service_id: u16,
     pub layer: u8,
+    #[serde(default)]
+    pub parent_ids: Vec<u16>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]

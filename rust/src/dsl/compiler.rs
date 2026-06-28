@@ -403,12 +403,25 @@ impl Compiler {
         let layers = self.topological_sort(&deps);
         let mut dag_table = crate::bytecode::dag_table::DAGTable::new();
 
+        // Build a reverse lookup: node_name -> service_id (needed for parent_ids)
+        let mut node_svc_ids: HashMap<String, u16> = HashMap::new();
         for (layer_idx, layer) in layers.iter().enumerate() {
             for node_name in layer {
                 let svc_id = self.resolve_service(plan, node_name);
+                node_svc_ids.insert(node_name.clone(), svc_id);
+                let parent_ids: Vec<u16> = deps
+                    .get(node_name)
+                    .map(|parents| {
+                        parents
+                            .iter()
+                            .filter_map(|p| node_svc_ids.get(p).copied())
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 dag_table.nodes.push(crate::bytecode::dag_table::DAGNode {
                     service_id: svc_id,
                     layer: layer_idx as u8,
+                    parent_ids,
                 });
             }
             let svc_layer: Vec<u16> = layer
@@ -558,7 +571,7 @@ impl Compiler {
             let required = seg.starts_with('!');
             let name_part = if required { &seg[1..] } else { seg };
             let parts: Vec<&str> = name_part.split(':').collect();
-            if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
+            if parts.len() < 2 || parts[0].is_empty() || parts[1].is_empty() {
                 return Err(CompileError::SchemaParseError(format!(
                     "invalid field spec: '{}'",
                     seg
@@ -566,20 +579,36 @@ impl Compiler {
             }
             let name = parts[0].trim().to_string();
             let type_str = parts[1].trim().to_lowercase();
-            let r#type = match type_str.as_str() {
-                "string" => ResolvedType::String,
-                "int" => ResolvedType::Integer,
-                "float" => ResolvedType::Float,
-                "bool" => ResolvedType::Boolean,
-                "object" => ResolvedType::Object,
-                "array" => ResolvedType::Array,
-                "null" => ResolvedType::Null,
-                "any" => ResolvedType::Any,
-                _ => {
+            let r#type = if type_str.starts_with("enum[") && type_str.ends_with(']') {
+                let inner = &type_str[5..type_str.len() - 1];
+                let variants: Vec<String> = inner
+                    .split('|')
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty())
+                    .collect();
+                if variants.is_empty() {
                     return Err(CompileError::SchemaParseError(format!(
-                        "unknown type '{}' for field '{}'",
-                        type_str, name
+                        "empty enum variants for field '{}'",
+                        name
                     )));
+                }
+                ResolvedType::Enum(variants)
+            } else {
+                match type_str.as_str() {
+                    "string" => ResolvedType::String,
+                    "int" => ResolvedType::Integer,
+                    "float" => ResolvedType::Float,
+                    "bool" => ResolvedType::Boolean,
+                    "object" => ResolvedType::Object,
+                    "array" => ResolvedType::Array,
+                    "null" => ResolvedType::Null,
+                    "any" => ResolvedType::Any,
+                    _ => {
+                        return Err(CompileError::SchemaParseError(format!(
+                            "unknown type '{}' for field '{}'",
+                            type_str, name
+                        )));
+                    }
                 }
             };
             fields.push(FieldSchema { name, r#type, required });
@@ -884,6 +913,77 @@ mod tests {
         let result = compile_str(
             "schema:{id:string} dag:{A:[B]} g:id!=null e:audit",
             "tc-dag-schema",
+        );
+        assert!(result.is_ok());
+    }
+
+    // --- Enum type tests ---
+
+    #[test]
+    fn test_compile_schema_enum() {
+        let plan = compile_str(
+            "schema:{role:enum[admin|user|guest]} n:svc",
+            "schema-enum",
+        )
+        .unwrap();
+        let schema = plan.schema.as_ref().expect("should have schema");
+        assert_eq!(schema.fields.len(), 1);
+        assert_eq!(schema.fields[0].name, "role");
+        match &schema.fields[0].r#type {
+            ResolvedType::Enum(variants) => {
+                assert_eq!(variants.len(), 3);
+                assert!(variants.contains(&"admin".to_string()));
+                assert!(variants.contains(&"user".to_string()));
+                assert!(variants.contains(&"guest".to_string()));
+            }
+            _ => panic!("expected Enum type"),
+        }
+    }
+
+    #[test]
+    fn test_compile_schema_enum_empty_error() {
+        let result = compile_str(
+            "schema:{role:enum[]} n:svc",
+            "schema-enum-empty",
+        );
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), CompileError::SchemaParseError(_)));
+    }
+
+    #[test]
+    fn test_compile_schema_enum_required() {
+        let plan = compile_str(
+            "schema:{!role:enum[admin|user]} n:svc",
+            "schema-enum-req",
+        )
+        .unwrap();
+        let schema = plan.schema.as_ref().expect("should have schema");
+        assert!(schema.fields[0].required);
+        match &schema.fields[0].r#type {
+            ResolvedType::Enum(variants) => {
+                assert_eq!(variants.len(), 2);
+            }
+            _ => panic!("expected Enum type"),
+        }
+    }
+
+    #[test]
+    fn test_type_check_gate_enum_ordering_error() {
+        // enum doesn't support ordering
+        let result = compile_str(
+            "schema:{role:enum[admin|user]} g:role>admin n:svc",
+            "tc-enum-ordering",
+        );
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), CompileError::TypeMismatch(_)));
+    }
+
+    #[test]
+    fn test_type_check_gate_enum_eq_ok() {
+        // == works on enum
+        let result = compile_str(
+            "schema:{role:enum[admin|user]} g:role==admin n:svc",
+            "tc-enum-eq",
         );
         assert!(result.is_ok());
     }

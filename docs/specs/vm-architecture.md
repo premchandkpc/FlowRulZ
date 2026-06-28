@@ -18,13 +18,14 @@ The FlowRulZ VM is a **register-less, stackless bytecode interpreter** that walk
                     └─────┬──────┘
                           │
                     ┌─────▼──────────────────┐
-                    │  switch(opcode) {       │
-                    │    Next → exec_next()   │
-                    │    Gate → exec_gate()   │
-                    │    Map  → exec_map()    │
-                    │    TypeGuard → validate │
-                    │    ...                  │
-                    │  }                      │
+                    │  switch(opcode) {        │
+                    │    Next → exec_next()    │
+                    │    Async → exec_next(async) │
+                    │    Gate → exec_gate()    │
+                    │    Map  → exec_map()     │
+                    │    TypeGuard → validate  │
+                    │    ...                   │
+                    │  }                       │
                     └────────────────────────┘
 ```
 

@@ -286,6 +286,7 @@ Attaches a type schema to the pipeline. The compiler emits a `TypeGuard` opcode 
 | `array` | `ResolvedType::Array` |
 | `null` | `ResolvedType::Null` |
 | `any` | `ResolvedType::Any` |
+| `enum[val1\|val2\|...]` | `ResolvedType::Enum(Vec<String>)` |
 
 Fields prefixed with `!` are required (error if missing). Non-required fields default to `Null` when absent.
 

@@ -151,7 +151,12 @@ func (e *Engine) saveRules() {
 	if err != nil {
 		return
 	}
-	os.WriteFile(e.persistPath, data, 0644)
+	// Atomic write: write to temp file then rename to prevent corruption on crash
+	tmpPath := e.persistPath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+		return
+	}
+	os.Rename(tmpPath, e.persistPath)
 }
 
 func (e *Engine) Deploy(id, dsl string) error {

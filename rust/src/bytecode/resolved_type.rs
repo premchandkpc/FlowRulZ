@@ -8,6 +8,7 @@ pub enum ResolvedType {
     Boolean,
     Object,
     Array,
+    Enum(Vec<String>),
     Null,
     Any,
 }
@@ -61,6 +62,10 @@ impl ResolvedType {
             ResolvedType::Boolean => value.is_boolean(),
             ResolvedType::Object => value.is_object(),
             ResolvedType::Array => value.is_array(),
+            ResolvedType::Enum(variants) => value
+                .as_str()
+                .map(|s| variants.iter().any(|v| v == s))
+                .unwrap_or(false),
             ResolvedType::Null => value.is_null(),
             ResolvedType::Any => true,
         }

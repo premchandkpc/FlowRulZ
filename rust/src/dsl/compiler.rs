@@ -18,6 +18,7 @@ pub enum CompileError {
     UnknownLabel(String),
     UnterminatedPipeline(String),
     SchemaParseError(String),
+    TypeMismatch(String),
 }
 
 impl fmt::Display for CompileError {
@@ -33,6 +34,7 @@ impl fmt::Display for CompileError {
             CompileError::UnknownLabel(l) => write!(f, "unknown label: {}", l),
             CompileError::UnterminatedPipeline(s) => write!(f, "unterminated pipeline: {}", s),
             CompileError::SchemaParseError(s) => write!(f, "schema parse error: {}", s),
+            CompileError::TypeMismatch(s) => write!(f, "type mismatch: {}", s),
         }
     }
 }
@@ -56,6 +58,31 @@ impl Compiler {
         rule_id: &str,
     ) -> Result<ExecutionPlan, CompileError> {
         let mut plan = ExecutionPlan::new(rule_id);
+
+        // Pre-pass: extract and parse schema for type checking
+        let mut parsed_schema: Option<Schema> = None;
+        for node in &pipeline.nodes {
+            if let ASTNode::Schema(body) = node {
+                let schema = self.compile_schema(body)?;
+                parsed_schema = Some(schema);
+                break;
+            }
+        }
+
+        // Type-checking pass: validate Gate and Map compatibility against schema
+        if let Some(ref schema) = parsed_schema {
+            for node in &pipeline.nodes {
+                match node {
+                    ASTNode::Gate { field, op, value } => {
+                        Self::type_check_gate(schema, field, op, value)?;
+                    }
+                    ASTNode::Map(expr) => {
+                        Self::type_check_map(schema, expr)?;
+                    }
+                    _ => {}
+                }
+            }
+        }
 
         let mut labels: HashMap<String, usize> = HashMap::new();
         let mut instructions: Vec<Instruction> = Vec::new();
@@ -183,13 +210,17 @@ impl Compiler {
                     let dag_id = self.compile_dag(&mut plan, body)?;
                     instructions.push(Instruction::dag(dag_id));
                 }
-                ASTNode::Schema(body) => {
-                    let schema = self.compile_schema(body)?;
-                    plan.schema = Some(schema);
+                ASTNode::Schema(_body) => {
+                    // Schema already parsed in pre-pass; just emit type guard
                     instructions.push(Instruction::type_guard(1));
                 }
                 ASTNode::Pipe => {}
             }
+        }
+
+        // Set schema from pre-pass
+        if let Some(schema) = parsed_schema {
+            plan.schema = Some(schema);
         }
 
         // Second pass: attach pending retry to preceding Next/Async
@@ -215,6 +246,96 @@ impl Compiler {
 
         plan.complexity_score = calc_complexity(&plan);
         Ok(plan)
+    }
+
+    /// Type-check a Gate node against schema.
+    /// Returns TypeMismatch error if the operator is incompatible with the field type.
+    fn type_check_gate(
+        schema: &Schema,
+        field: &str,
+        op: &str,
+        _value: &str,
+    ) -> Result<(), CompileError> {
+        let field_type = match schema.field_type(field) {
+            Some(t) => t,
+            None => return Ok(()), // field not in schema, skip check
+        };
+        match op {
+            "==" | "!=" => Ok(()), // equality works on all types
+            ">" | "<" | ">=" | "<=" => {
+                if !field_type.supports_ordering() {
+                    Err(CompileError::TypeMismatch(format!(
+                        "operator '{op}' requires numeric or string type, but field '{field}' has type {ft:?}",
+                        op = op, field = field, ft = field_type
+                    )))
+                } else {
+                    Ok(())
+                }
+            }
+            "contains" => {
+                if !field_type.supports_contains() {
+                    Err(CompileError::TypeMismatch(format!(
+                        "operator 'contains' requires string or array type, but field '{field}' has type {ft:?}",
+                        field = field, ft = field_type
+                    )))
+                } else {
+                    Ok(())
+                }
+            }
+            _ => Ok(()), // unknown operator, let runtime handle it
+        }
+    }
+
+    /// Type-check a Map expression against schema for basic compatibility.
+    fn type_check_map(schema: &Schema, expr: &str) -> Result<(), CompileError> {
+        // Extract the right-hand side of the map (after '=')
+        let rhs = if let Some(eq_pos) = expr.find('=') {
+            expr[eq_pos + 1..].trim()
+        } else {
+            expr.trim()
+        };
+        if rhs.is_empty() {
+            return Ok(());
+        }
+
+        // Check for `concat()` function calls: all field arguments must be strings
+        if rhs.starts_with("concat(") && rhs.ends_with(')') {
+            let args_str = &rhs[7..rhs.len() - 1];
+            for arg in args_str.split(',') {
+                let arg = arg.trim();
+                if arg.starts_with('.') {
+                    let field_name = &arg[1..];
+                    if let Some(ft) = schema.field_type(field_name) {
+                        if !matches!(ft, ResolvedType::String) {
+                            return Err(CompileError::TypeMismatch(format!(
+                                "concat() requires string type, but field '{field_name}' has type {ft:?}",
+                                field_name = field_name, ft = ft
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also check `+` operator (used in expression syntax without spaces)
+        if rhs.contains('+') {
+            let parts: Vec<&str> = rhs.split('+').collect();
+            for part in &parts {
+                let part = part.trim();
+                if part.starts_with('.') {
+                    let field_name = &part[1..];
+                    if let Some(ft) = schema.field_type(field_name) {
+                        if !matches!(ft, ResolvedType::String) {
+                            return Err(CompileError::TypeMismatch(format!(
+                                "concat '+' requires string type, but field '{field_name}' has type {ft:?}",
+                                field_name = field_name, ft = ft
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     fn resolve_service(&self, plan: &mut ExecutionPlan, name: &str) -> u16 {
@@ -609,6 +730,160 @@ mod tests {
         let result = compile_str(
             "t500 n:validate t1000 p:fraud,inventory c f:dlq n:fulfill e:notify,analytics",
             "full-test",
+        );
+        assert!(result.is_ok());
+    }
+
+    // --- Type-checking tests ---
+
+    #[test]
+    fn test_type_check_gate_ordering_on_numeric() {
+        let result = compile_str(
+            "schema:{amount:float} g:amount>10000 n:svc",
+            "tc-ordering-num",
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_type_check_gate_ordering_on_string() {
+        let result = compile_str(
+            "schema:{name:string} g:name>\"m\" n:svc",
+            "tc-ordering-str",
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_type_check_gate_ordering_on_bool_error() {
+        let result = compile_str(
+            "schema:{flag:bool} g:flag>true n:svc",
+            "tc-ordering-bool",
+        );
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), CompileError::TypeMismatch(_)));
+    }
+
+    #[test]
+    fn test_type_check_gate_ordering_on_object_error() {
+        let result = compile_str(
+            "schema:{data:object} g:data>x n:svc",
+            "tc-ordering-obj",
+        );
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), CompileError::TypeMismatch(_)));
+    }
+
+    #[test]
+    fn test_type_check_gate_equals_on_any_type() {
+        // ==/!= must work on all types
+        let result = compile_str(
+            "schema:{flag:bool} g:flag==true n:svc",
+            "tc-eq-bool",
+        );
+        assert!(result.is_ok());
+
+        let result = compile_str(
+            "schema:{data:object} g:data==null n:svc",
+            "tc-eq-obj",
+        );
+        assert!(result.is_ok());
+
+        let result = compile_str(
+            "schema:{tags:array} g:tags!=null n:svc",
+            "tc-eq-arr",
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_type_check_gate_contains_on_string() {
+        let result = compile_str(
+            "schema:{name:string} g:name.containssmith n:svc",
+            "tc-contains-str",
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_type_check_gate_contains_on_array() {
+        let result = compile_str(
+            "schema:{tags:array} g:tags.containsurgent n:svc",
+            "tc-contains-arr",
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_type_check_gate_contains_on_numeric_error() {
+        let result = compile_str(
+            "schema:{amount:float} g:amount.containsx n:svc",
+            "tc-contains-num",
+        );
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), CompileError::TypeMismatch(_)));
+    }
+
+    #[test]
+    fn test_type_check_gate_field_not_in_schema() {
+        // Field not in schema should be allowed (dynamic)
+        let result = compile_str(
+            "schema:{name:string} g:unknown>5 n:svc",
+            "tc-unknown-field",
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_type_check_no_schema_skips_validation() {
+        // Without schema, all gates should compile
+        let result = compile_str(
+            "g:amount>10000 n:svc",
+            "tc-no-schema-ordering",
+        );
+        assert!(result.is_ok());
+
+        let result = compile_str(
+            "g:flag==true n:svc",
+            "tc-no-schema-eq",
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_type_check_map_concat_string() {
+        // concat() is how map expressions combine strings (not +, which doesn't lex)
+        let result = compile_str(
+            "schema:{first:string,last:string} m:full=concat(.first,.last) n:svc",
+            "tc-map-concat-str",
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_type_check_map_concat_non_string_error() {
+        let result = compile_str(
+            "schema:{amount:float,last:string} m:full=concat(.amount,.last) n:svc",
+            "tc-map-concat-num",
+        );
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), CompileError::TypeMismatch(_)));
+    }
+
+    #[test]
+    fn test_type_check_map_no_concat_skips() {
+        let result = compile_str(
+            "schema:{x:float} m:out=.x n:svc",
+            "tc-map-no-concat",
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_type_check_with_dag_and_schema() {
+        let result = compile_str(
+            "schema:{id:string} dag:{A:[B]} g:id!=null e:audit",
+            "tc-dag-schema",
         );
         assert!(result.is_ok());
     }

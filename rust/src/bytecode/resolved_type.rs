@@ -65,4 +65,22 @@ impl ResolvedType {
             ResolvedType::Any => true,
         }
     }
+
+    /// Returns true if this type supports ordering operators (>, <, >=, <=).
+    pub fn supports_ordering(&self) -> bool {
+        matches!(
+            self,
+            ResolvedType::Integer | ResolvedType::Float | ResolvedType::String
+        )
+    }
+
+    /// Returns true if this type supports the `contains` operator.
+    pub fn supports_contains(&self) -> bool {
+        matches!(self, ResolvedType::String | ResolvedType::Array)
+    }
+
+    /// Returns true if this type is numeric (Integer or Float).
+    pub fn is_numeric(&self) -> bool {
+        matches!(self, ResolvedType::Integer | ResolvedType::Float)
+    }
 }

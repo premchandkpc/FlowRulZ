@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"flowrulz/go/internal/engine"
+	"github.com/premchandkpc/FlowRulZ/go/internal/engine"
 )
 
 func TestHealth(t *testing.T) {

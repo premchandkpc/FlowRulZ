@@ -5,7 +5,7 @@ import (
 	"log"
 	"net/http"
 
-	"flowrulz/go/internal/engine"
+	"github.com/premchandkpc/FlowRulZ/go/internal/engine"
 )
 
 type Server struct {

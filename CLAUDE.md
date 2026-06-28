@@ -44,6 +44,7 @@ make clean     # cargo clean + remove binary
 - Lane routing: score <10 → fast, ≤50 → normal, >50 → heavy
 - Versioned plans with `ActiveExec sync.WaitGroup` — Add before bridge.Execute, Done after
 - Schema DSL: `schema:{field:type,!required_field:type}` — emits `TypeGuard` opcode (22)
+- Compile-time type inference: when `schema:{...}` is present, the compiler pre-pass validates Gate operators (`type_check_gate()`) and Map expressions (`type_check_map()`) against declared field types, emitting `TypeMismatch` errors for incompatible operations
 - DAGTable fields: `failure_policy` (AbortAll/ContinueOthers/SkipDependents), `node_timeouts`, `merge_strategy` (LastWins/ArrayConcat/DeepMerge/ExplicitMap), `distributed`
 
 ## Expression Builtins

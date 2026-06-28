@@ -115,6 +115,13 @@ g:amount>10000 n:manual-review f:auto-approve
 g:tags.containsurgent n:priority-queue
 ```
 
+**Compile-time type checking:** When a `schema:{...}` is present, the compiler validates Gate operators against field types at compile time:
+- `>`, `<`, `>=`, `<=` require the field type to be `int`, `float`, or `string` (rejects `bool`, `object`, `array`)
+- `contains` requires the field type to be `string` or `array`
+- `==`, `!=` are always allowed (any scalar)
+- Fields not in the schema are allowed (assumed dynamic)
+- Errors are reported as `TypeMismatch` during compilation and surfaced via the admin validate endpoint
+
 ### Pipe
 
 ```
@@ -288,6 +295,8 @@ schema:{name:string,!age:int,!amount:float} n:validate
 schema:{id:string} n:process
 ```
 
+**Compile-time type inference:** When a schema is present, the compiler runs a pre-pass that type-checks all Gate and Map operations before emitting bytecode. See "Compile-time Type Checking" above for Gate rules. For Map expressions, `concat()` and `+` operators require all field arguments to be `string` type. Fields not declared in the schema are assumed dynamic (no compile-time check).
+
 ### Labels and Jumps
 
 ```
@@ -360,3 +369,4 @@ schema:{!order_id:string,!amount:float,!user:string} t500 n:validate e:notify
 | Undefined jump target | `j:` references non-existent label |
 | SchemaParseError | Invalid schema field spec |
 | TypeGuard | Runtime type validation failure |
+| TypeMismatch | Compile-time type check failure (operator/field type incompatibility) |

@@ -71,6 +71,8 @@ pub struct Instruction {
 
 Opcode 22 validates the message body against the schema stored in `ExecutionPlan.schema`. When `strict=1`, a missing schema produces an error. Reads the plan's schema directly (no field/value operands).
 
+The schema is also used by the compiler's pre-pass for **compile-time type inference** — validating Gate operators and Map expressions against declared field types before any bytecode is emitted (`type_check_gate()` and `type_check_map()` in `rust/src/dsl/compiler.rs`).
+
 ## ExecutionPlan
 
 ```rust
@@ -163,7 +165,8 @@ pub enum ResolvedType {
     Null,
     Any,
 }
-```
+
+**Compile-time use:** `Schema` is read by the compiler's pre-pass to type-check Gate operators (`type_check_gate()`) and Map expressions (`type_check_map()`) before final bytecode emission. See `rust/src/dsl/compiler.rs`.
 
 ### RetryConfig / ChunkConfig
 

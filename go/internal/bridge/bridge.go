@@ -5,7 +5,7 @@ package bridge
 #include <stdlib.h>
 #include <stdint.h>
 
-typedef int (*caller_cb_t)(uint16_t, const unsigned char*, size_t, unsigned char*, size_t*);
+typedef int (*caller_cb_t)(uint64_t, uint16_t, const unsigned char*, size_t, unsigned char*, size_t*);
 
 int flowrulz_compile(
     const unsigned char* dsl_ptr, size_t dsl_len,
@@ -15,6 +15,7 @@ int flowrulz_compile(
 );
 
 int flowrulz_execute(
+    uint64_t ctx_id,
     const unsigned char* plan_ptr, size_t plan_len,
     const unsigned char* body_ptr, size_t body_len,
     caller_cb_t caller_cb,
@@ -31,6 +32,8 @@ void flowrulz_msg_release(unsigned char* ptr);
 uint16_t flowrulz_intern(const unsigned char* s_ptr, size_t s_len);
 void flowrulz_intern_lookup(uint16_t id, unsigned char* out_ptr, size_t* out_len);
 
+size_t flowrulz_get_spans(unsigned char* out_ptr, size_t out_cap);
+
 caller_cb_t getCallerBridgePtr(void);
 */
 import "C"
@@ -38,6 +41,7 @@ import "C"
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 )
 
@@ -52,22 +56,22 @@ type ExecContext struct {
 }
 
 var (
-	callerMu     sync.Mutex
-	activeCaller ServiceCaller
+	callerMap sync.Map
+	nextExecID atomic.Uint64
 )
 
 //export goServiceCaller
-func goServiceCaller(svcID C.uint16_t, bodyPtr *C.uchar, bodyLen C.size_t, respPtr *C.uchar, respLen *C.size_t) C.int {
-	body := C.GoBytes(unsafe.Pointer(bodyPtr), C.int(bodyLen))
-
-	callerMu.Lock()
-	cb := activeCaller
-	callerMu.Unlock()
-
-	if cb == nil {
+func goServiceCaller(ctxID C.uint64_t, svcID C.uint16_t, bodyPtr *C.uchar, bodyLen C.size_t, respPtr *C.uchar, respLen *C.size_t) C.int {
+	v, ok := callerMap.Load(uint64(ctxID))
+	if !ok {
+		return -1
+	}
+	cb, ok := v.(ServiceCaller)
+	if !ok || cb == nil {
 		return -1
 	}
 
+	body := C.GoBytes(unsafe.Pointer(bodyPtr), C.int(bodyLen))
 	resp, err := cb(uint16(svcID), body)
 	if err != nil {
 		return -1
@@ -110,15 +114,11 @@ func Execute(plan []byte, body []byte, caller ServiceCaller, ctx *ExecContext) (
 		return nil, fmt.Errorf("execute: empty plan")
 	}
 
-	callerMu.Lock()
-	activeCaller = caller
-	callerMu.Unlock()
-
-	defer func() {
-		callerMu.Lock()
-		activeCaller = nil
-		callerMu.Unlock()
-	}()
+	ctxID := nextExecID.Add(1)
+	if caller != nil {
+		callerMap.Store(ctxID, caller)
+		defer callerMap.Delete(ctxID)
+	}
 
 	var msgIdPtr *C.uchar
 	var msgIdLen C.size_t
@@ -165,6 +165,7 @@ func Execute(plan []byte, body []byte, caller ServiceCaller, ctx *ExecContext) (
 
 	cb := C.getCallerBridgePtr()
 	rc := C.flowrulz_execute(
+		C.uint64_t(ctxID),
 		planPtr, C.size_t(len(plan)),
 		bodyPtr, C.size_t(len(body)),
 		cb,
@@ -202,4 +203,10 @@ func InternLookup(id uint16) string {
 	var outLen C.size_t
 	C.flowrulz_intern_lookup(C.uint16_t(id), (*C.uchar)(unsafe.Pointer(&buf[0])), &outLen)
 	return string(buf[:outLen])
+}
+
+func GetSpans() []byte {
+	buf := make([]byte, 4096)
+	n := C.flowrulz_get_spans((*C.uchar)(unsafe.Pointer(&buf[0])), C.size_t(cap(buf)))
+	return buf[:n]
 }

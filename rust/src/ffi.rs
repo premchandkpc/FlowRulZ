@@ -132,11 +132,12 @@ pub extern "C" fn flowrulz_compile(
 
 #[no_mangle]
 pub extern "C" fn flowrulz_execute(
+    ctx_id: u64,
     plan_ptr: *const u8,
     plan_len: usize,
     body_ptr: *const u8,
     body_len: usize,
-    caller_cb: extern "C" fn(u16, *const u8, usize, *mut u8, *mut usize) -> i32,
+    caller_cb: extern "C" fn(u64, u16, *const u8, usize, *mut u8, *mut usize) -> i32,
     out_ptr: *mut u8,
     out_cap: usize,
     out_len: *mut usize,
@@ -171,11 +172,12 @@ pub extern "C" fn flowrulz_execute(
     };
 
     let arena = Arena::new();
-    let caller_wrapper = |svc_id: u16, b: &[u8], _timeout: u64| -> Result<Vec<u8>, String> {
+    let caller_wrapper = move |svc_id: u16, b: &[u8], _timeout: u64| -> Result<Vec<u8>, String> {
         let mut resp_buf = vec![0u8; 65536];
         let mut resp_len: usize = 0;
 
         let rc = caller_cb(
+            ctx_id,
             svc_id,
             b.as_ptr(),
             b.len(),
@@ -261,14 +263,25 @@ pub extern "C" fn flowrulz_intern(s_ptr: *const u8, s_len: usize) -> u16 {
 
 #[no_mangle]
 pub extern "C" fn flowrulz_intern_lookup(id: u16, out_ptr: *mut u8, out_len: *mut usize) {
-    if out_ptr.is_null() || out_len.is_null() {
-        return;
+	if out_ptr.is_null() || out_len.is_null() {
+		return;
+	}
+	if let Some(s) = INTERN_TABLE.lookup(id) {
+		let bytes = s.as_bytes();
+		unsafe {
+			std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_ptr, bytes.len());
+			*out_len = bytes.len();
+		}
+	}
+}
+
+#[no_mangle]
+pub extern "C" fn flowrulz_get_spans(out_ptr: *mut u8, out_cap: usize) -> usize {
+    if out_ptr.is_null() || out_cap == 0 {
+        return 0;
     }
-    if let Some(s) = INTERN_TABLE.lookup(id) {
-        let bytes = s.as_bytes();
-        unsafe {
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_ptr, bytes.len());
-            *out_len = bytes.len();
-        }
+    unsafe {
+        *out_ptr = 0;
     }
+    0
 }

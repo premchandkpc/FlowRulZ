@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Rust 1.70+ (edition 2021)
-- Go 1.22+
+- Go 1.26+
 - No other system dependencies
 
 ## Build
@@ -13,8 +13,7 @@
 make
 
 # Rust only
-cd rust
-cargo build --release
+cd rust && cargo build --release
 
 # Go only (requires prebuilt Rust cdylib)
 make go
@@ -25,14 +24,14 @@ The Rust library is built as both `cdylib` and `rlib`. The `cdylib` (`libflowrul
 ## Test
 
 ```bash
-# All tests (Rust 82 + Go 33)
+# All tests
 make test
 
 # Rust only
 cd rust && cargo test
 
 # Go only
-CGO_ENABLED=1 go test ./go/...
+CGO_ENABLED=1 go test -count=1 ./go/...
 
 # Go lint
 CGO_ENABLED=1 go vet ./go/...
@@ -82,7 +81,7 @@ go/
     ├── bridge/             # cgo bindings to Rust FFI
     │   ├── bridge.go       # Go wrappers + //export callback
     │   ├── caller_bridge.c # C helper for function pointer callback
-    │   └── bridge_test.go  # 11 integration tests
+    │   └── bridge_test.go  # Integration tests
     ├── engine/             # Rule lifecycle (Deploy, Remove, ExecuteAll)
     ├── flow/               # Flow orchestrator with state machine
     ├── transport/          # Kafka consumer/producer

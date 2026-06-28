@@ -8,7 +8,7 @@ Distributed Programmable Event Runtime — fast rule evaluation for event-driven
 
 ```bash
 make all       # rust release + go binary
-make test      # all rust (111) + go tests
+make test      # all rust (111) + go tests (53+)
 make bench     # criterion benchmarks
 make vet       # go vet
 make clean     # cargo clean + remove binary
@@ -25,6 +25,11 @@ make clean     # cargo clean + remove binary
 - Span tracing: `thread_local!` ring buffer, lock-free atomic head/tail, drained via `flowrulz_get_spans`
 - **Service Registry** (`go/internal/registry/`): Maps service names → healthy endpoints, round-robin/random/least-loaded LB, passive+active health checks
 - **Reply Router** (`go/internal/replyrouter/`): Per-node pending request tracker by correlation_id, timeout-based cleanup, duplicate detection
+- **Scheduler** (`go/internal/scheduler/`): Lane-based priority queues (fast/normal/heavy), semaphore-based concurrency limits, reject-on-full backpressure
+- **Plan Distribution** (`go/internal/plandist/`): Leader publishes plans to `_flowrulz_plans`, followers ACK on `_flowrulz_acks`, quorum-based activation with `WaitForAcks`
+- **Metrics** (`go/internal/observability/`): Counter, Gauge, Histogram with thread-safe per-name dedup and global shortcuts
+- **DLQ** (`go/internal/reliability/dlq.go`): Bounded dead-letter queue with per-entry replay, bulk ReplayAll, JSON export
+- **Rate Limiter** (`go/internal/reliability/ratelimit.go`): Token bucket per name, configurable rate/burst, isolation across services
 
 ## Key Layers
 
@@ -44,6 +49,16 @@ make clean     # cargo clean + remove binary
 | SDK | `go/flow/` | Client SDK — `Publish`, `Request`, `Execute`, `Stream` |
 | Registry | `go/internal/registry/` | `ServiceRegistry` — service name → healthy endpoints, LB, health checks |
 | ReplyRouter | `go/internal/replyrouter/` | `ReplyRouter` — correlation ID → pending request channel, timeout/cleanup |
+| Scheduler | `go/internal/scheduler/` | Priority queue per lane (fast/normal/heavy), semaphore-based concurrency limits, reject-on-full backpressure |
+| PlanDist | `go/internal/plandist/` | `PlanDistributor` — plan/ack topics, versioned ACK quorum, activation |
+| Metrics | `go/internal/observability/` | `MetricsCollector` — counters, gauges, histograms, global shortcuts |
+| DLQ | `go/internal/reliability/dlq.go` | Dead-letter queue with replay, bounded size, JSON export |
+| RateLimiter | `go/internal/reliability/ratelimit.go` | Token bucket per name, configurable rate/burst |
+| Scheduler | `go/internal/scheduler/` | Priority queue (fast/normal/heavy), concurrency limits, worker pool, backpressure |
+| PlanDist | `go/internal/plandist/` | `PlanDistributor` — plan/ack topics, versioned ACK quorum, activation |
+| Metrics | `go/internal/observability/` | `MetricsCollector` — counters, gauges, histograms, global shortcuts |
+| DLQ | `go/internal/reliability/dlq.go` | Dead-letter queue with replay, bounded size, JSON export |
+| RateLimiter | `go/internal/reliability/ratelimit.go` | Token bucket per name, configurable rate/burst |
 
 ## Cluster Model
 
@@ -55,16 +70,15 @@ make clean     # cargo clean + remove binary
 - **Service Registry**: Nodes register services in heartbeat. Leader aggregates → publishes combined registry.
 - **Reply Router**: Per-node component tracking pending request/reply by correlation_id. Replies hash to origin node's partition.
 - **Node lifecycle**: Join (announce → catch-up → consume), Drain (rebalance → drain execs → leave), Crash (rejoin with same ID → catch-up).
+- **Scheduler**: Lane-based priority queues; Fast (50 concurrent, 5k queue), Normal (20, 2k), Heavy (5, 500). RejectOnFull for heavy lane.
+- **Plan Distribution**: `PlanDistributor` publishes `PlanMessage{type, rule_id, version, plan, dsl}` to `_flowrulz_plans`. Followers send `AckMessage{node_id, rule_id, version, status}` to `_flowrulz_acks`. `WaitForAcks(ruleID, version, quorum, timeout)` implements ACK-quorum activation.
+- **Scheduler**: Lane-based priority queues; Fast (50 concurrent, 5k queue), Normal (20, 2k), Heavy (5, 500). RejectOnFull for heavy lane.
+- **Plan Distribution**: `PlanDistributor` publishes `PlanMessage{type, rule_id, version, plan, dsl}` to `_flowrulz_plans`. Followers send `AckMessage{node_id, rule_id, version, status}` to `_flowrulz_acks`. `WaitForAcks(ruleID, version, quorum, timeout)` implements ACK-quorum activation.
 
 ## Conventions
 
 - `caller_cb_t` signature: `int(uint64_t ctx_id, uint16_t svc_id, const u8* body, size_t body_len, u8* resp, size_t* resp_len)`
 - `Instruction` is 8 bytes: `{op: u8, flags: u8, a: u16, b: u16, c: u16}`
-- `ExecutionPlan` serialized via bincode across FFI boundary
-- `ExecutionPlan` fields: `rule_id`, `version`, `instr_count`, `complexity_score`, `instructions`, `const_pool`, `services`, `dag_tables`, `map_exprs`, `retry_configs`, `chunk_configs`, `schema`
-- Complexity scoring: Next/Async=10, Parallel/DAG=20, Chunk=25, Gate=5, Map=3, Emit=8, Buffer=15
-- Lane routing: score <10 → fast, ≤50 → normal, >50 → heavy
-- Versioned plans with `ActiveExec sync.WaitGroup` — Add before bridge.Execute, Done after
 - Schema DSL: `schema:{field:type,!required_field:type}` — emits `TypeGuard` opcode (22)
 - Compile-time type inference: when `schema:{...}` is present, the compiler pre-pass validates Gate operators (`type_check_gate()`) and Map expressions (`type_check_map()`) against declared field types, emitting `TypeMismatch` errors for incompatible operations
 - DAGTable fields: `failure_policy` (AbortAll/ContinueOthers/SkipDependents), `node_timeouts`, `merge_strategy` (LastWins/ArrayConcat/DeepMerge/ExplicitMap), `distributed`

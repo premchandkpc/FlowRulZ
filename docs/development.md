@@ -107,8 +107,10 @@ go/
     ├── flow/               # Flow orchestrator with state machine
     ├── registry/           # ServiceRegistry — service name → healthy endpoints, LB, health checks
     ├── replyrouter/        # ReplyRouter — correlation ID → pending request channel, timeout/cleanup
-    ├── observability/      # Metrics counters
-    └── reliability/        # Circuit breaker
+    ├── scheduler/          # Priority queue (fast/normal/heavy), concurrency limits, backpressure
+    ├── plandist/           # PlanDistributor — plan/ack topics, versioned ACK quorum, activation
+    ├── observability/      # MetricsCollector — counters, gauges, histograms, global shortcuts
+    └── reliability/        # DLQ, rate limiter, circuit breaker
 ```
 
 ## Adding a New Opcode

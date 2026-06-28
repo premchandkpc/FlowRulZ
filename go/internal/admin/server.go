@@ -10,12 +10,14 @@ import (
 
 	"github.com/premchandkpc/FlowRulZ/go/internal/bridge"
 	"github.com/premchandkpc/FlowRulZ/go/internal/engine"
+	"github.com/premchandkpc/FlowRulZ/go/internal/reliability"
 )
 
 type Server struct {
 	engine    *engine.Engine
 	mux       *http.ServeMux
 	apiKey    string
+	dlq       *reliability.DLQ
 }
 
 func New(eng *engine.Engine) *Server {
@@ -35,6 +37,14 @@ func New(eng *engine.Engine) *Server {
 	s.mux.HandleFunc("GET /lanes", s.auth(s.listLanes))
 	s.mux.HandleFunc("GET /health", s.health)
 	return s
+}
+
+func (s *Server) RegisterDLQ(dlq *reliability.DLQ) {
+	s.dlq = dlq
+	s.mux.HandleFunc("GET /dlq", s.auth(s.listDLQ))
+	s.mux.HandleFunc("POST /dlq/replay/{id}", s.auth(s.replayDLQ))
+	s.mux.HandleFunc("POST /dlq/replay", s.auth(s.replayAllDLQ))
+	s.mux.HandleFunc("DELETE /dlq", s.auth(s.clearDLQ))
 }
 
 func (s *Server) Handler() http.Handler {
@@ -219,4 +229,46 @@ func (s *Server) listLanes(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (s *Server) listDLQ(w http.ResponseWriter, r *http.Request) {
+	if s.dlq == nil {
+		json.NewEncoder(w).Encode([]interface{}{})
+		return
+	}
+	entries := s.dlq.List()
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(entries)
+}
+
+func (s *Server) replayDLQ(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.dlq == nil {
+		http.Error(w, "dlq not configured", http.StatusNotFound)
+		return
+	}
+	if err := s.dlq.Replay(r.Context(), id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "replayed", "id": id})
+}
+
+func (s *Server) replayAllDLQ(w http.ResponseWriter, r *http.Request) {
+	if s.dlq == nil {
+		http.Error(w, "dlq not configured", http.StatusNotFound)
+		return
+	}
+	count := s.dlq.ReplayAll(r.Context())
+	json.NewEncoder(w).Encode(map[string]interface{}{"status": "replayed", "count": count})
+}
+
+func (s *Server) clearDLQ(w http.ResponseWriter, r *http.Request) {
+	if s.dlq == nil {
+		http.Error(w, "dlq not configured", http.StatusNotFound)
+		return
+	}
+	s.dlq.Clear()
+	w.WriteHeader(http.StatusNoContent)
 }

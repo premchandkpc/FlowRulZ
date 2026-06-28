@@ -118,20 +118,36 @@ func TestQueueFull(t *testing.T) {
 	defer cancel()
 	defer s.Stop()
 
-	err := s.Enqueue(&Task{ID: "1", Priority: PriorityFast, Execute: func(ctx context.Context, task *Task) ([]byte, error) {
-		time.Sleep(50 * time.Millisecond)
-		return nil, nil
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Fill semaphore with a long-running task
+	started := make(chan struct{})
+	block := make(chan struct{})
+	s.Enqueue(&Task{ID: "blocker", Priority: PriorityFast,
+		Execute: func(ctx context.Context, task *Task) ([]byte, error) {
+			close(started)
+			<-block
+			return nil, nil
+		},
+	})
+	<-started
+	// At this point, sem is full (1/1). Queue is empty because worker already dequeued.
 
-	err = s.Enqueue(&Task{ID: "2", Priority: PriorityFast, Execute: func(ctx context.Context, task *Task) ([]byte, error) {
-		return nil, nil
-	}})
+	// Fill the queue (size 1) with one more task
+	s.Enqueue(&Task{ID: "fill", Priority: PriorityFast,
+		Execute: func(ctx context.Context, task *Task) ([]byte, error) {
+			return nil, nil
+		},
+	})
+	// Queue is now full. Next enqueue should reject.
+	err := s.Enqueue(&Task{ID: "reject", Priority: PriorityFast,
+		Execute: func(ctx context.Context, task *Task) ([]byte, error) {
+			return nil, nil
+		},
+	})
 	if err == nil {
 		t.Fatal("expected queue full error")
 	}
+
+	close(block)
 }
 
 func TestConcurrencyLimit(t *testing.T) {

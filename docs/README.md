@@ -27,8 +27,10 @@ FlowRulZ/
 │       ├── flow/           # Flow orchestration
 │       ├── registry/       # ServiceRegistry — service name → healthy endpoints, LB
 │       ├── replyrouter/    # ReplyRouter — correlation ID → pending request channel
-│       ├── observability/  # Metrics counters
-│       └── reliability/    # Circuit breaker
+│       ├── scheduler/      # Priority queue (fast/normal/heavy), concurrency limits, backpressure
+│       ├── plandist/       # PlanDistributor — plan/ack topics, versioned ACK quorum, activation
+│       ├── observability/  # MetricsCollector — counters, gauges, histograms
+│       └── reliability/    # DLQ, rate limiter, circuit breaker
 ├── docs/
 │   ├── specs/
 │   │   ├── flow-architecture.md  # Distributed Event Runtime — architecture, Event model, ExecutionContext, flows
@@ -81,3 +83,8 @@ make bench
 | Seed-based membership | Nodes discover via seed peers; heartbeat on `_flowrulz_members` compacted topic |
 | Service Registry | Nodes register services in heartbeat; leader aggregates → publishes combined view |
 | Reply Router | Per-node pending request tracker by correlation_id; timeout/cleanup goroutine |
+| Scheduler | Lane-based priority queues; Fast (50 concurrent, 5k), Normal (20, 2k), Heavy (5, 500) |
+| Plan Distribution | `PlanDistributor` publishes plans/activations; followers ACK; quorum-based activation |
+| Rate Limiter | Token bucket per name; configurable rate/burst for ingress control |
+| Dead Letter Queue | Bounded queue with replay support; JSON export, per-entry retry count |
+| Metrics | Counters, gauges, histograms; global shortcuts for exec/error tracking |

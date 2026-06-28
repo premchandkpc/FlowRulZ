@@ -142,14 +142,14 @@ func (mc *MetricsCollector) Snapshot() MetricSnapshot {
 
 // -- Default collector shortcuts --
 
-func Counter(name string) *Counter     { return defaultCollector.Counter(name) }
-func Gauge(name string) *Gauge         { return defaultCollector.Gauge(name) }
-func Histogram(name string, buckets []float64) *Histogram { return defaultCollector.Histogram(name, buckets) }
+func GetCounter(name string) *Counter     { return defaultCollector.Counter(name) }
+func GetGauge(name string) *Gauge         { return defaultCollector.Gauge(name) }
+func GetHistogram(name string, buckets []float64) *Histogram { return defaultCollector.Histogram(name, buckets) }
 
 func RecordTiming(name string, d time.Duration, buckets []float64) {
-	h := Histogram(name, buckets)
+	h := GetHistogram(name, buckets)
 	h.Observe(d.Seconds())
 }
 
-func RecordExec(name string)  { Counter("exec." + name).Inc() }
-func RecordError(name string) { Counter("error." + name).Inc() }
+func RecordExec(name string)  { GetCounter("exec." + name).Inc() }
+func RecordError(name string) { GetCounter("error." + name).Inc() }

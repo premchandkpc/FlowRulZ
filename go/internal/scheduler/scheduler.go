@@ -162,30 +162,36 @@ func (s *Scheduler) laneWorker(ctx context.Context, p Priority, l *lane) {
 			return
 		case <-ctx.Done():
 			return
-		case task := <-l.queue:
-			s.totalDeq.Add(1)
-			s.execTask(ctx, task, l)
+		case l.sem <- struct{}{}:
+			select {
+			case <-s.stopCh:
+				<-l.sem
+				return
+			case <-ctx.Done():
+				<-l.sem
+				return
+			case task := <-l.queue:
+				s.totalDeq.Add(1)
+				go s.execTask(ctx, task, l)
+			}
 		}
 	}
 }
 
 func (s *Scheduler) execTask(ctx context.Context, task *Task, l *lane) {
-	l.sem <- struct{}{}
-	go func() {
-		defer func() { <-l.sem }()
+	defer func() { <-l.sem }()
 
-		execCtx := ctx
-		if !task.Deadline.IsZero() {
-			var cancel context.CancelFunc
-			execCtx, cancel = context.WithDeadline(ctx, task.Deadline)
-			defer cancel()
-		}
+	execCtx := ctx
+	if !task.Deadline.IsZero() {
+		var cancel context.CancelFunc
+		execCtx, cancel = context.WithDeadline(ctx, task.Deadline)
+		defer cancel()
+	}
 
-		out, err := task.Execute(execCtx, task)
-		if task.ResultCh != nil {
-			task.ResultCh <- TaskResult{Output: out, Error: err}
-		}
-	}()
+	out, err := task.Execute(execCtx, task)
+	if task.ResultCh != nil {
+		task.ResultCh <- TaskResult{Output: out, Error: err}
+	}
 }
 
 func (s *Scheduler) QueuedCount(p Priority) int {

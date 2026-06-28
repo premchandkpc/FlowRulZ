@@ -47,7 +47,6 @@ type PlanDistributor struct {
 	ackConsumer  transport.MessageConsumer
 	planHandler  PlanHandler
 	ackHandler   AckHandler
-	ackCh        chan AckMessage
 	pendingAcks  sync.Map
 	nextSerial   atomic.Uint64
 	started      bool
@@ -60,7 +59,6 @@ func New(nodeID string, opts ...Option) *PlanDistributor {
 		nodeID:    nodeID,
 		planTopic: DefaultPlanTopic,
 		ackTopic:  DefaultAckTopic,
-		ackCh:     make(chan AckMessage, 1000),
 		stopCh:    make(chan struct{}),
 	}
 	for _, o := range opts {
@@ -112,16 +110,11 @@ func (pd *PlanDistributor) Start(ctx context.Context) {
 	pd.started = true
 	pd.mu.Unlock()
 
-	// Plan consumer: receive plans from leader
-	if pd.planConsumer != nil && pd.planHandler != nil {
+	if pd.planConsumer != nil {
 		go pd.planConsumer.Start(ctx)
-		go pd.planConsumerLoop(ctx)
 	}
-
-	// ACK consumer: receive ACKs from followers
-	if pd.ackConsumer != nil && pd.ackHandler != nil {
+	if pd.ackConsumer != nil {
 		go pd.ackConsumer.Start(ctx)
-		go pd.ackConsumerLoop(ctx)
 	}
 
 	log.Printf("plandist: node=%s started", pd.nodeID)
@@ -207,12 +200,12 @@ func (pd *PlanDistributor) WaitForAcks(ctx context.Context, ruleID string, versi
 		return nil
 	}
 
-	serial := pd.nextSerial.Add(1)
 	key := ackKey(ruleID, version)
 	done := make(chan int, 1)
 	received := new(atomic.Int32)
+	q32 := int32(quorum)
 
-	pd.pendingAcks.Store(key, pendingAck{serial: serial, done: done, received: received, quorum: int32(quorum)})
+	pd.pendingAcks.Store(key, pendingAck{done: done, received: received, quorum: q32})
 	defer pd.pendingAcks.Delete(key)
 
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -222,30 +215,14 @@ func (pd *PlanDistributor) WaitForAcks(ctx context.Context, ruleID string, versi
 	case <-waitCtx.Done():
 		return fmt.Errorf("plandist: ack timeout for %s v%d (got %d/%d)", ruleID, version, received.Load(), quorum)
 	case n := <-done:
-		if n >= int32(quorum) {
+		if n >= quorum {
 			return nil
 		}
 		return fmt.Errorf("plandist: insufficient acks for %s v%d (%d/%d)", ruleID, version, n, quorum)
 	}
 }
 
-func (pd *PlanDistributor) planConsumerLoop(ctx context.Context) {
-	subCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	<-pd.stopCh
-	cancel()
-}
 
-func (pd *PlanDistributor) ackConsumerLoop(ctx context.Context) {
-	for {
-		select {
-		case <-pd.stopCh:
-			return
-		case ack := <-pd.ackCh:
-			pd.handleAck(ack)
-		}
-	}
-}
 
 func (pd *PlanDistributor) handleAck(ack AckMessage) {
 	key := ackKey(ack.RuleID, ack.Version)
@@ -267,10 +244,7 @@ func (pd *PlanDistributor) handleAck(ack AckMessage) {
 }
 
 func (pd *PlanDistributor) RecordAck(msg AckMessage) {
-	select {
-	case pd.ackCh <- msg:
-	default:
-	}
+	pd.handleAck(msg)
 }
 
 type pendingAck struct {

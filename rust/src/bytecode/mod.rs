@@ -1,5 +1,7 @@
 pub mod consts;
 pub mod dag_table;
+pub mod event;
+pub mod execution;
 pub mod instruction;
 pub mod mapexpr;
 pub mod opcode;
@@ -9,6 +11,8 @@ pub mod services;
 
 pub use consts::*;
 pub use dag_table::*;
+pub use event::*;
+pub use execution::*;
 pub use instruction::*;
 pub use mapexpr::*;
 pub use opcode::*;

@@ -1,6 +1,6 @@
 # FlowRulZ
 
-Low-latency rule evaluation engine for event-driven systems.
+Distributed Programmable Event Runtime — fast rule evaluation for event-driven systems.
 
 > **AI rules** — On each conversation start, read `docs/` dir. After any code change, update relevant `.md` files in `docs/` to stay in sync. Never let docs go stale.
 
@@ -8,7 +8,7 @@ Low-latency rule evaluation engine for event-driven systems.
 
 ```bash
 make all       # rust release + go binary
-make test      # all rust (86) + go tests
+make test      # all rust (111) + go tests
 make bench     # criterion benchmarks
 make vet       # go vet
 make clean     # cargo clean + remove binary
@@ -16,8 +16,10 @@ make clean     # cargo clean + remove binary
 
 ## Architecture
 
-- **Rust** (`rust/`): DSL compiler, bytecode VM, executor, FFI layer (`cdylib`)
-- **Go** (`go/`): Engine, bridge (CGo), admin HTTP server, transport, observability
+- **Control Plane** (Go): Rule registry, DSL compiler, scheduling, leader election. Simple single-leader — no Raft. No WAL/storage beyond rules JSON file.
+- **Data Plane** (Go + Rust): Partition workers, ExecutionRuntime, service callers, span collection. Multiple nodes scale horizontally.
+- **Execution Node** (`go/internal/execnode/`): process wrapping Engine + Bridge + Runtime + transport consumers + admin HTTP
+- **Kafka** is the durable event log; FlowRulZ is a consumer group with programmable execution
 - C FFI prefix: `flowrulz_` — all exported functions use `#[no_mangle] pub extern "C"`
 - Bridge: `sync.Map callerMap` + `atomic.Uint64 nextExecID` — no mutex in hot path
 - Span tracing: `thread_local!` ring buffer, lock-free atomic head/tail, drained via `flowrulz_get_spans`
@@ -26,13 +28,18 @@ make clean     # cargo clean + remove binary
 
 | Layer | Dir | Description |
 |---|---|---|
+| Event | `rust/src/bytecode/event.rs` | `Event` + `Mode` — universal message type |
+| Execution | `rust/src/bytecode/execution.rs` | `ExecutionContext` — body + variables + outputs |
 | DSL | `rust/src/dsl/` | Lexer → Parser → Optimizer → Compiler |
 | Bytecode | `rust/src/bytecode/` | OpCode (0-22), Instruction (8 bytes), ExecutionPlan |
-| VM | `rust/src/executor/` | `VM::run()` dispatches opcodes, tracks `hop_count`, `errors` |
+| VM | `rust/src/executor/` | `VM::run()` dispatches opcodes, operates on `ExecutionContext` |
+| Runtime | `rust/src/executor/runtime.rs` | `ExecutionRuntime` wraps VM, handles Chunk/Buffer at runtime level |
 | FFI | `rust/src/ffi.rs` | `flowrulz_compile`, `flowrulz_execute`, `flowrulz_get_spans`, etc. |
 | Bridge | `go/internal/bridge/` | CGo bindings + C caller bridge |
 | Engine | `go/internal/engine/` | `VersionedPlan`, lane routing, persistence, `ExecuteAll` |
+| ExecNode | `go/internal/execnode/` | Data plane process: engine + transport + admin + lifecycle |
 | Admin | `go/internal/admin/` | HTTP API with API key auth, rule CRUD, validate, lanes |
+| SDK | `go/flow/` | Client SDK — `Publish`, `Request`, `Execute`, `Stream` |
 
 ## Conventions
 
@@ -51,6 +58,10 @@ make clean     # cargo clean + remove binary
 - DAG merge_dag_results implements MergeStrategy: LastWins (keyed JSON object), ArrayConcat (JSON array), DeepMerge (recursive), ExplicitMap (same as LastWins, no explicit map config yet)
 - Schema DSL: `enum[val1|val2|...]` syntax for `ResolvedType::Enum(Vec<String>)`
 - Persistence: atomic write via write-to-temp-then-rename pattern (`saveRules()` uses `os.WriteFile` to `.tmp` then `os.Rename`)
+- ExecutionRuntime owns the plan and handles Buffer (accumulate) and Chunk (split+execute) opcodes at the runtime level, not inside the VM
+- `ExecutionContext` holds `event` + `body` + `variables` + `outputs` — services enrich context instead of replacing a single body
+- `Mode` enum: `Publish`, `Request`, `Reply`, `Stream`, `Workflow`, `Internal` — determines delivery semantics per event
+- Client SDK at `go/flow/` — `Publish()`, `Request()`, `Execute()`, `Stream()` — all operations go through the same runtime
 
 ## Expression Builtins
 

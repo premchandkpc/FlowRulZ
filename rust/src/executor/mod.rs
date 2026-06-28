@@ -8,9 +8,11 @@ pub mod helpers;
 pub mod map;
 pub mod next;
 pub mod parallel;
+pub mod runtime;
 
 use std::sync::Arc;
 
+use crate::bytecode::execution::ExecutionContext;
 use crate::bytecode::instruction::Instruction;
 use crate::bytecode::opcode::OpCode;
 use crate::bytecode::plan::ExecutionPlan;
@@ -18,19 +20,15 @@ use crate::bytecode::plan::ExecutionPlan;
 pub struct VM<'a> {
     pub ip: usize,
     pub plan: &'a ExecutionPlan,
-    pub last_response: Vec<u8>,
     pub arena: crate::memory::arena::Arena,
     pub caller: Arc<dyn Fn(u16, &[u8], u64) -> Result<Vec<u8>, String> + Send + Sync + 'a>,
-    pub failed: bool,
-    pub errors: Vec<String>,
-    pub hop_count: u16,
-    pub ctx: context::ExecutionContext,
+    pub ctx: ExecutionContext,
 }
 
 impl<'a> VM<'a> {
     pub fn new<F>(
         plan: &'a ExecutionPlan,
-        body: &[u8],
+        ctx: ExecutionContext,
         arena: crate::memory::arena::Arena,
         caller: F,
     ) -> Self
@@ -40,13 +38,9 @@ impl<'a> VM<'a> {
         VM {
             ip: 0,
             plan,
-            last_response: body.to_vec(),
             arena,
             caller: Arc::new(caller),
-            failed: false,
-            errors: Vec::new(),
-            hop_count: 0,
-            ctx: context::ExecutionContext::new(),
+            ctx,
         }
     }
 
@@ -110,15 +104,15 @@ impl<'a> VM<'a> {
         caller: &dyn Fn(u16, &[u8], u64) -> Result<Vec<u8>, String>,
         is_async: bool,
     ) -> Result<(), String> {
-        match next::exec_next(&self.last_response, instr, self.plan, caller, is_async) {
+        match next::exec_next(&self.ctx.body, instr, self.plan, caller, is_async) {
             Ok(resp) => {
-                self.last_response = resp;
-                self.hop_count += 1;
+                self.ctx.body = resp;
+                self.ctx.hop_count += 1;
                 Ok(())
             }
             Err(e) => {
-                self.failed = true;
-                self.errors.push(e);
+                self.ctx.failed = true;
+                self.ctx.errors.push(e);
                 Ok(())
             }
         }
@@ -130,13 +124,13 @@ impl<'a> VM<'a> {
         caller: &dyn Fn(u16, &[u8], u64) -> Result<Vec<u8>, String>,
     ) -> Result<(), String> {
         let result =
-            parallel::exec_parallel(&self.last_response, instr, self.plan, caller, &self.arena)?;
-        self.last_response = result.to_vec();
+            parallel::exec_parallel(&self.ctx.body, instr, self.plan, caller, &self.arena)?;
+        self.ctx.body = result.to_vec();
         Ok(())
     }
 
     fn op_collect(&mut self) -> Result<(), String> {
-        self.hop_count += 1;
+        self.ctx.hop_count += 1;
         Ok(())
     }
 
@@ -145,16 +139,16 @@ impl<'a> VM<'a> {
         instr: &Instruction,
         caller: &dyn Fn(u16, &[u8], u64) -> Result<Vec<u8>, String>,
     ) -> Result<(), String> {
-        if self.failed {
-            self.failed = false;
-            match next::exec_next(&self.last_response, instr, self.plan, caller, false) {
+        if self.ctx.failed {
+            self.ctx.failed = false;
+            match next::exec_next(&self.ctx.body, instr, self.plan, caller, false) {
                 Ok(resp) => {
-                    self.last_response = resp;
-                    self.hop_count += 1;
+                    self.ctx.body = resp;
+                    self.ctx.hop_count += 1;
                 }
                 Err(e) => {
-                    self.failed = true;
-                    self.errors.push(e);
+                    self.ctx.failed = true;
+                    self.ctx.errors.push(e);
                 }
             }
         }
@@ -163,7 +157,7 @@ impl<'a> VM<'a> {
 
     fn op_gate(&mut self, instr: &Instruction) -> Result<(), String> {
         let mut skip = 0usize;
-        gate::exec_jmp_if_false(&self.last_response, instr, self.plan, &self.arena, &mut skip);
+        gate::exec_jmp_if_false(&self.ctx.body, instr, self.plan, &self.arena, &mut skip);
         Ok(())
     }
 
@@ -172,7 +166,7 @@ impl<'a> VM<'a> {
         instr: &Instruction,
         caller: &dyn Fn(u16, &[u8], u64) -> Result<Vec<u8>, String>,
     ) -> Result<(), String> {
-        emit::exec_emit(&self.last_response, instr, self.plan, caller)
+        emit::exec_emit(&self.ctx.body, instr, self.plan, caller)
     }
 
     fn op_drop(&mut self) -> Result<(), String> {
@@ -181,8 +175,8 @@ impl<'a> VM<'a> {
     }
 
     fn op_map(&mut self, instr: &Instruction) -> Result<(), String> {
-        let result = map::exec_map(&self.last_response, instr, self.plan, &self.arena)?;
-        self.last_response = result.to_vec();
+        let result = map::exec_map(&self.ctx.body, instr, self.plan, &self.arena)?;
+        self.ctx.body = result.to_vec();
         Ok(())
     }
 
@@ -191,9 +185,9 @@ impl<'a> VM<'a> {
         instr: &Instruction,
         caller: &dyn Fn(u16, &[u8], u64) -> Result<Vec<u8>, String>,
     ) -> Result<(), String> {
-        let result = dag::exec_dag(&self.last_response, instr, self.plan, caller, &self.arena)?;
-        self.last_response = result.to_vec();
-        self.hop_count += 1;
+        let result = dag::exec_dag(&self.ctx.body, instr, self.plan, caller, &self.arena)?;
+        self.ctx.body = result.to_vec();
+        self.ctx.hop_count += 1;
         Ok(())
     }
 
@@ -212,7 +206,7 @@ impl<'a> VM<'a> {
                 return Err("schema required but not provided".into());
             }
         };
-        let body: serde_json::Value = serde_json::from_slice(&self.last_response)
+        let body: serde_json::Value = serde_json::from_slice(&self.ctx.body)
             .map_err(|e| format!("TypeGuard: failed to parse body: {}", e))?;
         schema.is_valid(&body).map_err(|e| format!("TypeGuard: {}", e))
     }
@@ -222,6 +216,7 @@ impl<'a> VM<'a> {
 mod tests {
     use super::*;
     use crate::bytecode::plan::ExecutionPlan;
+    use crate::bytecode::event::Event;
     use crate::dsl::{compiler::Compiler, lexer, optimizer, parser};
 
     fn compile_dsl(dsl: &str) -> ExecutionPlan {
@@ -241,78 +236,81 @@ mod tests {
         Err("mock failure".to_string())
     }
 
+    fn make_ctx(body: &[u8]) -> ExecutionContext {
+        ExecutionContext::from_body(body.to_vec())
+    }
+
     #[test]
     fn test_vm_simple_next() {
         let plan = compile_dsl("n:validate");
         let arena = crate::memory::arena::Arena::new();
-        let mut vm = VM::new(&plan, b"hello", arena, &mock_caller);
+        let mut vm = VM::new(&plan, make_ctx(b"hello"), arena, &mock_caller);
         vm.run().unwrap();
-        assert_eq!(vm.hop_count, 1);
+        assert_eq!(vm.ctx.hop_count, 1);
     }
 
     #[test]
     fn test_vm_chain() {
         let plan = compile_dsl("n:a n:b n:c");
         let arena = crate::memory::arena::Arena::new();
-        let mut vm = VM::new(&plan, b"hello", arena, &mock_caller);
+        let mut vm = VM::new(&plan, make_ctx(b"hello"), arena, &mock_caller);
         vm.run().unwrap();
-        assert_eq!(vm.hop_count, 3);
+        assert_eq!(vm.ctx.hop_count, 3);
     }
 
     #[test]
     fn test_vm_drop_halt() {
         let plan = compile_dsl("n:a d n:b");
         let arena = crate::memory::arena::Arena::new();
-        let mut vm = VM::new(&plan, b"hello", arena, &mock_caller);
+        let mut vm = VM::new(&plan, make_ctx(b"hello"), arena, &mock_caller);
         vm.run().unwrap();
-        assert_eq!(vm.hop_count, 1);
+        assert_eq!(vm.ctx.hop_count, 1);
     }
 
     #[test]
     fn test_vm_fallback_after_failure() {
         let plan = compile_dsl("n:a f:b");
         let arena = crate::memory::arena::Arena::new();
-        let mut vm = VM::new(&plan, b"hello", arena, &mock_failing_caller);
+        let mut vm = VM::new(&plan, make_ctx(b"hello"), arena, &mock_failing_caller);
         vm.run().unwrap();
-        assert!(vm.failed);
+        assert!(vm.ctx.failed);
     }
 
     #[test]
     fn test_vm_async() {
         let plan = compile_dsl("a:svc e:analytics");
         let arena = crate::memory::arena::Arena::new();
-        let mut vm = VM::new(&plan, b"hello", arena, &mock_caller);
+        let mut vm = VM::new(&plan, make_ctx(b"hello"), arena, &mock_caller);
         vm.run().unwrap();
-        assert_eq!(vm.hop_count, 1);
+        assert_eq!(vm.ctx.hop_count, 1);
     }
 
     #[test]
     fn test_vm_parallel_collect() {
         let plan = compile_dsl("p:a,b c");
         let arena = crate::memory::arena::Arena::new();
-        let mut vm = VM::new(&plan, b"{\"x\":1}", arena, &mock_caller);
+        let mut vm = VM::new(&plan, make_ctx(b"{\"x\":1}"), arena, &mock_caller);
         vm.run().unwrap();
-        assert!(vm.hop_count > 0);
+        assert!(vm.ctx.hop_count > 0);
     }
 
     #[test]
     fn test_vm_gate_true() {
         let dsl = "g:x==1 n:svc";
         let plan = compile_dsl(dsl);
-        let body = b"{\"x\":1}";
         let arena = crate::memory::arena::Arena::new();
-        let mut vm = VM::new(&plan, body, arena, &mock_caller);
+        let mut vm = VM::new(&plan, make_ctx(b"{\"x\":1}"), arena, &mock_caller);
         vm.run().unwrap();
-        assert_eq!(vm.hop_count, 1);
+        assert_eq!(vm.ctx.hop_count, 1);
     }
 
     #[test]
     fn test_vm_emit() {
         let plan = compile_dsl("e:a,b,c");
         let arena = crate::memory::arena::Arena::new();
-        let mut vm = VM::new(&plan, b"hello", arena, &mock_caller);
+        let mut vm = VM::new(&plan, make_ctx(b"hello"), arena, &mock_caller);
         vm.run().unwrap();
-        assert_eq!(vm.hop_count, 0);
+        assert_eq!(vm.ctx.hop_count, 0);
     }
 
     #[test]
@@ -320,36 +318,35 @@ mod tests {
         let dsl = "dag:{A:[B,C],D:[A]} e:audit";
         let plan = compile_dsl(dsl);
         let arena = crate::memory::arena::Arena::new();
-        let mut vm = VM::new(&plan, b"{\"x\":1}", arena, &mock_caller);
+        let mut vm = VM::new(&plan, make_ctx(b"{\"x\":1}"), arena, &mock_caller);
         vm.run().unwrap();
-        assert!(vm.hop_count > 0);
+        assert!(vm.ctx.hop_count > 0);
     }
 
     #[test]
     fn test_vm_map() {
         let dsl = "m:.x n:svc";
         let plan = compile_dsl(dsl);
-        let body = b"{\"x\":42}";
         let arena = crate::memory::arena::Arena::new();
-        let mut vm = VM::new(&plan, body, arena, &mock_caller);
+        let mut vm = VM::new(&plan, make_ctx(b"{\"x\":42}"), arena, &mock_caller);
         vm.run().unwrap();
-        assert_eq!(vm.hop_count, 1);
+        assert_eq!(vm.ctx.hop_count, 1);
     }
 
     #[test]
     fn test_vm_type_guard_valid() {
         let plan = compile_dsl("schema:{name:string,!age:int} n:validate");
         let arena = crate::memory::arena::Arena::new();
-        let mut vm = VM::new(&plan, b"{\"name\":\"alice\",\"age\":30}", arena, &mock_caller);
+        let mut vm = VM::new(&plan, make_ctx(b"{\"name\":\"alice\",\"age\":30}"), arena, &mock_caller);
         vm.run().unwrap();
-        assert_eq!(vm.hop_count, 1);
+        assert_eq!(vm.ctx.hop_count, 1);
     }
 
     #[test]
     fn test_vm_type_guard_invalid() {
         let plan = compile_dsl("schema:{!age:int} n:validate");
         let arena = crate::memory::arena::Arena::new();
-        let mut vm = VM::new(&plan, b"{\"age\":\"bad\"}", arena, &mock_caller);
+        let mut vm = VM::new(&plan, make_ctx(b"{\"age\":\"bad\"}"), arena, &mock_caller);
         let err = vm.run();
         assert!(err.is_err());
         assert!(err.unwrap_err().contains("TypeGuard"));
@@ -360,8 +357,8 @@ mod tests {
         let dsl = "t500 n:validate t1000 p:fraud,inventory c f:dlq n:fulfill e:notify,analytics";
         let plan = compile_dsl(dsl);
         let arena = crate::memory::arena::Arena::new();
-        let mut vm = VM::new(&plan, b"{\"type\":\"ORDER\"}", arena, &mock_caller);
+        let mut vm = VM::new(&plan, make_ctx(b"{\"type\":\"ORDER\"}"), arena, &mock_caller);
         vm.run().unwrap();
-        assert!(vm.hop_count > 0);
+        assert!(vm.ctx.hop_count > 0);
     }
 }

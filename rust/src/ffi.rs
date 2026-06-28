@@ -193,29 +193,31 @@ pub extern "C" fn flowrulz_execute(
         }
     };
 
-    let mut vm = VM::new(&plan, body, arena, &caller_wrapper);
+    let mut ctx = crate::bytecode::execution::ExecutionContext::from_body(body.to_vec());
 
     if !msg_id_ptr.is_null() {
         if let Some(s) = read_str(msg_id_ptr, msg_id_len) {
-            vm.ctx.message_id = s.to_string();
+            ctx.event.id = s.to_string();
         }
     }
     if !corr_id_ptr.is_null() {
         if let Some(s) = read_str(corr_id_ptr, corr_id_len) {
-            vm.ctx.correlation_id = s.to_string();
+            ctx.event.metadata.correlation_id = s.to_string();
         }
     }
     if !trace_id_ptr.is_null() {
         if let Some(s) = read_str(trace_id_ptr, trace_id_len) {
-            vm.ctx.trace_id = s.to_string();
+            ctx.event.metadata.trace_id = s.to_string();
         }
     }
-    vm.ctx.partition = partition;
-    vm.ctx.offset = offset;
+    ctx.event.metadata.partition = partition;
+    ctx.event.metadata.offset = offset;
+
+    let mut vm = VM::new(&plan, ctx, arena, &caller_wrapper);
 
     match vm.run() {
         Ok(()) => {
-            let result = &vm.last_response;
+            let result = &vm.ctx.body;
             if result.len() <= out_cap {
                 unsafe {
                     std::ptr::copy_nonoverlapping(result.as_ptr(), out_ptr, result.len());

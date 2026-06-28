@@ -25,6 +25,7 @@ pub enum OpCode {
     SvcArg = 19,
     RetryData = 20,
     JumpOffset = 21,
+    TypeGuard = 22,
 }
 
 impl OpCode {
@@ -52,6 +53,7 @@ impl OpCode {
             19 => Some(OpCode::SvcArg),
             20 => Some(OpCode::RetryData),
             21 => Some(OpCode::JumpOffset),
+            22 => Some(OpCode::TypeGuard),
             _ => None,
         }
     }

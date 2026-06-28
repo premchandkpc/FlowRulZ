@@ -174,3 +174,33 @@ fn lookup(&self, id: u16) -> Option<&str> {
 - Slab buffers are zero-initialized on creation
 - Arena allocations are !Send (bumpalo) — per-thread arena usage
 - Interner is `Sync + Send` — safe to share across threads
+
+---
+
+## Gaps & Planned Features
+
+### VM Span Ring Buffer (Planned)
+
+A per-thread lock-free ring buffer for VM tracing spans:
+
+```rust
+pub struct SpanRingBuffer {
+    buffer: Box<[Span; 1024]>,
+    head: AtomicU64,
+    tail: AtomicU64,
+}
+
+#[repr(C)]
+pub struct Span {
+    opcode:      u8,
+    service_id:  u16,
+    layer:       u8,
+    duration_ns: u64,
+    status:      u8,
+}
+```
+
+- Uses `thread_local!` storage — one buffer per rayon thread
+- `push()` at each opcode dispatch in the VM
+- `drain()` called via `flowrulz_get_spans` after execution
+- Compatible with OpenTelemetry span output format

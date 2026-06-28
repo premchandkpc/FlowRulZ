@@ -6,6 +6,7 @@ use super::optimizer::OptimizedPipeline;
 use crate::bytecode::instruction::Instruction;
 use crate::bytecode::opcode::{ChunkMode, GateOp, OpCode, RetryStrategy};
 use crate::bytecode::plan::{ChunkConfig, ExecutionPlan, RetryConfig};
+use crate::bytecode::resolved_type::{FieldSchema, ResolvedType, Schema};
 
 #[derive(Debug)]
 pub enum CompileError {
@@ -16,6 +17,7 @@ pub enum CompileError {
     DuplicateLabel(String),
     UnknownLabel(String),
     UnterminatedPipeline(String),
+    SchemaParseError(String),
 }
 
 impl fmt::Display for CompileError {
@@ -30,6 +32,7 @@ impl fmt::Display for CompileError {
             CompileError::DuplicateLabel(l) => write!(f, "duplicate label: {}", l),
             CompileError::UnknownLabel(l) => write!(f, "unknown label: {}", l),
             CompileError::UnterminatedPipeline(s) => write!(f, "unterminated pipeline: {}", s),
+            CompileError::SchemaParseError(s) => write!(f, "schema parse error: {}", s),
         }
     }
 }
@@ -179,6 +182,11 @@ impl Compiler {
                 ASTNode::Dag(body) => {
                     let dag_id = self.compile_dag(&mut plan, body)?;
                     instructions.push(Instruction::dag(dag_id));
+                }
+                ASTNode::Schema(body) => {
+                    let schema = self.compile_schema(body)?;
+                    plan.schema = Some(schema);
+                    instructions.push(Instruction::type_guard(1));
                 }
                 ASTNode::Pipe => {}
             }
@@ -411,6 +419,52 @@ impl Compiler {
 
         layers
     }
+
+    fn compile_schema(&self, body: &str) -> Result<Schema, CompileError> {
+        let content = body
+            .trim_start_matches('{')
+            .trim_end_matches('}')
+            .trim();
+        if content.is_empty() {
+            return Err(CompileError::SchemaParseError("empty schema body".into()));
+        }
+        let mut fields = Vec::new();
+        for segment in content.split(',') {
+            let seg = segment.trim();
+            if seg.is_empty() {
+                continue;
+            }
+            let required = seg.starts_with('!');
+            let name_part = if required { &seg[1..] } else { seg };
+            let parts: Vec<&str> = name_part.split(':').collect();
+            if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
+                return Err(CompileError::SchemaParseError(format!(
+                    "invalid field spec: '{}'",
+                    seg
+                )));
+            }
+            let name = parts[0].trim().to_string();
+            let type_str = parts[1].trim().to_lowercase();
+            let r#type = match type_str.as_str() {
+                "string" => ResolvedType::String,
+                "int" => ResolvedType::Integer,
+                "float" => ResolvedType::Float,
+                "bool" => ResolvedType::Boolean,
+                "object" => ResolvedType::Object,
+                "array" => ResolvedType::Array,
+                "null" => ResolvedType::Null,
+                "any" => ResolvedType::Any,
+                _ => {
+                    return Err(CompileError::SchemaParseError(format!(
+                        "unknown type '{}' for field '{}'",
+                        type_str, name
+                    )));
+                }
+            };
+            fields.push(FieldSchema { name, r#type, required });
+        }
+        Ok(Schema { fields })
+    }
 }
 
 fn calc_complexity(plan: &ExecutionPlan) -> u32 {
@@ -526,6 +580,28 @@ mod tests {
             .filter(|i| i.op == OpCode::Async)
             .collect();
         assert_eq!(async_instrs.len(), 1);
+    }
+
+    #[test]
+    fn test_compile_schema() {
+        let plan = compile_str("schema:{name:string,!age:int} n:svc", "schema-test").unwrap();
+        let schema = plan.schema.as_ref().expect("should have schema");
+        assert_eq!(schema.fields.len(), 2);
+        assert_eq!(schema.fields[0].name, "name");
+        assert_eq!(schema.fields[0].r#type, ResolvedType::String);
+        assert!(!schema.fields[0].required);
+        assert_eq!(schema.fields[1].name, "age");
+        assert_eq!(schema.fields[1].r#type, ResolvedType::Integer);
+        assert!(schema.fields[1].required);
+        let has_type_guard = plan.instructions.iter().any(|i| i.op == OpCode::TypeGuard);
+        assert!(has_type_guard);
+    }
+
+    #[test]
+    fn test_compile_schema_empty_error() {
+        let result = compile_str("schema:{} n:svc", "schema-empty");
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), CompileError::SchemaParseError(_)));
     }
 
     #[test]

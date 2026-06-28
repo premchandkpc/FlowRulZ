@@ -32,6 +32,7 @@ pub enum ASTNode {
         mode: String,
     },
     Dag(String),
+    Schema(String),
     Label(String),
     Jmp(String),
 }
@@ -66,6 +67,7 @@ impl fmt::Display for ASTNode {
             ASTNode::Timeout(ms) => write!(f, "t{}", ms),
             ASTNode::Chunk { count, mode } => write!(f, "chunk:{}:{}", count, mode),
             ASTNode::Dag(body) => write!(f, "dag:{}", body),
+            ASTNode::Schema(body) => write!(f, "schema:{}", body),
             ASTNode::Label(l) => write!(f, "{}:", l),
             ASTNode::Jmp(l) => write!(f, "j:{}", l),
         }
@@ -313,6 +315,7 @@ fn token_to_ast(token: &Token) -> Result<ASTNode, ParseError> {
             mode: mode.clone(),
         }),
         Token::Dag(body) => Ok(ASTNode::Dag(body.clone())),
+        Token::Schema(body) => Ok(ASTNode::Schema(body.clone())),
         Token::Label(l) => Ok(ASTNode::Label(l.clone())),
         Token::Jmp(l) => Ok(ASTNode::Jmp(l.clone())),
     }

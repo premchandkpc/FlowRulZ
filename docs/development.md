@@ -24,7 +24,7 @@ The Rust library is built as both `cdylib` and `rlib`. The `cdylib` (`libflowrul
 ## Test
 
 ```bash
-# All tests
+# All tests (Rust 86 + Go all packages)
 make test
 
 # Rust only
@@ -37,28 +37,37 @@ CGO_ENABLED=1 go test -count=1 ./go/...
 CGO_ENABLED=1 go vet ./go/...
 ```
 
+## Bench
+
+```bash
+make bench
+```
+
+Criterion benchmarks: compile (5 DSL variants), VM execute, full pipeline, gate eval, DAG.
+
 ## Project Layout
 
 ```
 rust/src/
 ├── lib.rs              # C FFI exports, module declarations
-├── bytecode/           # Instruction set and plan types
+├── bytecode/           # Instruction set, plan types, type system
 │   ├── mod.rs
-│   ├── opcode.rs       # Opcode enum + metadata
+│   ├── opcode.rs       # Opcode enum (0–22) + GateOp, ChunkMode, RetryStrategy
 │   ├── instruction.rs  # 8-byte packed Instruction
 │   ├── consts.rs       # ConstantPool
 │   ├── services.rs     # ServiceTable
-│   ├── dag_table.rs    # DAGTable
+│   ├── dag_table.rs    # DAGTable + DAGFailurePolicy + MergeStrategy
 │   ├── mapexpr.rs      # MapExpr
+│   ├── resolved_type.rs# ResolvedType enum, FieldSchema, Schema
 │   └── plan.rs         # ExecutionPlan
 ├── dsl/                # Language toolchain
 │   ├── mod.rs
 │   ├── lexer.rs        # Tokenizer
 │   ├── parser.rs       # AST builder
 │   ├── optimizer.rs    # AST optimizations
-│   └── compiler.rs     # AST → ExecutionPlan
+│   └── compiler.rs     # AST → ExecutionPlan (complexity scoring, schema)
 ├── executor/           # Virtual machine
-│   ├── mod.rs          # VM dispatch loop
+│   ├── mod.rs          # VM dispatch loop + TypeGuard handler
 │   ├── next.rs         # Service call + retry
 │   ├── parallel.rs     # Parallel fan-out
 │   ├── gate.rs         # Conditional branch
@@ -67,8 +76,11 @@ rust/src/
 │   ├── dag.rs          # DAG execution
 │   ├── chunk.rs        # Chunk processing
 │   ├── helpers.rs      # JSON utilities
-│   └── expr.rs         # Expression engine
+│   └── expr.rs         # Expression engine (21 builtins)
 ├── ffi.rs              # extern "C" exports for Go bridge
+├── tracing/            # Span ring buffer
+│   ├── mod.rs          # Span struct + thread_local buffer + emit_span
+│   └── ring_buffer.rs  # Lock-free ring buffer (atomic head/tail)
 └── memory/             # Memory management
     ├── mod.rs
     ├── arena.rs        # Bump allocator
@@ -79,20 +91,20 @@ go/
 ├── cmd/flowrulz/           # Entry point (HTTP admin + consumer)
 └── internal/
     ├── bridge/             # cgo bindings to Rust FFI
-    │   ├── bridge.go       # Go wrappers + //export callback
+    │   ├── bridge.go       # Go wrappers + sync.Map caller dispatch
     │   ├── caller_bridge.c # C helper for function pointer callback
     │   └── bridge_test.go  # Integration tests
-    ├── engine/             # Rule lifecycle (Deploy, Remove, ExecuteAll)
+    ├── engine/             # Rule lifecycle, versioning, lane routing, persistence
     ├── flow/               # Flow orchestrator with state machine
     ├── transport/          # Kafka consumer/producer
-    ├── admin/              # HTTP admin API (POST/DELETE/GET rules)
+    ├── admin/              # HTTP API (rules CRUD, validate, promote, lanes)
     ├── observability/      # Metrics counters
     └── reliability/        # Circuit breaker
 ```
 
 ## Adding a New Opcode
 
-1. Define opcode in `bytecode/opcode.rs` — add variant to `Opcode` enum
+1. Define opcode in `bytecode/opcode.rs` — add variant to `OpCode` enum
 2. Add builder in `bytecode/instruction.rs` — `Instruction::your_op()`
 3. Handle in `dsl/lexer.rs` — add token variant and lex logic
 4. Handle in `dsl/parser.rs` — add AST node and parse logic
@@ -105,7 +117,7 @@ go/
 
 1. Define in `executor/expr.rs`:
    - Add function name to `eval_expr()` match
-   - Add logic in `exec_builtin()` match
+   - Add logic in `call_builtin()` match (takes `&[serde_json::Value]`)
 2. Add test covering the new function
 
 ## Conventions
@@ -114,7 +126,7 @@ go/
 - **Errors:** Use `thiserror` derive macros; return `Result<_, ExecError>` or `Result<_, CompileError>`
 - **Testing:** Rust unit tests inline in source files (`#[cfg(test)]`); Go test files alongside source
 - **FFI safety:** All `extern "C"` functions check null pointers; return error codes
-- **Go cgo pattern:** Callbacks use `//export` + C helper file (`caller_bridge.c`) to pass Go functions as C function pointers
+- **Go cgo pattern:** Callbacks use `//export` + `sync.Map` caller dispatch by `ctx_id`; no mutex in hot path
 
 ## Performance Considerations
 
@@ -122,3 +134,4 @@ go/
 - Service calls are FFI-bound (C callbacks into Go); overhead dominated by serialization, not dispatch
 - Slab pool should be sized to workload peak concurrency
 - Expression engine uses simple recursive descent — no parser generator dependency
+- Span ring buffer is thread-local + lock-free; zero contention per thread

@@ -95,9 +95,7 @@ fn eval_expr(expr: &Expr, body: &serde_json::Value) -> Result<serde_json::Value,
                 .map(|a| eval_expr(a, body))
                 .collect();
             let evaluated = evaluated?;
-            let str_owned: Vec<String> = evaluated.iter().map(value_to_string).collect();
-            let refs: Vec<&str> = str_owned.iter().map(|s| s.as_str()).collect();
-            call_builtin(name, &refs)
+            call_builtin(name, &evaluated)
         }
         Expr::Concat(parts) => {
             let mut result = String::new();
@@ -129,9 +127,13 @@ fn resolve_field(body: &serde_json::Value, path: &str) -> Result<serde_json::Val
     for part in parts {
         match current {
             serde_json::Value::Object(ref map) => {
-                current = map.get(part).cloned().unwrap_or(serde_json::Value::Null);
+                if let Some(val) = map.get(part) {
+                    current = val.clone();
+                } else {
+                    return Err(format!("FieldNotFound: path segment '{}' not found in '{}'", part, path));
+                }
             }
-            _ => return Ok(serde_json::Value::Null),
+            _ => return Err(format!("FieldNotFound: cannot navigate into non-object at path '{}' segment '{}'", path, part)),
         }
     }
     Ok(current)
@@ -172,56 +174,168 @@ fn set_field(
     }
 }
 
-fn call_builtin(name: &str, args: &[&str]) -> Result<serde_json::Value, String> {
+fn arg_as_str(args: &[serde_json::Value], i: usize) -> String {
+    args.get(i).map(value_to_string).unwrap_or_default()
+}
+
+fn arg_as_f64(args: &[serde_json::Value], i: usize) -> Option<f64> {
+    args.get(i).and_then(|v| match v {
+        serde_json::Value::Number(n) => n.as_f64(),
+        serde_json::Value::String(s) => s.parse::<f64>().ok(),
+        _ => None,
+    })
+}
+
+fn call_builtin(name: &str, args: &[serde_json::Value]) -> Result<serde_json::Value, String> {
     match name {
         "uuid" => Ok(serde_json::Value::String(uuid::Uuid::new_v4().to_string())),
         "now" => Ok(serde_json::Value::String(now_iso())),
+        "epoch" => {
+            let d = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default();
+            Ok(serde_json::Value::Number(
+                serde_json::Number::from_f64(d.as_secs_f64()).unwrap_or(serde_json::Number::from(0)),
+            ))
+        }
         "lower" => {
-            let s = args.first().unwrap_or(&"");
+            let s = arg_as_str(args, 0);
             Ok(serde_json::Value::String(s.to_lowercase()))
         }
         "upper" => {
-            let s = args.first().unwrap_or(&"");
+            let s = arg_as_str(args, 0);
             Ok(serde_json::Value::String(s.to_uppercase()))
         }
         "trim" => {
-            let s = args.first().unwrap_or(&"");
+            let s = arg_as_str(args, 0);
             Ok(serde_json::Value::String(s.trim().to_string()))
         }
         "length" => {
-            let s = args.first().unwrap_or(&"");
+            let s = arg_as_str(args, 0);
             Ok(serde_json::Value::Number(serde_json::Number::from(s.len())))
         }
-        "concat" => Ok(serde_json::Value::String(args.concat())),
+        "concat" => {
+            let mut out = String::new();
+            for a in args {
+                out.push_str(&value_to_string(a));
+            }
+            Ok(serde_json::Value::String(out))
+        }
         "base64" => {
-            let s = args.first().unwrap_or(&"");
-            Ok(serde_json::Value::String(base64_encode(s)))
+            let s = arg_as_str(args, 0);
+            Ok(serde_json::Value::String(base64_encode(&s)))
         }
         "json" => {
-            let s = args.first().unwrap_or(&"");
-            serde_json::from_str(s).map_err(|e| format!("json parse error: {}", e))
+            let s = arg_as_str(args, 0);
+            serde_json::from_str(&s).map_err(|e| format!("json parse error: {}", e))
         }
         "substring" => {
-            let s = args.first().unwrap_or(&"");
-            let start = args
-                .get(1)
-                .and_then(|a| a.parse::<f64>().ok())
-                .unwrap_or(0.0) as usize;
-            let end = args
-                .get(2)
-                .and_then(|a| a.parse::<f64>().ok())
-                .unwrap_or(s.len() as f64) as usize;
+            let s = arg_as_str(args, 0);
+            let start = arg_as_f64(args, 1).unwrap_or(0.0) as usize;
+            let end = arg_as_f64(args, 2).unwrap_or(s.len() as f64) as usize;
             let end = end.min(s.len());
             Ok(serde_json::Value::String(s[start..end].to_string()))
         }
         "replace" => {
-            let s = args.first().unwrap_or(&"");
-            let from = args.get(1).unwrap_or(&"");
-            let to = args.get(2).unwrap_or(&"");
-            Ok(serde_json::Value::String(s.replace(from, to)))
+            let s = arg_as_str(args, 0);
+            let from = arg_as_str(args, 1);
+            let to = arg_as_str(args, 2);
+            Ok(serde_json::Value::String(s.replace(&from, &to)))
+        }
+        "to_string" => {
+            let v = args.first().cloned().unwrap_or(serde_json::Value::Null);
+            Ok(serde_json::Value::String(value_to_string(&v)))
+        }
+        "parse_int" => {
+            let s = arg_as_str(args, 0);
+            let n: i64 = s.parse().map_err(|e| format!("parse_int error: {}", e))?;
+            Ok(serde_json::Value::Number(serde_json::Number::from(n)))
+        }
+        "parse_float" => {
+            let s = arg_as_str(args, 0);
+            let n: f64 = s.parse().map_err(|e| format!("parse_float error: {}", e))?;
+            Ok(serde_json::Number::from_f64(n)
+                .map(serde_json::Value::Number)
+                .unwrap_or(serde_json::Value::Null))
+        }
+        "coalesce" => {
+            for a in args {
+                if !a.is_null() {
+                    return Ok(a.clone());
+                }
+            }
+            Ok(serde_json::Value::Null)
+        }
+        "default" => {
+            if let Some(val) = args.first() {
+                if !val.is_null() {
+                    return Ok(val.clone());
+                }
+            }
+            Ok(args.get(1).cloned().unwrap_or(serde_json::Value::Null))
+        }
+        "contains" => {
+            let list = args.first().ok_or("contains: missing list arg")?;
+            let val = args.get(1).ok_or("contains: missing value arg")?;
+            match list {
+                serde_json::Value::Array(arr) => {
+                    Ok(serde_json::Value::Bool(arr.contains(val)))
+                }
+                _ => Err("contains: first arg must be an array".to_string()),
+            }
+        }
+        "keys" => {
+            let obj = args.first().ok_or("keys: missing object arg")?;
+            match obj {
+                serde_json::Value::Object(map) => {
+                    let k: Vec<serde_json::Value> = map
+                        .keys()
+                        .map(|k| serde_json::Value::String(k.clone()))
+                        .collect();
+                    Ok(serde_json::Value::Array(k))
+                }
+                _ => Err("keys: arg must be an object".to_string()),
+            }
+        }
+        "merge" => {
+            let a = args.first().ok_or("merge: missing first arg")?;
+            let b = args.get(1).ok_or("merge: missing second arg")?;
+            merge_json(a.clone(), b.clone())
+        }
+        "hash" => {
+            let s = arg_as_str(args, 0);
+            let hash = consistent_hash(&s);
+            Ok(serde_json::Value::Number(serde_json::Number::from(hash)))
         }
         _ => Err(format!("unknown function: {}", name)),
     }
+}
+
+fn merge_json(a: serde_json::Value, b: serde_json::Value) -> Result<serde_json::Value, String> {
+    match (a, b) {
+        (serde_json::Value::Object(mut a_map), serde_json::Value::Object(b_map)) => {
+            for (k, v) in b_map {
+                if let Some(existing) = a_map.remove(&k) {
+                    if existing.is_object() && v.is_object() {
+                        a_map.insert(k, merge_json(existing, v)?);
+                    } else {
+                        a_map.insert(k, v);
+                    }
+                } else {
+                    a_map.insert(k, v);
+                }
+            }
+            Ok(serde_json::Value::Object(a_map))
+        }
+        (_, b) => Ok(b),
+    }
+}
+
+fn consistent_hash(s: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.hash(&mut h);
+    h.finish()
 }
 
 fn now_iso() -> String {

@@ -5,22 +5,32 @@ import (
 )
 
 func TestNewEngine(t *testing.T) {
-	e := New()
+	e := New("")
 	if e == nil {
 		t.Fatal("expected non-nil engine")
 	}
 }
 
 func TestDeployCompile(t *testing.T) {
-	e := New()
+	e := New("")
 	err := e.Deploy("test-1", "n:validate")
 	if err != nil {
 		t.Fatalf("Deploy failed: %v", err)
 	}
+	rules := e.Rules()
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	if len(rules[0].Versions) != 1 {
+		t.Fatalf("expected 1 version, got %d", len(rules[0].Versions))
+	}
+	if rules[0].ActivePlan() == nil {
+		t.Fatal("expected non-nil active plan")
+	}
 }
 
 func TestDeployInvalidDSL(t *testing.T) {
-	e := New()
+	e := New("")
 	err := e.Deploy("bad-rule", "invalid!!!dsl")
 	if err == nil {
 		t.Fatal("expected error for invalid DSL")
@@ -28,7 +38,7 @@ func TestDeployInvalidDSL(t *testing.T) {
 }
 
 func TestRemoveRule(t *testing.T) {
-	e := New()
+	e := New("")
 	e.Deploy("test-1", "n:validate")
 	e.Deploy("test-2", "n:validate")
 
@@ -42,8 +52,53 @@ func TestRemoveRule(t *testing.T) {
 	}
 }
 
+func TestVersionPromotion(t *testing.T) {
+	e := New("")
+	e.Deploy("test-1", "n:validate")
+	rules := e.Rules()
+	v1 := rules[0].ActivePlan().Version
+
+	e.Deploy("test-1", "n:validate")
+	rules = e.Rules()
+	v2 := rules[0].ActivePlan().Version
+	if v2 <= v1 {
+		t.Fatalf("expected version to increase, got v1=%d v2=%d", v1, v2)
+	}
+
+	err := e.Promote("test-1", v1)
+	if err != nil {
+		t.Fatalf("Promote failed: %v", err)
+	}
+	rules = e.Rules()
+	if rules[0].ActivePlan().Version != v1 {
+		t.Fatalf("expected active version %d, got %d", v1, rules[0].ActivePlan().Version)
+	}
+}
+
+func TestDrainRemovesVersion(t *testing.T) {
+	e := New("")
+	e.Deploy("test-1", "n:validate")
+	rules := e.Rules()
+	v1 := rules[0].ActivePlan().Version
+
+	e.Deploy("test-1", "n:validate")
+	rules = e.Rules()
+	if len(rules[0].Versions) != 2 {
+		t.Fatalf("expected 2 versions, got %d", len(rules[0].Versions))
+	}
+
+	err := e.Drain("test-1", v1)
+	if err != nil {
+		t.Fatalf("Drain failed: %v", err)
+	}
+	rules = e.Rules()
+	if len(rules[0].Versions) != 1 {
+		t.Fatalf("expected 1 version after drain, got %d", len(rules[0].Versions))
+	}
+}
+
 func TestExecuteAll(t *testing.T) {
-	e := New()
+	e := New("")
 	e.Deploy("test-1", "n:validate")
 
 	results, err := e.ExecuteAll([]byte(`{}`), nil)
@@ -53,4 +108,20 @@ func TestExecuteAll(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
+}
+
+func TestExecuteAllPinsVersion(t *testing.T) {
+	e := New("")
+	e.Deploy("test-1", "n:validate")
+
+	ch := make(chan struct{})
+	go func() {
+		e.ExecuteAll([]byte(`{}`), nil)
+		close(ch)
+	}()
+
+	rules := e.Rules()
+	vp := rules[0].ActivePlan()
+	vp.ActiveExec.Wait()
+	<-ch
 }

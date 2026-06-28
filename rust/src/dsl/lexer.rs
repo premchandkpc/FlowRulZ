@@ -30,6 +30,7 @@ pub enum Token {
         mode: String,
     },
     Dag(String),
+    Schema(String),
     Label(String),
     Jmp(String),
 }
@@ -66,6 +67,7 @@ impl fmt::Display for Token {
             Token::Timeout(ms) => write!(f, "t{}", ms),
             Token::Chunk { count, mode } => write!(f, "chunk:{}:{}", count, mode),
             Token::Dag(body) => write!(f, "dag:{}", body),
+            Token::Schema(body) => write!(f, "schema:{}", body),
             Token::Label(l) => write!(f, "{}:", l),
             Token::Jmp(l) => write!(f, "j:{}", l),
         }
@@ -80,6 +82,7 @@ pub enum LexError {
     InvalidRetry(String),
     InvalidChunk(String),
     InvalidDag(String),
+    InvalidSchema(String),
     EmptyOperand(String),
     InvalidGateOp(String),
     InvalidLabel(String),
@@ -100,6 +103,7 @@ impl fmt::Display for LexError {
             LexError::InvalidRetry(t) => write!(f, "invalid retry: {}", t),
             LexError::InvalidChunk(t) => write!(f, "invalid chunk: {}", t),
             LexError::InvalidDag(t) => write!(f, "invalid dag: {}", t),
+            LexError::InvalidSchema(t) => write!(f, "invalid schema: {}", t),
             LexError::EmptyOperand(t) => write!(f, "empty operand for: {}", t),
             LexError::InvalidGateOp(t) => write!(f, "invalid gate operator: {}", t),
             LexError::InvalidLabel(t) => write!(f, "invalid label: {}", t),
@@ -215,6 +219,13 @@ fn classify(word: &str) -> Result<Token, LexError> {
             return Err(LexError::InvalidDag(word.to_string()));
         }
         return Ok(Token::Dag(body));
+    }
+    if word.starts_with("schema:") {
+        let body = word[7..].to_string();
+        if body.is_empty() {
+            return Err(LexError::InvalidSchema(word.to_string()));
+        }
+        return Ok(Token::Schema(body));
     }
     if word.ends_with(':') && word.len() > 2 {
         let label = word[..word.len() - 1].to_string();

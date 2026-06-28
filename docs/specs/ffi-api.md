@@ -41,6 +41,7 @@ int flowrulz_compile(
 
 ```c
 // Execute a compiled plan against a message body
+// ctx_id   — unique execution context ID (for concurrent caller dispatch)
 // caller_cb — callback invoked for each service call
 // plan_ptr  — bincode-serialized ExecutionPlan
 // plan_len  — plan length
@@ -63,9 +64,10 @@ int flowrulz_compile(
 // All optional context params default to empty/zero when null pointers are passed.
 // Returns 0 on success, negative on error
 int flowrulz_execute(
+    uint64_t ctx_id,
     const unsigned char* plan_ptr, size_t plan_len,
     const unsigned char* body_ptr, size_t body_len,
-    int (*caller_cb)(uint16_t, const unsigned char*, size_t, unsigned char*, size_t*),
+    int (*caller_cb)(uint64_t, uint16_t, const unsigned char*, size_t, unsigned char*, size_t*),
     unsigned char* out_ptr, size_t out_cap, size_t* out_len,
     unsigned char* err_ptr, size_t err_cap, size_t* err_len,
     const unsigned char* msg_id_ptr, size_t msg_id_len,
@@ -80,6 +82,7 @@ int flowrulz_execute(
 The `caller_cb` callback dispatches service calls from the VM:
 
 ```c
+// ctx_id   — execution context ID (matches the ctx_id passed to flowrulz_execute)
 // svc_id   — interned service name ID
 // body     — request body for the service
 // body_len — body length
@@ -87,6 +90,7 @@ The `caller_cb` callback dispatches service calls from the VM:
 // resp_len — in: capacity, out: written bytes
 // Returns 0 on success, negative on error
 int caller_callback(
+    uint64_t ctx_id,
     uint16_t svc_id,
     const unsigned char* body, size_t body_len,
     unsigned char* resp, size_t* resp_len
@@ -118,6 +122,16 @@ uint16_t flowrulz_intern(const unsigned char* s_ptr, size_t s_len);
 void flowrulz_intern_lookup(uint16_t id, unsigned char* out_ptr, size_t* out_len);
 ```
 
+### Observability (Planned)
+
+```c
+// Drain accumulated VM trace spans into caller buffer.
+// Returns number of bytes written (0 = no spans available).
+// Span format: (opcode u8, service_id u16, duration_ns u64) repeated.
+// This is a no-op stub until the ring buffer is implemented.
+size_t flowrulz_get_spans(unsigned char* out_ptr, size_t out_cap);
+```
+
 ## Error Codes
 
 | Constant | Value | Meaning |
@@ -141,12 +155,14 @@ The Go layer `go/internal/bridge/` uses cgo to call these functions.
 The Go bridge uses a three-layer callback dispatching:
 
 ```
-C (flowrulz_execute) → C (callerBridge) → Go (//export goServiceCaller) → Go (activeCaller callback)
+C (flowrulz_execute) → C (callerBridge) → Go (//export goServiceCaller) → Go (ServiceCaller lookup via sync.Map)
 ```
 
-1. `flowrulz_execute` (Rust) calls the C function pointer
-2. `callerBridge` (C helper in `caller_bridge.c`) forwards to the `//export`'d Go function
-3. `goServiceCaller` (Go, `//export`) calls the registered `ServiceCaller` callback via a mutex-guarded global
+1. `flowrulz_execute` (Rust) receives `ctx_id` and passes it to each callback invocation
+2. `callerBridge` (C helper) forwards `ctx_id` + args to the `//export`'d Go function
+3. `goServiceCaller` (Go, `//export`) looks up the registered `ServiceCaller` by `ctx_id` in a `sync.Map`
+
+Each `Execute()` call generates a unique `ctx_id` (atomic counter) and stores its `ServiceCaller` in the map, enabling concurrent service dispatch without mutex contention.
 
 ### Thread Safety
 
@@ -154,4 +170,4 @@ C (flowrulz_execute) → C (callerBridge) → Go (//export goServiceCaller) → 
 - `flowrulz_compile` is safe to call concurrently
 - `flowrulz_msg_alloc` / `flowrulz_msg_release` use lock-free slab pools
 - `flowrulz_intern` / `flowrulz_intern_lookup` use concurrent hash maps
-- The Go `ServiceCaller` callback is mutex-guarded (single active caller at a time)
+- The Go `ServiceCaller` callback uses `sync.Map` keyed by execution `ctx_id` — multiple callers can be active concurrently, enabling true parallelism for `Parallel` and `DAG` opcodes

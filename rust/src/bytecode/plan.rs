@@ -3,6 +3,7 @@ use super::dag_table::DAGTable;
 use super::instruction::Instruction;
 use super::mapexpr::MapExpr;
 use super::opcode::{ChunkMode, RetryStrategy};
+use super::resolved_type::Schema;
 use super::services::ServiceTable;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -31,6 +32,7 @@ pub struct ExecutionPlan {
     pub map_exprs: Vec<MapExpr>,
     pub retry_configs: Vec<RetryConfig>,
     pub chunk_configs: Vec<ChunkConfig>,
+    pub schema: Option<Schema>,
 }
 
 impl ExecutionPlan {
@@ -47,6 +49,7 @@ impl ExecutionPlan {
             map_exprs: Vec::new(),
             retry_configs: Vec::new(),
             chunk_configs: Vec::new(),
+            schema: None,
         }
     }
 

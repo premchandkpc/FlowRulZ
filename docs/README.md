@@ -1,4 +1,4 @@
-# FlowRulZ — Kafka Message Routing VM
+# FlowRulZ Documentation
 
 Two-layer rule engine: Rust core (bytecode VM + DSL compiler) + Go I/O shell.
 
@@ -8,19 +8,21 @@ Two-layer rule engine: Rust core (bytecode VM + DSL compiler) + Go I/O shell.
 FlowRulZ/
 ├── rust/          # Core: DSL toolchain, bytecode VM, memory management
 │   ├── src/
-│   │   ├── bytecode/   # Instruction set, plan format, const pool
+│   │   ├── bytecode/   # Instruction set, plan format, const pool, type system
 │   │   ├── dsl/        # Lexer, parser, optimizer, compiler
-│   │   ├── executor/   # VM dispatch loop + op handlers
+│   │   ├── executor/   # VM dispatch loop + op handlers + expr engine
+│   │   ├── tracing/    # Lock-free span ring buffer
 │   │   └── memory/     # Arena allocator, slab pool, string interning
+│   ├── benches/        # Criterion benchmarks
 │   └── Cargo.toml
 ├── go/            # Go I/O shell
 │   ├── cmd/flowrulz/   # Entry point (HTTP admin + Kafka consumer)
 │   └── internal/
-│       ├── bridge/         # cgo bindings to Rust FFI
-│       ├── engine/         # Rule lifecycle management
+│       ├── bridge/         # cgo bindings to Rust FFI (sync.Map caller dispatch)
+│       ├── engine/         # Rule lifecycle, versioning, lane routing, persistence
 │       ├── flow/           # Flow orchestration
 │       ├── transport/      # Kafka consumer/producer
-│       ├── admin/          # Admin HTTP API
+│       ├── admin/          # HTTP API (rules CRUD, validate, promote, lanes)
 │       ├── observability/  # Metrics counters
 │       └── reliability/    # Circuit breaker
 ├── docs/
@@ -31,7 +33,9 @@ FlowRulZ/
 │   │   ├── memory-management.md
 │   │   ├── ffi-api.md
 │   │   └── kafka-semantics.md
-│   └── development.md
+│   ├── development.md
+│   └── README.md
+├── CLAUDE.md
 ├── Makefile
 ├── go.mod
 └── README.md
@@ -42,6 +46,9 @@ FlowRulZ/
 ```bash
 # Full build + all tests
 make && make test
+
+# Benchmarks
+make bench
 
 # Run server (HTTP admin on :8080)
 ./flowrulz
@@ -56,4 +63,7 @@ make && make test
 | Slab pool for messages | Zero-alloc message lifecycle via `flowrulz_msg_alloc` / `flowrulz_msg_release` |
 | DSL → bytecode compiler | Compile once, execute many; no parse cost per message |
 | DAG as embedded sub-language | Complex routing expressed declaratively; validated at compile time |
-| Go service caller bridge | Rust VM calls back into Go via `//export` + C helper; enables Go service dispatch |
+| Go service caller bridge | Rust VM calls back into Go via `sync.Map` + C helper; concurrent callers by ctxID |
+| Complexity scoring | Compile-time cost estimate → lane assignment (fast/normal/heavy) |
+| Schema-typed fields | Runtime type validation via `TypeGuard` opcode; no silent type coercion |
+| File-based persistence | Rules saved/loaded as JSON; no external DB dependency |

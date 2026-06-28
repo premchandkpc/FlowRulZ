@@ -33,6 +33,7 @@ uint16_t flowrulz_intern(const unsigned char* s_ptr, size_t s_len);
 void flowrulz_intern_lookup(uint16_t id, unsigned char* out_ptr, size_t* out_len);
 
 size_t flowrulz_get_spans(unsigned char* out_ptr, size_t out_cap);
+uint32_t flowrulz_plan_complexity(const unsigned char* plan_ptr, size_t plan_len);
 
 caller_cb_t getCallerBridgePtr(void);
 */
@@ -209,4 +210,13 @@ func GetSpans() []byte {
 	buf := make([]byte, 4096)
 	n := C.flowrulz_get_spans((*C.uchar)(unsafe.Pointer(&buf[0])), C.size_t(cap(buf)))
 	return buf[:n]
+}
+
+func PlanComplexity(plan []byte) uint32 {
+	if len(plan) == 0 {
+		return 0
+	}
+	return uint32(C.flowrulz_plan_complexity(
+		(*C.uchar)(unsafe.Pointer(&plan[0])), C.size_t(len(plan)),
+	))
 }

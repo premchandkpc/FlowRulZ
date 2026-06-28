@@ -2,14 +2,14 @@
 
 ## Overview
 
-A compact, single-line DSL for defining Kafka message routing pipelines. The compiler compiles DSL → AST → optimized AST → bytecode `ExecutionPlan`.
+A compact, single-line DSL for defining message routing pipelines. The compiler compiles DSL → AST → optimized AST → bytecode `ExecutionPlan`.
 
 ## Pipeline Structure
 
 A pipeline is a sequence of **operations** separated by spaces:
 
 ```
-[t<timeout>] <operations...>
+[schema:{...}] [t<timeout>] <operations...>
 ```
 
 ## Operations
@@ -17,22 +17,22 @@ A pipeline is a sequence of **operations** separated by spaces:
 | Op | Syntax | Description |
 |----|--------|-------------|
 | **Next** | `n:<service>` | Forward message to service |
-| **Async** | `n:<service> async` | Fire-and-forget with no wait |
-| **Buffer** | `n:<service> buffer` | Non-blocking send; no retry |
+| **Async** | `a:<service>` | Fire-and-forget with no wait |
 | **Parallel** | `p:<svc1>,<svc2>,...` | Fan-out to multiple services |
 | **Collect** | `c` | Collect parallel results into JSON array |
 | **Fallback** | `f:<service>` | Route on failure |
 | **Gate** | `g:<field><op><value>` | Conditional jump |
-| **Split** | `s` or `split` | Split array message into individual records |
-| **Map** | `m:<dest>:<src>` or `m:<dest>=<expr>` | Transform message fields |
+| **Split** | `s:<field>` | Split array message by field |
+| **Map** | `m:<expr>` | Transform message fields |
 | **Emit** | `e:<svc1>,<svc2>` | Fire-and-forget publish |
-| **Drop** | `d` or `drop` | Halt processing (dead end) |
-| **Key** | `k:<expr>` | Routing key expression |
+| **Drop** | `d` | Halt processing (dead end) |
+| **Key** | `k:<field>` | Routing key field |
 | **Pipe** | `\|` | Pass-thru (nop, removed by optimizer) |
-| **Timeout** | `t<ms>` | Set/hoist timeout for subsequent calls |
+| **Timeout** | `t<ms>` | Set timeout for subsequent calls |
 | **Retry** | `r<N>:<strategy>` | Attach retry policy to preceding call |
 | **Chunk** | `chunk:<N>:<mode>` | Split payload into chunks |
 | **DAG** | `dag:{<edges>}` | Directed acyclic graph routing |
+| **Schema** | `schema:{<field specs>}` | Attach type schema (TypeGuard) |
 | **Label** | `<name>:` | Target for Jmp |
 | **Jmp** | `j:<label>` | Unconditional jump |
 
@@ -49,18 +49,10 @@ Synchronous call to a named service. Waits for response.
 ### Async
 
 ```
-n:<service_name> async
+a:<service_name>
 ```
 
-Non-blocking call; execution continues immediately. Can also be written as two operations.
-
-### Buffer
-
-```
-n:<service_name> buffer
-```
-
-Non-blocking buffered send. No retry semantics.
+Non-blocking call; execution continues immediately.
 
 ### Timeout
 
@@ -95,7 +87,6 @@ Attaches a retry policy to the preceding service call. Must directly follow a Ne
 ```
 n:validate r3:exp
 n:payment r3:fixed:100
-n:retry-svc r5:lin:200
 ```
 
 ### Gate (Conditional Branch)
@@ -104,7 +95,7 @@ n:retry-svc r5:lin:200
 g:<field><operator><value> <on-true> [f:<on-false>]
 ```
 
-Evaluates a JSON field against a value. On match, executes the next operation; on failure, jumps to Fallback.
+Evaluates a JSON field against a value. On match, executes the next operation; on failure, jumps to Fallback. Field path navigation emits a structured `FieldNotFound` error (not silent null) for missing intermediate fields.
 
 **Operators:**
 | Op | Meaning |
@@ -115,13 +106,13 @@ Evaluates a JSON field against a value. On match, executes the next operation; o
 | `<` | Less than |
 | `>=` | Greater or equal |
 | `<=` | Less or equal |
-| `~` | Contains (substring) |
+| `contains` | Substring/array membership |
 
 **Field paths** support dotted navigation:
 ```
 g:user.role==admin n:admin-panel f:user-panel
 g:amount>10000 n:manual-review f:auto-approve
-g:tags~urgent n:priority-queue
+g:tags.containsurgent n:priority-queue
 ```
 
 ### Pipe
@@ -130,7 +121,7 @@ g:tags~urgent n:priority-queue
 <operation1> | <operation2>
 ```
 
-A no-op separator. The optimizer removes pipe nodes, merging adjacent operations. Present in the language for readability.
+A no-op separator. The optimizer removes pipe nodes.
 
 ### Parallel / Collect
 
@@ -140,7 +131,7 @@ p:<svc_a>,<svc_b>,<svc_c> c
 
 Fan-out to multiple services in parallel. `c` (collect) merges all responses into a JSON array under the `_parallel` field.
 
-**Validation:** `c` must immediately follow a Parallel. Error otherwise.
+**Validation:** `c` must immediately follow a Parallel.
 
 ### Fallback
 
@@ -148,54 +139,31 @@ Fan-out to multiple services in parallel. `c` (collect) merges all responses int
 f:<service_name>
 ```
 
-Executed when the preceding operation fails (timeout, error, etc.). Must follow a service call or gate.
-
-**Examples:**
-```
-n:validate f:error-queue
-g:amount>10000 n:manual f:auto-reject
-```
+Executed when the preceding operation fails.
 
 ### Split
 
 ```
-s
+s:<field>
 ```
 
-If the message body is a JSON array, split it into individual messages and process each independently. The array must contain only objects.
-
-**Example:**
-```
-s n:process-each e:results
-```
+Split a message by the specified field. Each element of the array field is processed independently.
 
 ### Map (Field Transformation)
 
 ```
-m:<dest>=<expression>
-m:<dest>:<source_field>
+m:<expr>
 ```
 
-Two modes:
+Evaluates an expression and transforms the message. Expressions use dots for field paths and support function calls.
 
-**Copy mode:** `m:target.field:source.field` — copies a value from source path to destination path.
-
-**Expression mode:** `m:target.field=expr` — evaluates an expression and assigns the result.
-
-**Expressions:**
-| Form | Example |
-|------|---------|
-| Field path | `m:x=.user.name` |
-| String literal | `m:x='hello'` |
-| Concatenation | `m:x=.first + ' ' + .last` |
-| Function call | `m:x=uuid()` |
-
-**Built-in functions:**
+**Built-in functions (21 total):**
 
 | Function | Description |
 |----------|-------------|
 | `uuid()` | Generate UUID v4 |
 | `now()` | Current ISO timestamp |
+| `epoch()` | Unix timestamp (seconds since epoch) |
 | `lower(s)` | Lowercase string |
 | `upper(s)` | Uppercase string |
 | `trim(s)` | Trim whitespace |
@@ -205,17 +173,26 @@ Two modes:
 | `json(s)` | Parse JSON string |
 | `substring(s, start, end)` | Substring |
 | `replace(s, from, to)` | String replace |
+| `to_string(v)` | Coerce any value to string |
+| `parse_int(s)` | Parse string → integer |
+| `parse_float(s)` | Parse string → float |
+| `coalesce(a, b)` | First non-null value |
+| `default(field, val)` | Field or default value if null/missing |
+| `contains(list, val)` | Array membership check |
+| `keys(obj)` | Object key extraction |
+| `merge(a, b)` | Deep merge two objects |
+| `hash(alg, s)` | Hash (md5/sha1/sha256) |
+
+`call_builtin` takes `&[serde_json::Value]` (not `&[&str]`).
 
 **Examples:**
 ```
-m:processed_at=now()
-m:user_id=.id
-m:full_name=.first + ' ' + .last
-m:display=upper(.name)
-m:email_hash=base64(.email)
-m:greeting='hello ' + .name
-m:payload=json(.raw_json)
-m:text=replace(.body, 'foo', 'bar')
+m:.processed_at=now()
+m:.user_id=.id
+m:.display=upper(.name)
+m:.greeting='hello ' + .name
+m:.payload=json(.raw_json)
+m:.hash=hash(md5, .email)
 ```
 
 ### Emit
@@ -224,12 +201,7 @@ m:text=replace(.body, 'foo', 'bar')
 e:<service_a>,<service_b>,...
 ```
 
-Fire-and-forget publish to one or more services. Non-blocking, no response expected.
-
-**Example:**
-```
-n:process e:notify,analytics,audit-log
-```
+Fire-and-forget publish to one or more services.
 
 ### Drop
 
@@ -237,20 +209,15 @@ n:process e:notify,analytics,audit-log
 d
 ```
 
-Terminates pipeline execution immediately. Any operations after Drop are dead code (optimizer removes them). Label targets are preserved even after Drop.
-
-**Example:**
-```
-g:status==blocked d n:normal-path
-```
+Terminates pipeline execution immediately.
 
 ### Key (Routing Key)
 
 ```
-k:<expression>
+k:<field>
 ```
 
-Sets or transforms the routing key used for partitioning.
+Sets the routing key used for partitioning.
 
 ### Chunk
 
@@ -266,38 +233,60 @@ Splits the message into chunks of size N before the subsequent operation.
 | `seq` | Process chunks sequentially |
 | `par` | Process chunks in parallel |
 
-**Example:**
-```
-chunk:10:seq n:storage
-chunk:50:par n:batch-process
-```
-
 ### DAG (Directed Acyclic Graph)
 
 ```
 dag:{<node>: [<dependencies>], ...} e:<output>
 ```
 
-Declarative DAG routing. Each node is a service; dependencies are listed as a comma-separated list. The DAG executes layer-by-layer: all services in a layer execute in parallel; a service starts only when all its dependencies complete.
+Declarative DAG routing. Each node is a service; dependencies are listed as a comma-separated list.
 
 **Syntax:**
 ```
 dag:{A:[],B:[A],C:[A],D:[B,C]} e:output
 ```
 
-This creates:
+Creates:
 ```
 Layer 0: A
 Layer 1: B, C (parallel, depend on A)
 Layer 2: D (depends on B and C)
 ```
 
-After all layers complete, results are merged into a JSON object under each node's key. `e:<service>` emits the merged result.
+After all layers complete, results are merged. `e:<service>` emits the merged result.
 
 **Validation at compile time:**
 - Cycle detection (error on cycles)
 - Unknown service references
-- Disconnected nodes warning
+- Compile-time DAGTable fields: `failure_policy` (AbortAll/ContinueOthers/SkipDependents), `node_timeouts`, `merge_strategy` (LastWins/ArrayConcat/DeepMerge/ExplicitMap), `distributed`
+
+### Schema (Type Guard)
+
+```
+schema:{field:type,!required_field:type}
+```
+
+Attaches a type schema to the pipeline. The compiler emits a `TypeGuard` opcode that validates the incoming message body against the schema at runtime.
+
+**Type tags:**
+| Tag | Rust Type |
+|-----|-----------|
+| `string` | `ResolvedType::String` |
+| `int` | `ResolvedType::Integer` |
+| `float` | `ResolvedType::Float` |
+| `bool` | `ResolvedType::Boolean` |
+| `object` | `ResolvedType::Object` |
+| `array` | `ResolvedType::Array` |
+| `null` | `ResolvedType::Null` |
+| `any` | `ResolvedType::Any` |
+
+Fields prefixed with `!` are required (error if missing). Non-required fields default to `Null` when absent.
+
+**Examples:**
+```
+schema:{name:string,!age:int,!amount:float} n:validate
+schema:{id:string} n:process
+```
 
 ### Labels and Jumps
 
@@ -306,11 +295,6 @@ After all layers complete, results are merged into a JSON object under each node
 ```
 
 Labels mark a position in the pipeline. Jumps transfer control unconditionally.
-
-**Requirements:**
-- Labels must be unique within a pipeline
-- Jump targets must exist
-- Labels are preserved through optimization (even after dead code removal)
 
 **Example:**
 ```
@@ -334,10 +318,32 @@ g:amount>10000 n:manual-review r3:exp f:auto-reject
 dag:{enrich:[],validate:[enrich],store:[validate]} e:audit-log
 ```
 
-**Split, process, collect:**
+**Schema-typed pipeline:**
 ```
-s n:enrich g:type==order n:order-pipeline n:generic-pipeline c e:results
+schema:{!order_id:string,!amount:float,!user:string} t500 n:validate e:notify
 ```
+
+## Complexity Scoring
+
+`complexity_score` is computed at compile time for lane routing:
+
+| Opcode | Score |
+|--------|-------|
+| Next, Async | 10 |
+| Parallel, DAG | 20 |
+| Chunk | 25 |
+| Gate | 5 |
+| Map | 3 |
+| Emit | 8 |
+| Buffer | 15 |
+| All others | 1 |
+
+**Lane assignment:**
+| Score | Lane |
+|-------|------|
+| < 10 | fast |
+| ≤ 50 | normal |
+| > 50 | heavy |
 
 ## Error Handling
 
@@ -345,10 +351,12 @@ s n:enrich g:type==order n:order-pipeline n:generic-pipeline c e:results
 |-------|-------|
 | Empty pipeline | No operations provided |
 | Invalid token | Unrecognized syntax |
-| Empty operand | Missing service/field name |
+| FieldNotFound | Missing field in path navigation |
 | Collect without parallel | `c` not preceded by `p:` |
 | Retry without service | `r:` not following a call |
 | Unknown service in DAG | Dependency references missing node |
 | Cycle detected | DAG has directed cycles |
 | Duplicate label | Label name used twice |
 | Undefined jump target | `j:` references non-existent label |
+| SchemaParseError | Invalid schema field spec |
+| TypeGuard | Runtime type validation failure |

@@ -155,3 +155,65 @@ Messages are `serde_json::Value` (owned, heap-allocated JSON trees). The VM:
 - Service calls are synchronous from Rust's perspective (C FFI blocks)
 - DAG node execution is fully parallel within each layer
 - Chunk processing (par mode) uses rayon work-stealing
+
+---
+
+## Gaps & Planned Features
+
+### VM Trace Spans (Planned)
+
+The VM currently emits no observability data. A per-opcode span ring buffer is planned:
+
+```rust
+#[repr(C)]
+pub struct Span {
+    opcode:      u8,
+    service_id:  u16,
+    layer:       u8,        // DAG layer (0 for non-DAG)
+    duration_ns: u64,
+    status:      u8,        // 0=ok, 1=error, 2=timeout
+}
+```
+
+- Thread-local lock-free ring buffer (1024 spans per thread)
+- Span emitted at each `dispatch()` call
+- Drained via `flowrulz_get_spans(out_ptr, out_cap) -> size_t` (currently stubbed)
+
+### TypeGuard Opcode (Planned)
+
+New opcode 23: runtime type check for fields without schema coverage.
+
+```rust
+OpCode::TypeGuard => {
+    // a = field_const_id, b = expected_type_tag, c = else_offset
+    let field_value = get_field(instr.a);
+    if !type_check(field_value, instr.b) {
+        self.ip = instr.c as usize;  // jump to fallback
+    }
+}
+```
+
+### DAG Distributed Execution (Planned)
+
+Current DAG is intra-node (rayon within one VM). Future: each DAG node maps to a Kafka topic:
+
+```
+flowrulz-dag-{rule_id}-A   ← A produces here
+flowrulz-dag-{rule_id}-B   ← B consumes A
+flowrulz-dag-coord-{rule}  ← coordinator tracks per-message completion
+```
+
+Requires a coordinator state machine with correlation ID tracking per node.
+
+### MergeStrategy for DAG Output (Planned)
+
+Current DAG merges terminal node results naively. Need explicit strategy:
+
+```rust
+enum MergeStrategy {
+    LastWins,          // last terminal node's value wins
+    ArrayConcat,       // concatenate arrays
+    DeepMerge,         // deep merge JSON objects
+    ExplicitMap,       // explicit output field mapping
+}
+```

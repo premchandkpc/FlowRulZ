@@ -102,6 +102,10 @@ impl Instruction {
         Instruction::new(OpCode::Dag, 0, dag_table_id, 0, 0)
     }
 
+    pub fn type_guard(strict: u8) -> Self {
+        Instruction::new(OpCode::TypeGuard, 0, u16::from(strict), 0, 0)
+    }
+
     pub fn has_retry(&self) -> bool {
         (self.flags & 0x01) != 0
     }

@@ -280,8 +280,20 @@ pub extern "C" fn flowrulz_get_spans(out_ptr: *mut u8, out_cap: usize) -> usize 
     if out_ptr.is_null() || out_cap == 0 {
         return 0;
     }
-    unsafe {
-        *out_ptr = 0;
+    let out_slice = unsafe { std::slice::from_raw_parts_mut(out_ptr, out_cap) };
+    crate::tracing::SPAN_BUFFER.with(|buf| {
+        buf.borrow_mut().drain(out_slice)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn flowrulz_plan_complexity(plan_ptr: *const u8, plan_len: usize) -> u32 {
+    let plan_slice = match read_slice(plan_ptr, plan_len) {
+        Some(s) => s,
+        None => return 0,
+    };
+    match bincode::deserialize::<ExecutionPlan>(plan_slice) {
+        Ok(plan) => plan.complexity_score,
+        Err(_) => 0,
     }
-    0
 }

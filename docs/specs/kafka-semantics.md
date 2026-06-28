@@ -337,3 +337,62 @@ GET /health/producer
   "rate_1m": 234
 }
 ```
+
+---
+
+## Gaps & Planned Features
+
+### Consumer Group Lane Routing (Planned)
+
+Currently spec has a single consumer group. Rules with different complexity should run on different lanes:
+
+```
+complexity_score < 3    → flowrulz-fast   (batch=500, poll_timeout=10ms)
+complexity_score 3–10   → flowrulz-normal (batch=100, poll_timeout=50ms)
+complexity_score > 10   → flowrulz-heavy  (batch=10,  poll_timeout=500ms)
+```
+
+**Assignment logic** (in transport layer):
+1. At deploy time, read `ExecutionPlan.complexity_score`
+2. Map score to lane via threshold table
+3. Register rule_id → lane mapping in registry
+4. Assign consumer group on startup based on lane configuration
+
+### Batch FFI (Planned)
+
+`flowrulz_execute_batch` referenced in spec but not in `ffi-api.md`. Planned signature:
+
+```c
+int flowrulz_execute_batch(
+    const uint64_t* ctx_ids,
+    const unsigned char* plan_ptr, size_t plan_len,
+    const unsigned char** body_ptrs, const size_t* body_lens,
+    size_t count,
+    unsigned char** out_ptrs, size_t* out_caps, size_t* out_lens,
+    unsigned char* err_ptr, size_t err_cap, size_t* err_len
+);
+```
+
+### Exactly-Once Delivery
+
+The kafka-semantics.md EOS section requires Kafka 3.0+. This is specced but not implemented. The Go transport layer needs:
+- Transactional producer initialization
+- Offset commit within the same transaction as output produce
+- Transaction abort on VM execution failure
+- DLQ entries outside transaction (always deliver)
+
+### Delivery Guarantee Matrix
+
+| Mode | Semantics | Status |
+|------|-----------|--------|
+| At-least-once | Commit after VM execution | Planned |
+| Exactly-once | Transactional commit + produce | Planned |
+| At-most-once | Fire-and-forget with no commit | Not planned |
+
+### Replay Implementation
+
+`POST /admin/replay` is specced but not implemented. Needs:
+- Seek consumer to specified offset
+- Read-only mode (no offset commit)
+- Results to specified target topic
+- Progress tracking for long replays

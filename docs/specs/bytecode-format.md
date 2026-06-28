@@ -2,14 +2,11 @@
 
 ## Overview
 
-The `ExecutionPlan` is the compiled output of the DSL compiler. It is a compact, serializable binary format designed for:
-- Cache-friendly linear execution
-- Snapshot/serialize to disk or wire
-- Zero-deserialization execution from raw bytes
+The `ExecutionPlan` is the compiled output of the DSL compiler. Bincode-serialized for FFI transfer.
 
 ## Instruction Encoding
 
-Each instruction is **8 bytes** packed into a `u64`:
+Each instruction is **8 bytes** packed:
 
 ```
 Bit:  63..48  47..32  31..16  15..8  7..0
@@ -23,9 +20,9 @@ Bit:  63..48  47..32  31..16  15..8  7..0
 
 | Field | Bits | Type | Description |
 |-------|------|------|-------------|
-| `opcode` | 7:0 | u8 | Operation code (0–22 reserved) |
+| `opcode` | 7:0 | u8 | Operation code (0–22) |
 | `flags` | 15:8 | u8 | Per-opcode modifier flags |
-| `a` | 31:16 | u16 | Primary operand (const ID, service ID, chunk size, etc.) |
+| `a` | 31:16 | u16 | Primary operand |
 | `b` | 47:32 | u16 | Secondary operand |
 | `c` | 63:48 | u16 | Tertiary operand |
 
@@ -34,63 +31,66 @@ Bit:  63..48  47..32  31..16  15..8  7..0
 ```rust
 #[repr(C)]
 pub struct Instruction {
-    data: u64,
+    pub op: OpCode,
+    pub flags: u8,
+    pub a: u16,
+    pub b: u16,
+    pub c: u16,
 }
-```
-
-Builder methods provide ergonomic construction:
-
-```rust
-Instruction::next(service_id)
-    .with_timeout(timeout_ms)
-    .with_mode(Async | Buffer)
 ```
 
 ## Opcode Table
 
-| # | Opcode | a | b | c | Description |
-|---|--------|---|---|---|-------------|
-| 0 | `Nop` | — | — | — | No-op (optimized away) |
-| 1 | `Next` | service_id | timeout_ms | mode_flags | Forward message to service |
-| 2 | `Async` | service_id | timeout_ms | — | Fire-and-forget call |
-| 3 | `Parallel` | count | — | — | Fan-out; operands in service table |
-| 4 | `Collect` | — | — | — | Merge parallel results |
-| 5 | `Fallback` | service_id | — | — | Route on failure |
-| 6 | `Gate` | then_offset | else_offset | op_code | Conditional branch |
-| 7 | `Split` | — | — | — | Split array into records |
-| 8 | `Map` | expr_id | — | — | Transform fields via MapExpr |
-| 9 | `Emit` | count | — | — | Fire-and-forget to N services |
-| 10 | `Drop` | — | — | — | Halt execution |
-| 11 | `Buffer` | service_id | timeout_ms | — | Non-blocking buffered send |
-| 12 | `Key` | expr_id | — | — | Set routing key |
-| 13 | `Retry` | count | strategy | interval_ms | Retry policy for preceding op |
-| 14 | `Pipe` | — | — | — | No-op separator |
-| 15 | `Timeout` | timeout_ms | — | — | Set timeout for next call |
-| 16 | `Chunk` | chunk_size | mode | — | Split message into chunks |
-| 17 | `Dag` | node_count | terminal_count | layer_count | DAG execution root |
-| 18 | `Jmp` | offset | — | — | Unconditional jump |
-| 19 | `Label` | label_id | — | — | Jump target marker |
-| 20 | `SvcArg` | service_id | arg_id | — | Service argument |
-| 21 | `RetryData` | count | strategy | interval_ms | Inline retry config |
-| 22 | `JumpOffset` | offset | — | — | Resolved jump offset |
+| # | Opcode | a | b | c |
+|---|--------|---|---|---|
+| 0 | Next | service_id | timeout_hi | timeout_lo |
+| 1 | Parallel | count | first_svc | — |
+| 2 | Collect | — | — | — |
+| 3 | Fallback | service_id | — | — |
+| 4 | Gate | field_const_id | value_const_id | — |
+| 5 | Split | field_const_id | — | — |
+| 6 | Map | expr_const_id | — | — |
+| 7 | Emit | count | first_svc | — |
+| 8 | Drop | — | — | — |
+| 9 | Buffer | n | — | — |
+| 10 | Key | field_const_id | — | — |
+| 11 | Retry | flags | — | — |
+| 12 | Pipe | — | — | — |
+| 13 | Timeout | — | ms_hi | ms_lo |
+| 14 | Async | service_id | timeout_hi | timeout_lo |
+| 15 | Chunk | count | mode | — |
+| 16 | Dag | dag_table_id | — | — |
+| 17 | Jmp | ip_offset | — | — |
+| 18 | Label | — | — | — |
+| 19 | SvcArg | svc_id | — | — |
+| 20 | RetryData | flags(max_attempts,strategy) | fixed_ms_hi | fixed_ms_lo |
+| 21 | JumpOffset | offset | — | — |
+| **22** | **TypeGuard** | **strict(0/1)** | — | — |
+
+### TypeGuard
+
+Opcode 22 validates the message body against the schema stored in `ExecutionPlan.schema`. When `strict=1`, a missing schema produces an error. Reads the plan's schema directly (no field/value operands).
 
 ## ExecutionPlan
 
 ```rust
 pub struct ExecutionPlan {
-    pub instructions: Vec<Instruction>,    // Linear bytecode
-    pub constant_pool: ConstantPool,       // Interned strings
-    pub service_table: ServiceTable,       // Service name → ID mapping
-    pub dag_table: Option<DAGTable>,       // DAG node/layer info
-    pub chunk_configs: Vec<ChunkConfig>,   // Chunk operation metadata
-    pub retry_configs: Vec<RetryConfig>,   // Retry policy metadata
-    pub map_exprs: Vec<MapExpr>,           // Map expression descriptors
+    pub rule_id: String,
+    pub version: u64,
+    pub instr_count: u32,
+    pub complexity_score: u32,
+    pub instructions: Vec<Instruction>,
+    pub const_pool: ConstantPool,
+    pub services: ServiceTable,
+    pub dag_tables: Vec<DAGTable>,
+    pub map_exprs: Vec<MapExpr>,
+    pub retry_configs: Vec<RetryConfig>,
+    pub chunk_configs: Vec<ChunkConfig>,
+    pub schema: Option<Schema>,
 }
 ```
 
 ### ConstantPool
-
-String interning table. Constants are stored deduplicated and referenced by u16 ID.
 
 ```rust
 pub struct ConstantPool {
@@ -101,12 +101,15 @@ pub struct ConstantPool {
 
 ### ServiceTable
 
-Maps service names to u16 IDs for compact instruction operands.
-
 ```rust
 pub struct ServiceTable {
-    pub services: Vec<String>,
+    pub services: Vec<ServiceEntry>,
     pub lookup: HashMap<String, u16>,
+}
+
+pub struct ServiceEntry {
+    pub id: u16,
+    pub name: String,
 }
 ```
 
@@ -114,51 +117,91 @@ pub struct ServiceTable {
 
 ```rust
 pub struct DAGTable {
-    pub nodes: Vec<DAGNode>,         // All DAG nodes
-    pub layers: Vec<Vec<u16>>,       // Layer-by-layer execution order
-    pub terminal_ids: Vec<u16>,      // Terminal nodes (no dependents)
+    pub nodes: Vec<DAGNode>,
+    pub layers: Vec<Vec<u16>>,
+    pub terminal_nodes: Vec<u16>,
+    pub failure_policy: DAGFailurePolicy,
+    pub node_timeouts: Vec<u32>,
+    pub merge_strategy: MergeStrategy,
+    pub distributed: bool,
+}
+
+pub enum DAGFailurePolicy {
+    AbortAll,
+    ContinueOthers,
+    SkipDependents,
+}
+
+pub enum MergeStrategy {
+    LastWins,
+    ArrayConcat,
+    DeepMerge,
+    ExplicitMap,
 }
 ```
 
-### MapExpr
+### Schema & ResolvedType
 
 ```rust
-pub struct MapExpr {
-    pub dest_field: String,          // Target field path
-    pub source_field: Option<String>,// Source field (copy mode), None for expr mode
-    pub expression: Option<String>,  // Raw expression string (expr mode)
+pub struct Schema {
+    pub fields: Vec<FieldSchema>,
+}
+
+pub struct FieldSchema {
+    pub name: String,
+    pub r#type: ResolvedType,
+    pub required: bool,
+}
+
+pub enum ResolvedType {
+    String,
+    Integer,
+    Float,
+    Boolean,
+    Object,
+    Array,
+    Null,
+    Any,
 }
 ```
 
-### RetryConfig
+### RetryConfig / ChunkConfig
 
 ```rust
 pub struct RetryConfig {
-    pub max_retries: u8,
-    pub strategy: RetryStrategy,     // Exp | Linear | Fixed
-    pub interval_ms: u16,
+    pub max_attempts: u8,
+    pub strategy: RetryStrategy,  // Exp | Linear | Fixed
+    pub fixed_ms: u32,
 }
-```
 
-### ChunkConfig
-
-```rust
 pub struct ChunkConfig {
-    pub chunk_size: u16,
-    pub mode: ChunkMode,             // Seq | Par
+    pub count: u8,
+    pub mode: ChunkMode,  // Seq | Par
 }
 ```
 
 ## Serialization
 
-The `ExecutionPlan` supports `bincode` serialization for:
+Bincode across FFI boundary:
 
 ```rust
 let bytes = bincode::serialize(&plan).unwrap();
 let plan: ExecutionPlan = bincode::deserialize(&bytes).unwrap();
 ```
 
-This enables:
-- Pre-compiling plans offline and loading at startup
-- Sharing compiled plans across nodes
-- Snapshotting hot-reloadable rule sets
+## Complexity Scoring
+
+Computed at compile time by `calc_complexity()`:
+
+| Opcode | Score |
+|--------|-------|
+| Next, Async | 10 |
+| Parallel, DAG | 20 |
+| Chunk | 25 |
+| Gate | 5 |
+| Map | 3 |
+| Emit | 8 |
+| Buffer | 15 |
+| All others | 1 |
+
+Used by the Go engine for lane routing (`flowrulz_plan_complexity` FFI).

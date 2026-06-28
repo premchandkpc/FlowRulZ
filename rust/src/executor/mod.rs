@@ -61,8 +61,9 @@ impl<'a> VM<'a> {
     }
 
     fn dispatch(&mut self, instr: &Instruction) -> Result<(), String> {
+        let start = std::time::Instant::now();
         let caller = self.caller.clone();
-        match instr.op {
+        let result = match instr.op {
             OpCode::Next => self.op_next(instr, &*caller, false),
             OpCode::Async => self.op_next(instr, &*caller, true),
             OpCode::Parallel => self.op_parallel(instr, &*caller),
@@ -82,7 +83,25 @@ impl<'a> VM<'a> {
             OpCode::Pipe => Ok(()),
             OpCode::Label => Ok(()),
             OpCode::SvcArg | OpCode::RetryData | OpCode::JumpOffset => Ok(()),
-        }
+            OpCode::TypeGuard => self.op_type_guard(instr),
+        };
+
+        let duration_ns = start.elapsed().as_nanos() as u64;
+        let status: u8 = match &result {
+            Ok(()) => 0,
+            Err(_) => 1,
+        };
+        let svc_id = instr.b;
+        let layer = 0u8;
+        crate::tracing::emit_span(crate::tracing::Span {
+            opcode: instr.op as u8,
+            service_id: svc_id,
+            layer,
+            duration_ns,
+            status,
+        });
+
+        result
     }
 
     fn op_next(
@@ -181,6 +200,21 @@ impl<'a> VM<'a> {
     fn op_jmp(&mut self, instr: &Instruction) -> Result<(), String> {
         self.ip = instr.a as usize;
         Ok(())
+    }
+
+    fn op_type_guard(&mut self, instr: &Instruction) -> Result<(), String> {
+        let schema = match &self.plan.schema {
+            Some(s) => s,
+            None => {
+                if instr.a == 0 {
+                    return Ok(());
+                }
+                return Err("schema required but not provided".into());
+            }
+        };
+        let body: serde_json::Value = serde_json::from_slice(&self.last_response)
+            .map_err(|e| format!("TypeGuard: failed to parse body: {}", e))?;
+        schema.is_valid(&body).map_err(|e| format!("TypeGuard: {}", e))
     }
 }
 
@@ -300,6 +334,25 @@ mod tests {
         let mut vm = VM::new(&plan, body, arena, &mock_caller);
         vm.run().unwrap();
         assert_eq!(vm.hop_count, 1);
+    }
+
+    #[test]
+    fn test_vm_type_guard_valid() {
+        let plan = compile_dsl("schema:{name:string,!age:int} n:validate");
+        let arena = crate::memory::arena::Arena::new();
+        let mut vm = VM::new(&plan, b"{\"name\":\"alice\",\"age\":30}", arena, &mock_caller);
+        vm.run().unwrap();
+        assert_eq!(vm.hop_count, 1);
+    }
+
+    #[test]
+    fn test_vm_type_guard_invalid() {
+        let plan = compile_dsl("schema:{!age:int} n:validate");
+        let arena = crate::memory::arena::Arena::new();
+        let mut vm = VM::new(&plan, b"{\"age\":\"bad\"}", arena, &mock_caller);
+        let err = vm.run();
+        assert!(err.is_err());
+        assert!(err.unwrap_err().contains("TypeGuard"));
     }
 
     #[test]

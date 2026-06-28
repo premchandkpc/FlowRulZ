@@ -4,6 +4,7 @@ pub mod instruction;
 pub mod mapexpr;
 pub mod opcode;
 pub mod plan;
+pub mod resolved_type;
 pub mod services;
 
 pub use consts::*;
@@ -12,4 +13,5 @@ pub use instruction::*;
 pub use mapexpr::*;
 pub use opcode::*;
 pub use plan::*;
+pub use resolved_type::*;
 pub use services::*;

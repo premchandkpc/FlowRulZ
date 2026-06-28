@@ -22,6 +22,7 @@ The FlowRulZ VM is a **register-less, stackless bytecode interpreter** that walk
                     │    Next → exec_next()   │
                     │    Gate → exec_gate()   │
                     │    Map  → exec_map()    │
+                    │    TypeGuard → validate │
                     │    ...                  │
                     │  }                      │
                     └────────────────────────┘
@@ -31,10 +32,15 @@ The FlowRulZ VM is a **register-less, stackless bytecode interpreter** that walk
 
 ```rust
 pub struct VM<'a> {
-    plan: &'a ExecutionPlan,
-    ip: usize,                    // Instruction pointer
-    body: serde_json::Value,       // Current message body (mutated in place)
-    fallback_body: Option<serde_json::Value>, // Saved body for fallback
+    pub ip: usize,
+    pub plan: &'a ExecutionPlan,
+    pub last_response: Vec<u8>,
+    pub arena: Arena,
+    pub caller: Arc<dyn Fn(u16, &[u8], u64) -> Result<Vec<u8>, String> + Send + Sync>,
+    pub failed: bool,
+    pub errors: Vec<String>,
+    pub hop_count: u16,
+    pub ctx: ExecutionContext,
 }
 ```
 
@@ -45,92 +51,84 @@ while ip < plan.instructions.len():
     inst = plan.instructions[ip]
     ip += 1
     result = dispatch(inst)
-    if result is Break:
-        break
-    if result is Halt:
-        ip = HALT (break)
-    if inst is Jmp:
-        ip = inst.offset
+    if Drop: ip = HALT (break)
+    if Jmp: ip = inst.a
 ```
 
 ## Opcode Handlers
 
 ### Next (`n:service`)
 1. Extract service name from `ServiceTable[inst.a]`
-2. Call service via C FFI callback
-3. If timeout > 0, set deadline
-4. On success: replace `body` with response, advance IP
-5. On failure: if retry configured, retry; else jump to Fallback (next instruction)
-6. Supports chunking: split body, call service for each chunk, reassemble
+2. Call service via C FFI callback (with timeout from inst.b/c)
+3. On success: replace `last_response` with response, advance IP
+4. On failure: if retry configured, retry; else set failed flag
 
 ### Gate (`g:field op value`)
-1. Extract field from `body` using dotted path navigation
-2. Compare value using operator
-3. True → advance IP to `then_offset`
-4. False → set IP to `else_offset`
+1. Extract field from body using dotted path navigation
+2. Returns `FieldNotFound` error (not silent null) for missing intermediate fields
+3. Compare value using operator (`==`, `!=`, `>`, `<`, `>=`, `<=`, `contains`)
+4. False → set ip to jump_offset (skip to Fallback or next op)
 
-### Map (`m:dest=expr` or `m:dest:src`)
-1. **Copy mode:** Extract value at `source_field`, insert at `dest_field`
-2. **Expression mode:** Parse and evaluate expression, insert result at `dest_field`
-3. Uses `serde_json::Value` in-place mutation (no full clone)
+### Map (`m:expr`)
+1. Parse and evaluate expression from const pool
+2. Insert/modify fields in `last_response` JSON
+3. Uses `serde_json::Value` in-place mutation
 
 ### Parallel (`p:a,b,c`)
-1. Clone current `body` for each fan-out branch
+1. Clone current body for each fan-out branch
 2. Spawn rayon parallel tasks for each service call
 3. Collect results into `Vec<Value>`
-4. Merge into `body["_parallel"]` array
 
 ### Collect (`c`)
-1. If `body` has no `_parallel` key, this is a no-op (passthrough)
-2. Otherwise: walk the `_parallel` array, merge unique keys from each result object into `body`
-3. Remove `_parallel` from `body` after merge
+1. Walk `_parallel` array from parallel results
+2. Merge unique keys into body
+3. Remove `_parallel` after merge
 
 ### Emit (`e:a,b,c`)
 1. Fire-and-forget: call each service but discard response
 2. Non-blocking, no retry
-3. Continue execution immediately
 
 ### Fallback (`f:service`)
-1. On preceding op failure: replace `body` with saved `fallback_body`
-2. Call fallback service
+1. On preceding op failure (self.failed == true): clear failed flag
+2. Call fallback service with saved body
 3. Continue execution
 
 ### Split (`s`)
-1. Validate `body` is a JSON array
-2. For each element, execute remaining pipeline
+1. Extract field value from body
+2. Process each element of the array through remaining pipeline
 3. Collect results into new array
-4. Replace `body` with array of results
 
 ### Drop (`d`)
-1. Return `Halt` to VM main loop → breaks execution
+1. Set ip to end of instructions → breaks execution
 2. Message is discarded
 
 ### Chunk (`chunk:N:mode`)
-1. Determine chunk boundaries from `body` (array or by size)
-2. **Seq mode:** process chunks in sequential loop
-3. **Par mode:** process chunks via rayon parallel tasks
-4. Reassemble chunked results
+1. Split body by chunk size
+2. **Seq mode:** sequential loop
+3. **Par mode:** rayon parallel tasks
+4. Reassemble results
 
 ### DAG (`dag:{...}`)
-1. Build execution frontier starting with layer 0 nodes
+1. Build execution frontier starting with layer 0
 2. For each layer, execute all nodes in parallel (rayon)
-3. When a node completes, check if its dependents' dependencies are all satisfied
+3. When a node completes, check if its dependents' dependencies are satisfied
 4. Advance frontier with newly unblocked nodes
-5. After all layers complete, merge terminal node results
-6. Emit merged result
+5. Merge terminal node results
+
+### TypeGuard
+1. Read schema from `ExecutionPlan.schema`
+2. Parse `last_response` as JSON
+3. Validate each field against its expected type
+4. On failure: return error with `FieldNotFound` details
 
 ### Jmp/Label
-1. `Label` is a no-op (just a marker)
-2. `Jmp` sets `ip = inst.offset` (resolved at compile time)
+1. `Label` is a no-op (marker)
+2. `Jmp` sets `ip = inst.a`
 
 ### Retry
-1. Attached to preceding `Next` or `Fallback` instruction
-2. On failure: check retry count; if exhausted, propagate error
-3. Calculate delay from strategy (exp/fixed/linear)
-4. Sleep for delay, then retry call
-
-### Key (`k:expr`)
-1. Evaluate expression and set routing key on message
+1. Attached to preceding `Next` or `Fallback` via flags
+2. On failure: check retry count; calculate delay from strategy
+3. Sleep for delay, then retry call
 
 ## Error Propagation
 
@@ -139,30 +137,12 @@ Service call fails?
   ├── Retry configured? ──yes──→ Retry loop
   └── No retry?
         ├── Next instruction is Fallback? ──yes──→ Call fallback, continue
-        └── No fallback? ──→ Return error from VM
+        └── No fallback? ──→ Set failed flag, continue
 ```
 
-## Memory Model
+## Span Tracing
 
-Messages are `serde_json::Value` (owned, heap-allocated JSON trees). The VM:
-- Does **not** clone the message on every operation (passes `&mut`)
-- Clones only when necessary (Parallel fan-out, Split, Fallback save)
-- Returns owned `Value` at end of execution
-
-## Concurrency
-
-- Parallel execution uses `rayon::scope` for bounded parallelism
-- Service calls are synchronous from Rust's perspective (C FFI blocks)
-- DAG node execution is fully parallel within each layer
-- Chunk processing (par mode) uses rayon work-stealing
-
----
-
-## Gaps & Planned Features
-
-### VM Trace Spans (Planned)
-
-The VM currently emits no observability data. A per-opcode span ring buffer is planned:
+The VM emits a span at every `dispatch()` call via a thread-local lock-free ring buffer:
 
 ```rust
 #[repr(C)]
@@ -175,45 +155,29 @@ pub struct Span {
 }
 ```
 
-- Thread-local lock-free ring buffer (1024 spans per thread)
-- Span emitted at each `dispatch()` call
-- Drained via `flowrulz_get_spans(out_ptr, out_cap) -> size_t` (currently stubbed)
+- Thread-local `RefCell<RingBuffer>` (1024 spans per thread)
+- Atomic head/tail for lock-free push and drain
+- Drained via `flowrulz_get_spans(out_ptr, out_cap) -> size_t` from Go
 
-### TypeGuard Opcode (Planned)
+## Memory Model
 
-New opcode 23: runtime type check for fields without schema coverage.
+Messages are `&[u8]` / `Vec<u8>` at the VM boundary, internally parsed to `serde_json::Value`. The VM:
+- Does **not** clone the message on every operation
+- Clones only when necessary (Parallel fan-out, Fallback save)
+- Uses bump arena (`bumpalo`) for temporary allocations
 
-```rust
-OpCode::TypeGuard => {
-    // a = field_const_id, b = expected_type_tag, c = else_offset
-    let field_value = get_field(instr.a);
-    if !type_check(field_value, instr.b) {
-        self.ip = instr.c as usize;  // jump to fallback
-    }
-}
-```
+## Concurrency
 
-### DAG Distributed Execution (Planned)
+- Parallel execution uses `rayon::scope` for bounded parallelism
+- Service calls are synchronous from Rust's perspective (C FFI blocks)
+- DAG node execution is fully parallel within each layer
+- Chunk processing (par mode) uses rayon work-stealing
 
-Current DAG is intra-node (rayon within one VM). Future: each DAG node maps to a Kafka topic:
+## Type System
 
-```
-flowrulz-dag-{rule_id}-A   ← A produces here
-flowrulz-dag-{rule_id}-B   ← B consumes A
-flowrulz-dag-coord-{rule}  ← coordinator tracks per-message completion
-```
+Runtime type validation via `TypeGuard` opcode:
 
-Requires a coordinator state machine with correlation ID tracking per node.
-
-### MergeStrategy for DAG Output (Planned)
-
-Current DAG merges terminal node results naively. Need explicit strategy:
-
-```rust
-enum MergeStrategy {
-    LastWins,          // last terminal node's value wins
-    ArrayConcat,       // concatenate arrays
-    DeepMerge,         // deep merge JSON objects
-    ExplicitMap,       // explicit output field mapping
-}
-```
+1. Schema attached to `ExecutionPlan` at compile time
+2. `TypeGuard` opcode reads plan schema and validates body
+3. Errors include field name and expected vs actual type
+4. Required fields (`!name:type`) error if missing from body

@@ -32,7 +32,8 @@ FlowRulZ/
 │   │   ├── vm-architecture.md
 │   │   ├── memory-management.md
 │   │   ├── ffi-api.md
-│   │   └── kafka-semantics.md
+│   │   ├── kafka-semantics.md
+│   │   └── flow-architecture.md
 │   ├── development.md
 │   └── README.md
 ├── CLAUDE.md

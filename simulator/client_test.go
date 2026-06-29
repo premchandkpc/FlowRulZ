@@ -111,13 +111,13 @@ func TestClientRegisterService(t *testing.T) {
 	})
 
 	found := false
-	for _, n := range cli.Services() {
-		if n == "custom-svc" {
+	for _, s := range cli.Services() {
+		if s.Name == "custom-svc" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("expected custom-svc in services, got %v", cli.Services())
+		t.Fatalf("expected custom-svc in services, got %+v", cli.Services())
 	}
 }

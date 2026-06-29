@@ -61,7 +61,7 @@ type ExecutionNode struct {
 
 	serviceResolver ServiceResolver
 
-	circuitBreakers sync.Map  // svcID uint16 → *reliability.CircuitBreaker
+	circuitBreakers sync.Map  // svcName string → *reliability.CircuitBreaker
 
 	consumers   []transport.MessageConsumer
 	producers   []transport.MessageProducer
@@ -374,25 +374,23 @@ func (en *ExecutionNode) handleAckMessage(ctx context.Context, msg []byte) ([]by
 	return nil, nil
 }
 
-func (en *ExecutionNode) callService(svcID uint16, body []byte) ([]byte, error) {
+func (en *ExecutionNode) callService(svcName, method string, body []byte) ([]byte, error) {
 	observability.RecordExec("svc_call")
 
-	v, _ := en.circuitBreakers.Load(svcID)
+	v, _ := en.circuitBreakers.Load(svcName)
 	cb, ok := v.(*reliability.CircuitBreaker)
 	if !ok {
 		cb = reliability.NewCircuitBreaker(5, 30*time.Second)
-		en.circuitBreakers.Store(svcID, cb)
+		en.circuitBreakers.Store(svcName, cb)
 	}
 
 	if !cb.Allow() {
 		observability.RecordError("circuit_breaker_open")
-		log.Printf("circuit breaker open for service %d", svcID)
-		return nil, fmt.Errorf("circuit breaker open for service %d", svcID)
+		log.Printf("circuit breaker open for service %s", svcName)
+		return nil, fmt.Errorf("circuit breaker open for service %s", svcName)
 	}
 
-	svcName := bridge.InternLookup(svcID)
-
-	inst, _ := en.Registry.LookupInstance(svcName, "")
+	inst, _ := en.Registry.LookupInstance(svcName, method)
 	if inst != nil {
 		endpoint := fmt.Sprintf("%s://%s:%d", inst.Endpoint.Protocol, inst.Endpoint.Address, inst.Endpoint.Port)
 		resp, err := en.httpClient.Post(endpoint, "application/octet-stream", bytes.NewReader(body))
@@ -420,20 +418,27 @@ func (en *ExecutionNode) callService(svcID uint16, body []byte) ([]byte, error) 
 	}
 
 	if en.serviceResolver != nil {
-		endpoint, err := en.serviceResolver.Resolve(svcID, "")
+		endpoint, err := en.serviceResolver.Resolve(0, method)
 		if err != nil {
 			cb.Failure()
-			return nil, fmt.Errorf("service %d: resolve: %w", svcID, err)
+			return nil, fmt.Errorf("service %s: resolve: %w", svcName, err)
 		}
 		return en.httpCall(endpoint, body, cb)
 	}
 
-	log.Printf("service call: id=%d name=%s body=%d bytes (stub)", svcID, svcName, len(body))
+	log.Printf("service call: name=%s method=%s body=%d bytes (stub)", svcName, method, len(body))
 	cb.Success()
 	return body, nil
 }
 
 func (en *ExecutionNode) executePlan(plan []byte, body []byte) ([]byte, error) {
+	svcMap := make(map[uint16]string)
+	if entries, err := bridge.PlanServices(plan); err == nil {
+		for _, e := range entries {
+			svcMap[e.ID] = e.Name
+		}
+	}
+
 	var ctxBytes, respBytes []byte
 
 	for step := 0; step < 1000; step++ {
@@ -451,9 +456,14 @@ func (en *ExecutionNode) executePlan(plan []byte, body []byte) ([]byte, error) {
 
 		case bridge.StepPending:
 			observability.RecordExec("svc_pending")
-			resp, err := en.callService(out.PendingSvc, out.PendingBody)
+			rawName, ok := svcMap[out.PendingSvc]
+			if !ok {
+				rawName = fmt.Sprintf("svc-%d", out.PendingSvc)
+			}
+			svcName, method := bridge.ParseServiceMethod(rawName)
+			resp, err := en.callService(svcName, method, out.PendingBody)
 			if err != nil {
-				return nil, fmt.Errorf("service %d: %w", out.PendingSvc, err)
+				return nil, fmt.Errorf("service %s: %w", svcName, err)
 			}
 			respBytes = resp
 

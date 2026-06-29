@@ -317,6 +317,8 @@ body { font-family: -apple-system, sans-serif; margin: 0; background: #0d1117; c
 <div class="sidebar">
   <div class="section-title">Nodes</div>
   <div id="nodes-list"></div>
+  <div class="section-title" style="margin-top:16px">Services</div>
+  <div id="services-list"></div>
   <div class="section-title" style="margin-top:16px">Event Types</div>
   <div id="event-stats"></div>
   <div class="section-title" style="margin-top:16px">Recent Events</div>
@@ -328,9 +330,10 @@ const EVENT_TYPES = ['created','ready','instruction','service_call','service_res
 function fmt(ns) { const ms = ns / 1e6; return ms < 0.001 ? '<1µs' : ms < 1 ? (ms*1000|0)+'µs' : ms < 1000 ? ms.toFixed(1)+'ms' : (ms/1000).toFixed(2)+'s'; }
 function esc(s) { return (s||'').replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'})[c]); }
 
+let _allSvcNames = [];
 function buildGraph(svcs, executions) {
-  // Build service nodes with positions
-  const known = ['validate','inventory','fraud','payment','shipping','email','loyalty','invoice','notification','echo'];
+  // Build service nodes with positions — use dynamic service list from API
+  const known = _allSvcNames.length > 0 ? _allSvcNames : ['validate','inventory','fraud','payment','shipping','email','loyalty','invoice','notification','echo'];
   const active = new Set();
   for (const exec of executions) {
     if (exec.status === 'running') {
@@ -504,8 +507,37 @@ async function refresh() {
     renderLatency(m);
     renderGraphSVG(execs);
     populateRules();
+    renderServices();
     document.getElementById('clock').textContent = new Date().toLocaleTimeString();
   } catch(e) {}
+}
+
+async function renderServices() {
+  const div = document.getElementById('services-list');
+  try {
+    const r = await fetch('/api/admin/services').then(r=>r.json());
+    const svcs = r.services || [];
+    _allSvcNames = svcs.map(s => s.name || s);
+    if (!svcs.length || typeof svcs[0] === 'string') {
+      div.innerHTML = '<div style="font-size:12px;color:#8b949e">' + svcs.length + ' registered</div>';
+      return;
+    }
+    div.innerHTML = svcs.map(s => {
+      const methods = s.methods && s.methods.length ? s.methods.map(m => m.name).join(', ') : '';
+      const latency = s.base_latency_ms ? s.base_latency_ms + 'ms' : '';
+      const fail = s.failure_rate ? (s.failure_rate*100).toFixed(0) + '%' : '';
+      return '<div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:8px;margin-bottom:6px">' +
+        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">' +
+        '<span style="flex:1;color:#58a6ff;font-size:13px;font-weight:600">' + esc(s.name) + '</span>' +
+        (latency ? '<span style="color:#8b949e;font-size:11px">' + latency + '</span>' : '') +
+        (fail ? '<span style="color:#f85149;font-size:11px">err ' + fail + '</span>' : '') +
+        '</div>' +
+        (methods ? '<div style="font-size:11px;color:#8b949e">' + esc(methods) + '</div>' : '') +
+        '</div>';
+    }).join('');
+  } catch(e) {
+    div.innerHTML = '<div style="font-size:12px;color:#8b949e">no services</div>';
+  }
 }
 
 function renderMetrics(m) {

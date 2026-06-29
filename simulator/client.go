@@ -104,6 +104,25 @@ func (c *Client) Plans() []string {
 	return c.sim.Nodes[0].Plans.List()
 }
 
-func (c *Client) Services() []string {
-	return c.sim.Services.Names()
+type ServiceInfo struct {
+	Name          string                `json:"name"`
+	Methods       []services.MethodInfo `json:"methods,omitempty"`
+	BaseLatencyMs int                   `json:"base_latency_ms,omitempty"`
+	FailureRate   float64               `json:"failure_rate,omitempty"`
+	MaxConcurrent int                   `json:"max_concurrent,omitempty"`
+}
+
+func (c *Client) Services() []ServiceInfo {
+	svcs := c.sim.Services.All()
+	info := make([]ServiceInfo, len(svcs))
+	for i, svc := range svcs {
+		info[i] = ServiceInfo{
+			Name:          svc.Name,
+			Methods:       svc.Methods,
+			BaseLatencyMs: int(svc.BaseLatency / time.Millisecond),
+			FailureRate:   svc.FailureRate,
+			MaxConcurrent: svc.MaxConcurrent,
+		}
+	}
+	return info
 }

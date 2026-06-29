@@ -278,10 +278,11 @@ func (s *Scheduler) executeBridge(ctx *execution.ExecutionContext) {
 			return
 
 		case bridge.StepPending:
-			svcName, ok := ctx.Plan.ServiceNames[out.PendingSvc]
+			rawName, ok := ctx.Plan.ServiceNames[out.PendingSvc]
 			if !ok {
-				svcName = fmt.Sprintf("svc-%d", out.PendingSvc)
+				rawName = fmt.Sprintf("svc-%d", out.PendingSvc)
 			}
+			svcName, _ := bridge.ParseServiceMethod(rawName)
 			svc := s.Services.Get(svcName)
 			if svc == nil {
 				ctx.MarkFailed(fmt.Errorf("unknown service: %s", svcName))

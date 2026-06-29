@@ -57,6 +57,7 @@ import "C"
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -233,6 +234,15 @@ func GetSpans() []byte {
 type ServiceEntry struct {
 	ID   uint16 `json:"id"`
 	Name string `json:"name"`
+}
+
+// ParseServiceMethod splits "service.method" into ("service", "method").
+// If no dot is present, method is empty string.
+func ParseServiceMethod(s string) (service, method string) {
+	if idx := strings.IndexByte(s, '.'); idx >= 0 {
+		return s[:idx], s[idx+1:]
+	}
+	return s, ""
 }
 
 func PlanServices(plan []byte) ([]ServiceEntry, error) {

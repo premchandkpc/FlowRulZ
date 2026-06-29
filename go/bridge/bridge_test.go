@@ -232,6 +232,87 @@ func TestExecuteStepEmptyBody(t *testing.T) {
 	}
 }
 
+func TestParseServiceMethodNoMethod(t *testing.T) {
+	svc, method := ParseServiceMethod("payment")
+	if svc != "payment" || method != "" {
+		t.Fatalf("expected ('payment',''), got (%q,%q)", svc, method)
+	}
+}
+
+func TestParseServiceMethodWithMethod(t *testing.T) {
+	svc, method := ParseServiceMethod("payment.authorize")
+	if svc != "payment" || method != "authorize" {
+		t.Fatalf("expected ('payment','authorize'), got (%q,%q)", svc, method)
+	}
+}
+
+func TestParseServiceMethodMultiDot(t *testing.T) {
+	svc, method := ParseServiceMethod("payment.authorize.extra")
+	if svc != "payment" || method != "authorize.extra" {
+		t.Fatalf("expected ('payment','authorize.extra'), got (%q,%q)", svc, method)
+	}
+}
+
+func TestCompileMethodDSL(t *testing.T) {
+	plan, err := Compile("n:payment.authorize", "test-method")
+	if err != nil {
+		t.Fatalf("Compile with method syntax failed: %v", err)
+	}
+	if len(plan) == 0 {
+		t.Fatal("expected non-empty plan")
+	}
+
+	svcs, err := PlanServices(plan)
+	if err != nil {
+		t.Fatalf("PlanServices failed: %v", err)
+	}
+	if len(svcs) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(svcs))
+	}
+	if svcs[0].Name != "payment.authorize" {
+		t.Fatalf("expected service name 'payment.authorize', got %q", svcs[0].Name)
+	}
+
+	svc, method := ParseServiceMethod(svcs[0].Name)
+	if svc != "payment" || method != "authorize" {
+		t.Fatalf("ParseServiceMethod: expected ('payment','authorize'), got (%q,%q)", svc, method)
+	}
+}
+
+func TestExecuteWithMethodSyntax(t *testing.T) {
+	plan, err := Compile("n:payment.authorize", "test-exec-method")
+	if err != nil {
+		t.Fatalf("Compile failed: %v", err)
+	}
+
+	// Build plan service map the way execnode should
+	svcs, err := PlanServices(plan)
+	if err != nil {
+		t.Fatalf("PlanServices failed: %v", err)
+	}
+	svcMap := make(map[uint16]string)
+	for _, e := range svcs {
+		svcMap[e.ID] = e.Name
+	}
+
+	caller := func(svcID uint16, body []byte) ([]byte, error) {
+		rawName := svcMap[svcID]
+		svc, method := ParseServiceMethod(rawName)
+		if svc != "payment" {
+			t.Errorf("expected service 'payment', got %q", svc)
+		}
+		if method != "authorize" {
+			t.Errorf("expected method 'authorize', got %q", method)
+		}
+		return body, nil
+	}
+
+	_, err = Execute(plan, []byte(`{"amount":100}`), caller, nil)
+	if err != nil {
+		t.Fatalf("Execute with method syntax failed: %v", err)
+	}
+}
+
 func TestExecuteWithPartialContext(t *testing.T) {
 	plan, err := Compile("n:validate", "test-partial")
 	if err != nil {

@@ -41,10 +41,17 @@ A pipeline is a sequence of **operations** separated by spaces:
 ### Next (Service Call)
 
 ```
-n:<service_name>
+n:<service_name[.method]>
 ```
 
-Synchronous call to a named service. Waits for response.
+Synchronous call to a named service. Waits for response. Optionally include a method suffix to target a specific method on the service:
+
+```
+n:payment              # calls any method on payment
+n:payment.authorize    # calls the authorize method on payment
+```
+
+The method name is embedded in the service string and split on the Go side via `bridge.ParseServiceMethod()`. No service code changes needed.
 
 ### Async
 

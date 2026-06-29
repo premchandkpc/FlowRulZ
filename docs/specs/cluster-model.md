@@ -221,42 +221,80 @@ Time    Leader              Follower A          Follower B
 
 ## Service Registry
 
-The Service Registry maps service names to healthy endpoints across the cluster. It is part of the Control Plane but replicated to all Data Plane nodes.
+The Service Registry maps service names to healthy endpoints across the cluster. It is part of the Control Plane but replicated to all Data Plane nodes. Every node runs its own `ServiceRegistry` instance with HTTP registration endpoints.
+
+### Service Model
+
+Services register as `ServiceInstance` with full metadata:
+
+```go
+type ServiceInstance struct {
+    ID             string              // auto: "{name}-{address}-{port}"
+    Name           string              // service name ("payment")
+    Version        string              // semver
+    Methods        []MethodInfo        // supported methods
+    Capabilities   ServiceCapabilities
+    Endpoint       Endpoint            // protocol, address, port
+    Zone           string              // deployment zone
+    Weight         int                 // LB weight (default 100)
+    Tags           map[string]string
+    Metadata       map[string]any
+    HeartbeatAt    time.Time
+    RegisteredAt   time.Time
+}
+
+type MethodInfo struct {
+    Name       string
+    TimeoutMS  int
+    Idempotent bool
+}
+```
 
 ### Registration
 
-Services are registered in two ways:
+Services register themselves via HTTP:
 
-1. **Static registration**: Config file or CLI flag at node startup
-2. **Dynamic registration**: Go `ServiceRegistry.Register(name, endpoint)` API
+| Endpoint | Method | Payload | Description |
+|----------|--------|---------|-------------|
+| `/register` | POST | `RegisterRequest` | Register or update instance |
+| `/heartbeat` | POST | `{name, instance_id}` | Keep instance alive (default 30s TTL) |
+| `/services` | GET | — | List all services with instances |
 
-Registration flow:
+`RegisterRequest` fields: `id`, `name`, `version`, `methods`, `capabilities`, `address`, `port`, `protocol`, `zone`, `weight`, `tags`, `metadata`.
+
+Heartbeat expiry: instances without a heartbeat within 30s are marked unhealthy. A background goroutine checks every 15s.
+
+### Method Syntax in Rules
+
+Rules reference services by name with optional method suffix:
 
 ```
-1. Node starts, loads service endpoints from config
-2. Node publishes services to `_flowrulz_members` in heartbeat
-3. Leader aggregates all service registrations from heartbeats
-4. Leader publishes combined registry to `_flowrulz_members` topic
-5. All nodes consume combined registry → local cache
+n:payment              # calls any method on payment
+n:payment.authorize    # calls only the authorize method on payment
 ```
+
+The method is embedded in the service name string. The Rust DSL lexer captures everything after `n:` including the dot — no Rust changes needed. On the Go side, `bridge.ParseServiceMethod("payment.authorize")` splits it into `("payment", "authorize")`.
 
 ### Service Resolution
 
-When the VM calls `n:payment`:
+When the VM executes `n:payment.authorize`:
 
 ```
 1. VM executes Next opcode with svcID=12
 2. FFI callback receives (ctxID, 12, body, ...)
-3. Bridge looks up svcID=12 → svcName="payment" (from plan's service table)
-4. Bridge calls ServiceRegistry.Pick("payment") → returns healthy endpoint
-5. If endpoint is local → call registered handler in-process
-6. If endpoint is remote → make HTTP/gRPC call to remote node
-7. If the call was a Request (expects reply):
+3. Bridge resolves svcID → raw name via PlanServices(plan) map
+4. Bridge.ParseServiceMethod("payment.authorize") → ("payment", "authorize")
+5. ServiceRegistry.LookupInstance("payment", "authorize") returns healthy instance supporting the method
+6. If endpoint is local → call registered handler in-process
+7. If endpoint is remote → make HTTP/gRPC call to remote node
+8. If call was a Request (expects reply):
    a. Remote node executes the call
    b. Remote node publishes reply to `_flowrulz_replies` with correlation_id
    c. ReplyRouter on origin node picks up the reply → delivers to waiting goroutine
-8. Response is returned to the VM
+9. Response is returned to the VM
 ```
+
+Note: `bridge.InternLookup(svcID)` is **broken** for plan-local service IDs (the global intern table has pre-filled strings at IDs 0-6). Use `bridge.PlanServices(plan)` → `map[uint16]string` instead.
 
 ### Health Checking
 
@@ -266,12 +304,13 @@ The Service Registry supports two health check modes:
 |------|-----------|------|
 | **Passive** | Mark unhealthy when node heartbeat fails | Node-level, 1s |
 | **Active** | Periodically probe endpoint `/health` | Service-level, configurable |
+| **Heartbeat expiry** | `StartHeartbeatChecker()` goroutine, 15s interval marks instances with no heartbeat >30s | 15s |
 
 Endpoints with consecutive failures exceeding a threshold are marked unhealthy and removed from rotation.
 
 ### Load Balancing
 
-When multiple endpoints exist for a service, the registry picks one:
+When multiple endpoints exist for a service, the registry picks one via `LookupInstance(name, method)`:
 
 | Strategy | Description |
 |----------|-------------|
@@ -280,7 +319,7 @@ When multiple endpoints exist for a service, the registry picks one:
 | LeastLoaded | Pick node with lowest active_execs from heartbeat |
 | LocalPrefer | Pick local endpoint if healthy, else round-robin |
 
-Strategy is configurable per service.
+Strategy is configurable per service. Method-aware selection: only instances declaring the requested method in their `Methods` list are candidates.
 
 ## Reply Router
 

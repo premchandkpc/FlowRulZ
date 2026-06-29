@@ -100,9 +100,9 @@ func New(cfg config.SimConfig) *Simulator {
 
 	// Compile default plans from DSL into real bytecode
 	dslPlans := map[string]string{
-		"order-flow-v1":  "n:validate n:inventory n:fraud n:payment n:email",
-		"payment-flow-v1": "n:validate n:payment n:loyalty",
-		"refund-flow-v1": "n:validate n:payment n:invoice",
+		"order-flow-v1":  "n:validate n:inventory n:fraud n:payment.authorize n:email",
+		"payment-flow-v1": "n:validate n:payment.capture n:loyalty",
+		"refund-flow-v1": "n:validate n:payment.refund n:invoice",
 	}
 	type compiledPlan struct {
 		id         string

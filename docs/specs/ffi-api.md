@@ -103,6 +103,17 @@ uint16_t flowrulz_intern(const unsigned char* s_ptr, size_t s_len);
 void flowrulz_intern_lookup(uint16_t id, unsigned char* out_ptr, size_t* out_len);
 ```
 
+### Plan Services
+
+```c
+int flowrulz_plan_services(
+    const unsigned char* plan_ptr, size_t plan_len,
+    unsigned char* out_ptr, size_t out_cap, size_t* out_len
+);
+```
+
+Deserializes the plan and returns JSON array of `{"id":uint16,"name":"service.method"}` entries from the plan's service table. Used by Go execnode to build the `svcID → svcName` map for resolving method-coded service names like `n:payment.authorize`.
+
 ### Observability
 
 ```c

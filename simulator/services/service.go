@@ -7,8 +7,13 @@ import (
 	"time"
 )
 
+type MethodInfo struct {
+	Name string `json:"name"`
+}
+
 type MockService struct {
 	Name          string
+	Methods       []MethodInfo
 	BaseLatency   time.Duration
 	LatencyJitter time.Duration
 	FailureRate   float64
@@ -56,6 +61,16 @@ func (r *ServiceRegistry) Get(name string) *MockService {
 	svc := r.services[name]
 	r.mu.RUnlock()
 	return svc
+}
+
+func (r *ServiceRegistry) All() []*MockService {
+	r.mu.RLock()
+	svcs := make([]*MockService, 0, len(r.services))
+	for _, s := range r.services {
+		svcs = append(svcs, s)
+	}
+	r.mu.RUnlock()
+	return svcs
 }
 
 func (r *ServiceRegistry) Names() []string {
@@ -152,8 +167,18 @@ func DefaultServices() *ServiceRegistry {
 		{"notification", 3 * time.Millisecond, 1 * time.Millisecond, 0.005, 500},
 	}
 	for _, d := range defs {
+		methods := []MethodInfo{}
+		switch d.name {
+		case "payment":
+			methods = []MethodInfo{{Name: "authorize"}, {Name: "capture"}, {Name: "refund"}}
+		case "inventory":
+			methods = []MethodInfo{{Name: "check"}, {Name: "reserve"}, {Name: "release"}}
+		case "fraud":
+			methods = []MethodInfo{{Name: "check"}}
+		}
 		r.Register(&MockService{
 			Name:          d.name,
+			Methods:       methods,
 			BaseLatency:   d.latency,
 			LatencyJitter: d.jitter,
 			FailureRate:   d.failureRate,

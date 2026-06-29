@@ -1,6 +1,6 @@
 # FlowRulZ Documentation
 
-Distributed programmable event runtime and message bus. One platform for publish/subscribe, request/reply, rule execution, and workflow orchestration.
+Distributed execution runtime. Pub/Sub, RPC, workflows, and rules are all execution plans running on the same VM.
 
 ## Project Map
 

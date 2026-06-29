@@ -47,6 +47,33 @@ Creates an `ExecutionContext` from the body bytes and event metadata (msg_id →
 
 Optional context params (`msg_id`, `corr_id`, `trace_id`) default to empty when null.
 
+### Step Execution
+
+```c
+int flowrulz_execute_step(
+    uint64_t ctx_id,
+    const unsigned char* plan_ptr, size_t plan_len,
+    const unsigned char* ctx_bytes_ptr, size_t ctx_bytes_len,
+    const unsigned char* resp_ptr, size_t resp_len,
+    int (*caller_cb)(uint64_t, uint16_t, const unsigned char*, size_t, unsigned char*, size_t*),
+    unsigned char* out_ptr, size_t out_cap, size_t* out_len,
+    unsigned char* err_ptr, size_t err_cap, size_t* err_len,
+    uint16_t* pending_svc_id,
+    unsigned char* pending_body_ptr, size_t pending_body_cap, size_t* pending_body_len,
+    unsigned char* ctx_out_ptr, size_t ctx_out_cap, size_t* ctx_out_len
+);
+```
+
+Cooperative single-step execution. Takes a serialized `ExecutionContext` (from previous step) and an optional service response. Executes one instruction:
+
+| Return | Meaning |
+|--------|---------|
+| `0` (Done) | Plan finished; final body in `out_ptr`, final context in `ctx_out_ptr` |
+| `1` (Pending) | Service call needed; `pending_svc_id` + `pending_body` populated, context in `ctx_out_ptr` for next `execute_step` call |
+| `2` (Continue) | Non-service instruction processed; call `execute_step` again with `resp_ptr=NULL` |
+
+On first call, pass `ctx_bytes_ptr=NULL, ctx_bytes_len=0` to create a fresh context from the response (if any) in `resp_ptr`.
+
 ### Callback Signature
 
 ```c
@@ -58,7 +85,7 @@ int caller_callback(
 );
 ```
 
-The `ctx_id` matches the one passed to `flowrulz_execute`. Service names are interned; the host can look up the name via `flowrulz_intern_lookup`. The response replaces `ctx.body` and is also stored in `ctx.outputs["service_name"]`.
+The `ctx_id` matches the one passed to `flowrulz_execute`/`flowrulz_execute_step`. Service names are interned; the host can look up the name via `flowrulz_intern_lookup`. The response replaces `ctx.body` and is also stored in `ctx.outputs["service_name"]`.
 
 ### Message Memory
 
@@ -110,7 +137,7 @@ Deserializes the plan and returns `complexity_score`. Used by Go engine for lane
 
 The Go layer uses cgo to call these functions.
 
-### Callback Pattern
+### Callback Pattern (Synchronous — `flowrulz_execute`)
 
 Three-layer dispatching:
 
@@ -123,6 +150,21 @@ C (flowrulz_execute) → C (callerBridge) → Go (//export goServiceCaller) → 
 3. `goServiceCaller` (Go) looks up `ServiceCaller` by `ctx_id` in a `sync.Map`
 
 Each `Execute()` call generates a unique `ctx_id` via `atomic.Uint64` and stores its `ServiceCaller` in the map, enabling concurrent service dispatch without mutex contention.
+
+### Execution Pattern (Cooperative — `flowrulz_execute_step`)
+
+The step API inverts control: instead of the VM calling back into Go, Go drives the loop:
+
+```
+Go loop:
+  out = flowrulz_execute_step(plan, ctx_bytes, resp_bytes, nil)
+  switch out.result:
+    Done     → return out.output
+    Pending  → resp_bytes = callService(out.svc_id, out.body); continue
+    Continue → resp_bytes = nil; continue
+```
+
+The Go side resolves service calls between steps, enabling async multiplexing, circuit breakers, rate limiting, and observability hooks between each instruction. The `caller_cb` parameter is always passed but never called for service opcodes — it may be used for Parallel/DAG inner calls.
 
 ### Thread Safety
 

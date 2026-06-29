@@ -48,15 +48,17 @@ HTTP admin server. Serves rule CRUD, validation, promote/rollback, lane listing,
 
 CGo FFI bridge to the Rust shared library. Functions map 1:1 to `extern "C"` calls:
 - `Compile` → `flowrulz_compile` — DSL string → bytecode plan
-- `Execute` → `flowrulz_execute` — plan + body → result
+- `Execute` → `flowrulz_execute` — plan + body → result (synchronous, callback-based)
+- `ExecuteStep` → `flowrulz_execute_step` — cooperative single-step execution (plan + serialized ctx + optional response → StepOutput)
 - `PlanComplexity` → `flowrulz_plan_complexity`
+- `PlanServices` → `flowrulz_plan_services` — extract service IDs from plan
 - `GetSpans` → `flowrulz_get_spans` — drain span ring buffer
 - `MsgAlloc` / `MsgRelease` — C-heap memory management
 - `Intern` / `InternLookup` — string interning via Rust `InternTable`
 
 The Go-side service caller bridge uses `sync.Map` (callerMap) + `atomic.Uint64` (nextExecID) — no mutex in hot path.
 
-**Exports:** `ServiceCaller` func type, `ExecContext`, `Compile()`, `Execute()`, `MsgAlloc()`, `MsgRelease()`, `Intern()`, `InternLookup()`, `GetSpans()`, `PlanComplexity()`
+**Exports:** `ServiceCaller` func type, `ExecContext`, `StepResult` (Done/Pending/Continue), `StepOutput`, `ServiceEntry`, `Compile()`, `Execute()`, `ExecuteStep()`, `MsgAlloc()`, `MsgRelease()`, `Intern()`, `InternLookup()`, `GetSpans()`, `PlanServices()`, `PlanComplexity()`
 
 ---
 
@@ -78,24 +80,27 @@ Callback hooks: `AfterDeploy` and `AfterPromote` are set by execnode to trigger 
 
 Persistence: atomic write via `os.WriteFile(path.tmp)` + `os.Rename(path.tmp, path)`.
 
-**Exports:** `Lane`, `LaneConfig`, `DefaultLanes`, `VersionedPlan`, `Rule`, `Engine`, `New()`, `Deploy()`, `AddVersion()`, `Promote()`, `Rollback()`, `Drain()`, `Remove()`, `Rules()`, `ExecuteAll()`, `LaneForScore()`
+**Exports:** `Lane`, `LaneConfig`, `DefaultLanes`, `VersionedPlan`, `Rule`, `Engine`, `New()`, `Deploy()`, `AddVersion()`, `Promote()`, `Rollback()`, `Drain()`, `Remove()`, `Rules()`, `ExecuteAll()`, `ActivePlanBytes()`, `LaneForScore()`
 
 ---
 
 ### `go/internal/execnode/execnode.go`
 **Package:** `execnode`
 
-Data-plane process. `New()` wires together: Engine, PlanDistributor (with plan/ack producers), Scheduler, ReplyRouter, DLQ, RateLimiter, CircuitBreakers (per-svcID), MetricsCollector, and Admin server. Sets `Engine.AfterDeploy` and `Engine.AfterPromote` callbacks that trigger plan distribution when the node is leader.
+Data-plane process. `New()` wires together: Engine, PlanDistributor (with plan/ack producers), Scheduler, ReplyRouter, DLQ, RateLimiter, CircuitBreakers (per-svcID), MetricsCollector, Admin server, and `httpClient`. Sets `Engine.AfterDeploy` and `Engine.AfterPromote` callbacks that trigger plan distribution when the node is leader.
 
 Leader/follower role managed by `SetLeader()`/`IsLeader()`. `SetLeader(true)` marks the node as leader; `SetTerm(n)` synchronizes the cluster term to both the node and PlanDistributor.
 
 `Start()`:
-1. Creates the ingress `MessageHandler` — rate-limits, dedup by MessageID, generates `ExecContext`, passes to `engine.ExecuteAll`
-2. Creates the `svcCaller` — per-service circuit breaker check (`Allow()`), then success/failure recording
-3. Launches the ingress transport consumer goroutine
-4. Creates plan/ack consumers that listen on `_flowrulz_plans`/`_flowrulz_acks`:
+1. Creates the ingress `MessageHandler` — rate-limits, dedup by MessageID, calls `executeAll(msg)` which iterates active plans from `Engine.ActivePlanBytes()`
+2. `executeAll()` delegates to `executePlan(plan, body)` per active rule — a cooperative loop using `bridge.ExecuteStep()`:
+   - `StepDone` → return output
+   - `StepPending` → `callService(svcID, body)` which checks circuit breaker, resolves via `ServiceResolver`, makes HTTP call, records metrics
+   - `StepContinue` → advance to next instruction
+3. Creates plan/ack consumers via `mkConsumer()` (real Sarama or stub depending on `KafkaBrokers` config) that listen on `_flowrulz_plans`/`_flowrulz_acks`:
    - `handlePlanMessage` deserializes `PlanMessage`, rejects stale terms, calls `Engine.AddVersion()` for "plan" type (and sends ACK) or `Engine.Promote()` for "activate" type
    - `handleAckMessage` deserializes `AckMessage` and calls `PlanDist.RecordAck()`
+4. Creates producers via `mkProducer()` (real Sarama `SyncProducer` or stub)
 5. Starts `PlanDistributor`
 6. Starts the HTTP server (admin + health + metrics)
 7. Blocks on SIGINT/SIGTERM
@@ -109,7 +114,7 @@ Leader-only distribution flow:
 - After `Engine.Promote()` → `AfterPromote` callback → spawns `distributeActivate()` goroutine:
   1. `PlanDist.ActivatePlan()` publishes activate message
 
-**Exports:** `Config`, `NewConfig()`, `ExecutionNode`, `New()`, `Start()`, `Shutdown()`, `SetLeader()`, `IsLeader()`, `SetTerm()`, `CurrentTerm()`
+**Exports:** `Config`, `NewConfig()`, `ExecutionNode`, `New()`, `Start()`, `Shutdown()`, `SetLeader()`, `IsLeader()`, `SetTerm()`, `CurrentTerm()`, `callService()`, `executePlan()`, `executeAll()`
 
 ---
 
@@ -250,7 +255,11 @@ Core transport interfaces. `MessageHandler` func type and `MessageConsumer`/`Mes
 ### `go/internal/transport/kafka.go`
 **Package:** `transport`
 
-Kafka transport implementation. `KafkaConsumer` connects to brokers, polls messages, dispatches to a `MessageHandler` via a buffered channel. `KafkaProducer` sends messages to a Kafka topic with `enable.idempotence=true` for at-least-once semantics. Both support graceful shutdown.
+Real Sarama-backed Kafka transport. `KafkaConsumer` wraps `sarama.ConsumerGroup` with round-robin partition strategy — implements `sarama.ConsumerGroupHandler` (`Setup`/`Cleanup`/`ConsumeClaim`), dispatches messages to a `MessageHandler`, marks them consumed. Falls back to in-memory channel mode when no brokers configured.
+
+`KafkaProducer` wraps `sarama.SyncProducer` with `WaitForLocal` ack level — `Send()` returns partition/offset on success. Lazy-init: producer created on first `Send()` call. Log-only mode (no-op) when no brokers configured.
+
+Both implement `MessageConsumer`/`MessageProducer` interfaces, swappable with stub implementations for testing.
 
 **Exports:** `KafkaConfig`, `KafkaConsumer`, `KafkaProducer`, `NewKafkaConsumer()`, `NewKafkaProducer()`, `Topic()`, `Start()`, `Stop()`, `Inject()`, `Send()`, `Close()`
 

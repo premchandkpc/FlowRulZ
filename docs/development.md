@@ -24,7 +24,7 @@ The Rust library is built as both `cdylib` and `rlib`. The `cdylib` (`libflowrul
 ## Test
 
 ```bash
-# All tests (Rust 111 + Go all packages)
+# All tests (Rust 119 + Go all packages)
 make test
 
 # Rust only

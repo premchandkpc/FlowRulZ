@@ -1,7 +1,7 @@
 use crate::bytecode::plan::ExecutionPlan;
 use crate::dsl::{compiler::Compiler, lexer, optimizer, parser};
 use crate::error::FfiError;
-use crate::executor::VM;
+use crate::executor::{StepResult, VM};
 use crate::memory::{arena::Arena, intern::InternTable, slab::SlabPool};
 
 static INTERN_TABLE: once_cell::sync::Lazy<InternTable> = once_cell::sync::Lazy::new(|| {
@@ -286,6 +286,170 @@ pub extern "C" fn flowrulz_get_spans(out_ptr: *mut u8, out_cap: usize) -> usize 
     crate::tracing::SPAN_BUFFER.with(|buf| {
         buf.borrow_mut().drain(out_slice)
     })
+}
+
+#[no_mangle]
+pub extern "C" fn flowrulz_execute_step(
+    ctx_id: u64,
+    plan_ptr: *const u8,
+    plan_len: usize,
+    ctx_bytes_ptr: *const u8,
+    ctx_bytes_len: usize,
+    resp_ptr: *const u8,
+    resp_len: usize,
+    caller_cb: extern "C" fn(u64, u16, *const u8, usize, *mut u8, *mut usize) -> i32,
+    out_ptr: *mut u8,
+    out_cap: usize,
+    out_len: *mut usize,
+    err_ptr: *mut u8,
+    err_cap: usize,
+    err_len: *mut usize,
+    pending_svc_id: *mut u16,
+    pending_body_ptr: *mut u8,
+    pending_body_cap: usize,
+    pending_body_len: *mut usize,
+    ctx_out_ptr: *mut u8,
+    ctx_out_cap: usize,
+    ctx_out_len: *mut usize,
+) -> i32 {
+    let plan_slice = match read_slice(plan_ptr, plan_len) {
+        Some(s) => s,
+        None => return FfiError::NullPointer.code(),
+    };
+    let plan: ExecutionPlan = match bincode::deserialize(plan_slice) {
+        Ok(p) => p,
+        Err(_) => return FfiError::Deserialize.code(),
+    };
+
+    let ctx: crate::bytecode::execution::ExecutionContext = if ctx_bytes_len > 0 && !ctx_bytes_ptr.is_null() {
+        let slice = match read_slice(ctx_bytes_ptr, ctx_bytes_len) {
+            Some(s) => s,
+            None => return FfiError::NullPointer.code(),
+        };
+        match bincode::deserialize(slice) {
+            Ok(c) => c,
+            Err(_) => return FfiError::Deserialize.code(),
+        }
+    } else {
+        let body = Vec::new();
+        crate::bytecode::execution::ExecutionContext::from_body(body)
+    };
+
+    let arena = crate::memory::arena::Arena::new();
+    let caller_wrapper = move |svc_id: u16, b: &[u8], _timeout: u64| -> Result<Vec<u8>, String> {
+        let mut resp_buf = vec![0u8; 65536];
+        let mut resp_len: usize = 0;
+        let rc = caller_cb(
+            ctx_id,
+            svc_id,
+            b.as_ptr(),
+            b.len(),
+            resp_buf.as_mut_ptr(),
+            &mut resp_len as *mut usize,
+        );
+        if rc != 0 {
+            Err(format!("caller returned {}", rc))
+        } else {
+            resp_buf.truncate(resp_len);
+            Ok(resp_buf)
+        }
+    };
+
+    let mut vm = VM::new(&plan, ctx, arena, &caller_wrapper);
+    let response = if !resp_ptr.is_null() {
+        Some(read_slice(resp_ptr, resp_len).unwrap_or(&[]))
+    } else {
+        None
+    };
+
+    match vm.step(response) {
+        Ok(step_result) => match step_result {
+            StepResult::Done => {
+                let result = &vm.ctx.body;
+                if !out_ptr.is_null() && out_cap > 0 {
+                    let n = result.len().min(out_cap);
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(result.as_ptr(), out_ptr, n);
+                        *out_len = n;
+                    }
+                }
+                let ctx_bytes = bincode::serialize(&vm.ctx).unwrap_or_default();
+                if !ctx_out_ptr.is_null() && ctx_out_cap > 0 {
+                    let n = ctx_bytes.len().min(ctx_out_cap);
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(ctx_bytes.as_ptr(), ctx_out_ptr, n);
+                        *ctx_out_len = n;
+                    }
+                }
+                0
+            }
+            StepResult::Continue => {
+                let ctx_bytes = bincode::serialize(&vm.ctx).unwrap_or_default();
+                if !ctx_out_ptr.is_null() && ctx_out_cap > 0 {
+                    let n = ctx_bytes.len().min(ctx_out_cap);
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(ctx_bytes.as_ptr(), ctx_out_ptr, n);
+                        *ctx_out_len = n;
+                    }
+                }
+                2
+            }
+            StepResult::Pending { svc_id, body } => {
+                if !pending_svc_id.is_null() {
+                    unsafe { *pending_svc_id = svc_id; }
+                }
+                if !pending_body_ptr.is_null() && !pending_body_len.is_null() && pending_body_cap > 0 {
+                    let n = body.len().min(pending_body_cap);
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(body.as_ptr(), pending_body_ptr, n);
+                        *pending_body_len = n;
+                    }
+                }
+                let ctx_bytes = bincode::serialize(&vm.ctx).unwrap_or_default();
+                if !ctx_out_ptr.is_null() && ctx_out_cap > 0 {
+                    let n = ctx_bytes.len().min(ctx_out_cap);
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(ctx_bytes.as_ptr(), ctx_out_ptr, n);
+                        *ctx_out_len = n;
+                    }
+                }
+                1
+            }
+        },
+        Err(e) => {
+            write_error(err_ptr, err_cap, err_len, &format!("step: {}", e));
+            FfiError::Exec.code()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn flowrulz_plan_services(
+    plan_ptr: *const u8,
+    plan_len: usize,
+    out_ptr: *mut u8,
+    out_cap: usize,
+    out_len: *mut usize,
+) -> i32 {
+    if out_ptr.is_null() || out_len.is_null() {
+        return FfiError::NullPointer.code();
+    }
+    let plan_slice = match read_slice(plan_ptr, plan_len) {
+        Some(s) => s,
+        None => return FfiError::NullPointer.code(),
+    };
+    let plan: ExecutionPlan = match bincode::deserialize(plan_slice) {
+        Ok(p) => p,
+        Err(_) => return FfiError::Deserialize.code(),
+    };
+    let json = serde_json::to_string(&plan.services.entries()).unwrap_or_default();
+    let bytes = json.as_bytes();
+    let n = bytes.len().min(out_cap);
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_ptr, n);
+        *out_len = n;
+    }
+    0
 }
 
 #[no_mangle]

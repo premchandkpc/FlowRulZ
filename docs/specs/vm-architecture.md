@@ -56,7 +56,7 @@ pub struct ExecutionContext {
 
 The VM does NOT have `last_response`, `failed`, or `hop_count` as separate fields — all state lives in `ExecutionContext`.
 
-### Main Loop
+### Main Loop — `VM::run()`
 
 ```
 while ip < plan.instructions.len():
@@ -66,6 +66,32 @@ while ip < plan.instructions.len():
     if Drop: ip = HALT (break)
     if Jmp: ip = inst.a
 ```
+
+### Cooperative Step — `VM::step()`
+
+For asynchronous execution, `step()` processes at most one instruction and returns control to the caller:
+
+```
+if response is Some(resp):
+    ctx.body = resp
+    ctx.hop_count += 1
+    ip += 1
+
+if ip >= instructions.len():
+    return Done
+
+inst = instructions[ip]
+match inst.op:
+    Next | Async | Emit | SvcCall → return Pending { svc_id, body }
+    _ → ip += 1; dispatch(inst)
+         if ip >= instructions.len() → Done else → Continue
+```
+
+Key differences from `run()`:
+- **Never blocks**: service opcodes yield `Pending` instead of calling the callback
+- **Response injection**: caller provides service response on the next `step()` call
+- **Context serialization**: the caller stores the serialized `ExecutionContext` between steps
+- **Used by**: `bridge.ExecuteStep()` in Go execnode and simulator for cooperative execution loops
 
 ## Event Model
 

@@ -38,22 +38,27 @@ type AckMessage struct {
 type PlanHandler func(ctx context.Context, msg PlanMessage) error
 type AckHandler func(ctx context.Context, msg AckMessage)
 
+type QuorumProvider interface {
+	AliveCount() int
+}
+
 type PlanDistributor struct {
-	nodeID       string
-	planTopic    string
-	ackTopic     string
-	planProducer transport.MessageProducer
-	ackProducer  transport.MessageProducer
-	planConsumer transport.MessageConsumer
-	ackConsumer  transport.MessageConsumer
-	planHandler  PlanHandler
-	ackHandler   AckHandler
-	pendingAcks  sync.Map
-	nextSerial   atomic.Uint64
-	clusterTerm  atomic.Uint64
-	started      bool
-	mu           sync.Mutex
-	stopCh       chan struct{}
+	nodeID         string
+	planTopic      string
+	ackTopic       string
+	planProducer   transport.MessageProducer
+	ackProducer    transport.MessageProducer
+	planConsumer   transport.MessageConsumer
+	ackConsumer    transport.MessageConsumer
+	planHandler    PlanHandler
+	ackHandler     AckHandler
+	pendingAcks    sync.Map
+	nextSerial     atomic.Uint64
+	clusterTerm    atomic.Uint64
+	quorumProvider QuorumProvider
+	started        bool
+	mu             sync.Mutex
+	stopCh         chan struct{}
 }
 
 func New(nodeID string, opts ...Option) *PlanDistributor {
@@ -101,6 +106,10 @@ func WithPlanHandler(h PlanHandler) Option {
 
 func WithAckHandler(h AckHandler) Option {
 	return func(pd *PlanDistributor) { pd.ackHandler = h }
+}
+
+func WithQuorumProvider(qp QuorumProvider) Option {
+	return func(pd *PlanDistributor) { pd.quorumProvider = qp }
 }
 
 func WithClusterTerm(term uint64) Option {
@@ -213,11 +222,17 @@ func (pd *PlanDistributor) SendAck(ctx context.Context, ruleID string, version u
 
 func (pd *PlanDistributor) WaitForAcks(ctx context.Context, ruleID string, version uint64, quorum int, timeout time.Duration) error {
 	if quorum == 0 {
-		// 0 = skip wait (testing/development)
-		return nil
+		if pd.quorumProvider != nil {
+			n := pd.quorumProvider.AliveCount()
+			quorum = n/2 + 1
+		}
 	}
 	if quorum < 0 {
-		// negative values reserved for future: -1 = all alive nodes
+		if pd.quorumProvider != nil {
+			quorum = pd.quorumProvider.AliveCount()
+		}
+	}
+	if quorum <= 0 {
 		return nil
 	}
 

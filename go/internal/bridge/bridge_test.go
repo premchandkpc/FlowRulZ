@@ -3,7 +3,6 @@ package bridge
 import (
 	"testing"
 )
-
 func TestCompileValidDSL(t *testing.T) {
 	plan, err := Compile("n:validate", "test-1")
 	if err != nil {
@@ -145,6 +144,91 @@ func TestExecuteWithContext(t *testing.T) {
 	_, err = Execute(plan, []byte(`{"x":1}`), caller, ctx)
 	if err != nil {
 		t.Fatalf("Execute with context failed: %v", err)
+	}
+}
+
+func TestExecuteStepBasic(t *testing.T) {
+	plan, err := Compile("n:validate", "test-step")
+	if err != nil {
+		t.Fatalf("Compile failed: %v", err)
+	}
+
+	caller := func(svcID uint16, body []byte) ([]byte, error) {
+		return body, nil
+	}
+
+	var ctxBytes, respBytes []byte
+	for i := 0; i < 5; i++ {
+		out, err := ExecuteStep(plan, ctxBytes, respBytes, caller)
+		if err != nil {
+			t.Fatalf("ExecuteStep failed: %v", err)
+		}
+		ctxBytes = out.CtxBytes
+		switch out.Result {
+		case StepDone:
+			return
+		case StepPending:
+			resp, err := caller(out.PendingSvc, out.PendingBody)
+			if err != nil {
+				t.Fatalf("service call failed: %v", err)
+			}
+			respBytes = resp
+		case StepContinue:
+			respBytes = nil
+		}
+	}
+	t.Fatal("never reached Done")
+}
+
+func TestExecuteStepMultiCall(t *testing.T) {
+	plan, err := Compile("n:a n:b n:c", "test-chain")
+	if err != nil {
+		t.Fatalf("Compile failed: %v", err)
+	}
+
+	var callIDs []uint16
+	caller := func(svcID uint16, body []byte) ([]byte, error) {
+		callIDs = append(callIDs, svcID)
+		return []byte(`{"called":` + string(rune('0'+svcID)) + `}`), nil
+	}
+
+	var ctxBytes, respBytes []byte
+	for i := 0; i < 10; i++ {
+		out, err := ExecuteStep(plan, ctxBytes, respBytes, caller)
+		if err != nil {
+			t.Fatalf("step %d failed: %v", i, err)
+		}
+		ctxBytes = out.CtxBytes
+		switch out.Result {
+		case StepDone:
+			goto done
+		case StepPending:
+			resp, err := caller(out.PendingSvc, out.PendingBody)
+			if err != nil {
+				t.Fatalf("service call %d failed: %v", out.PendingSvc, err)
+			}
+			respBytes = resp
+		case StepContinue:
+			respBytes = nil
+		}
+	}
+done:
+	if len(callIDs) != 3 {
+		t.Fatalf("expected 3 service calls, got %d", len(callIDs))
+	}
+}
+
+func TestExecuteStepEmptyBody(t *testing.T) {
+	plan, err := Compile("n:v", "test-empty")
+	if err != nil {
+		t.Fatalf("Compile failed: %v", err)
+	}
+	out, err := ExecuteStep(plan, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("ExecuteStep with nil body failed: %v", err)
+	}
+	if out.Result == StepDone {
+		// Valid for simple pipeline
 	}
 }
 

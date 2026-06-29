@@ -1,12 +1,9 @@
 # FlowRulZ
 
-**Distributed programmable event runtime and message bus.**
+**Distributed execution runtime.** Pub/Sub, RPC, workflows, and rules are all execution plans running on the same VM.
 
-One platform for publish/subscribe, request/reply, rule execution, and workflow orchestration. Owns the entire message lifecycle.
-
-- **Four communication models**: Publish (async), Request (sync), Execute (rule), Stream (subscription)
+- **One VM**: bytecode execution runtime drives all models — publish, request, rule execution, and workflows are the same engine with different bytecode
 - **Any payload**: JSON, Protobuf, Avro, MessagePack, binary — runtime is format-agnostic
-- **One VM**: bytecode execution runtime drives all models — publish, request, and rule execution are the same engine with different bytecode
 - **Services enrich context** instead of replacing it — build stateful workflows, not JSON pipelines
 - **Kafka-backed** for durable storage, but FlowRulZ owns routing, execution, and reply handling
 

@@ -1,0 +1,165 @@
+package services
+
+import (
+	"context"
+	"math/rand"
+	"sync"
+	"time"
+)
+
+type MockService struct {
+	Name          string
+	BaseLatency   time.Duration
+	LatencyJitter time.Duration
+	FailureRate   float64
+	MaxConcurrent int
+	Retryable     bool
+	ErrorCode     int
+
+	mu       sync.Mutex
+	running  int
+	callLog  []CallRecord
+}
+
+type CallRecord struct {
+	Start    time.Time
+	Latency  time.Duration
+	Error    bool
+	Retryable bool
+}
+
+type CallResult struct {
+	Body    []byte
+	Latency time.Duration
+	Error   error
+}
+
+type ServiceRegistry struct {
+	mu       sync.RWMutex
+	services map[string]*MockService
+}
+
+func NewRegistry() *ServiceRegistry {
+	return &ServiceRegistry{
+		services: make(map[string]*MockService),
+	}
+}
+
+func (r *ServiceRegistry) Register(svc *MockService) {
+	r.mu.Lock()
+	r.services[svc.Name] = svc
+	r.mu.Unlock()
+}
+
+func (r *ServiceRegistry) Get(name string) *MockService {
+	r.mu.RLock()
+	svc := r.services[name]
+	r.mu.RUnlock()
+	return svc
+}
+
+func (r *ServiceRegistry) Names() []string {
+	r.mu.RLock()
+	names := make([]string, 0, len(r.services))
+	for n := range r.services {
+		names = append(names, n)
+	}
+	r.mu.RUnlock()
+	return names
+}
+
+func (s *MockService) Call(ctx context.Context, body []byte) CallResult {
+	start := time.Now()
+
+	s.mu.Lock()
+	if s.MaxConcurrent > 0 && s.running >= s.MaxConcurrent {
+		s.mu.Unlock()
+		return CallResult{
+			Body:    nil,
+			Latency: time.Since(start),
+			Error:   context.DeadlineExceeded,
+		}
+	}
+	s.running++
+	s.mu.Unlock()
+
+	defer func() {
+		s.mu.Lock()
+		s.running--
+		s.callLog = append(s.callLog, CallRecord{
+			Start:     start,
+			Latency:   time.Since(start),
+		})
+		if len(s.callLog) > 10000 {
+			s.callLog = s.callLog[5000:]
+		}
+		s.mu.Unlock()
+	}()
+
+	latency := s.BaseLatency
+	if s.LatencyJitter > 0 {
+		jitter := time.Duration(rand.Int63n(int64(s.LatencyJitter)))
+		latency += jitter
+	}
+
+	select {
+	case <-time.After(latency):
+	case <-ctx.Done():
+		return CallResult{Latency: time.Since(start), Error: ctx.Err()}
+	}
+
+	if s.FailureRate > 0 && rand.Float64() < s.FailureRate {
+		return CallResult{
+			Body:      nil,
+			Latency:   time.Since(start),
+			Error:     context.DeadlineExceeded,
+		}
+	}
+
+	resp := []byte(`{"status":"ok"}`)
+	return CallResult{
+		Body:    resp,
+		Latency: time.Since(start),
+		Error:   nil,
+	}
+}
+
+func (s *MockService) Stats() (running int, callCount int) {
+	s.mu.Lock()
+	running = s.running
+	callCount = len(s.callLog)
+	s.mu.Unlock()
+	return
+}
+
+func DefaultServices() *ServiceRegistry {
+	r := NewRegistry()
+	defs := []struct {
+		name        string
+		latency     time.Duration
+		jitter      time.Duration
+		failureRate float64
+		concurrency int
+	}{
+		{"validate", 0, 0, 0.0, 1000},
+		{"inventory", 8 * time.Millisecond, 4 * time.Millisecond, 0.01, 100},
+		{"fraud", 15 * time.Millisecond, 5 * time.Millisecond, 0.02, 50},
+		{"payment", 40 * time.Millisecond, 10 * time.Millisecond, 0.03, 20},
+		{"email", 5 * time.Millisecond, 2 * time.Millisecond, 0.005, 200},
+		{"loyalty", 10 * time.Millisecond, 3 * time.Millisecond, 0.01, 100},
+		{"invoice", 12 * time.Millisecond, 3 * time.Millisecond, 0.01, 80},
+		{"shipping", 20 * time.Millisecond, 5 * time.Millisecond, 0.02, 40},
+		{"notification", 3 * time.Millisecond, 1 * time.Millisecond, 0.005, 500},
+	}
+	for _, d := range defs {
+		r.Register(&MockService{
+			Name:          d.name,
+			BaseLatency:   d.latency,
+			LatencyJitter: d.jitter,
+			FailureRate:   d.failureRate,
+			MaxConcurrent: d.concurrency,
+			Retryable:     true,
+		})
+	}
+	return r
+}

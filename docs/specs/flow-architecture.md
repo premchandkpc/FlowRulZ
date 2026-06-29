@@ -2,7 +2,7 @@
 
 ## Distributed Event Runtime
 
-FlowRulZ is a **distributed programmable event runtime and message bus**. It owns the entire message lifecycle — send, receive, route, execute, reply — within a single platform.
+FlowRulZ is a **distributed execution runtime**. Pub/Sub, RPC, workflows, and rules are all execution plans running on the same VM. It owns the entire message lifecycle — send, receive, route, execute, reply — within a single platform.
 
 ```
                     FlowRulZ Cluster
@@ -292,18 +292,22 @@ Kafka      Partition Worker         Engine              ExecutionRuntime        
   │               │                    │                      │                │
   │  Event        │                    │                      │                │
   │──────────────►│                    │                      │                │
-  │               │  ExecuteAll(event) │                      │                │
-  │               │───────────────────►│                      │                │
-  │               │                    │  for each plan:      │                │
-  │               │                    │    runtime.execute() │                │
-  │               │                    │─────────────────────►│                │
-  │               │                    │                      │  run(context)  │
-  │               │                    │                      │───────────────►│
-  │               │                    │                      │  dispatch...   │
-  │               │                    │◄── callback ────────┤                │
-  │               │                    │                      │                │
-  │               │                    │  ◄── result ────────┤                │
-  │               │  ◄── result ──────┤                      │                │
+   │               │  executeAll(event)│                      │                │
+   │               │───────────────────►│                      │                │
+   │               │                    │  for each plan:      │                │
+   │               │                    │    executePlan()     │                │
+   │               │                    │    (step loop)       │                │
+   │               │                    │─────────────────────►│                │
+   │               │                    │                      │  step(context) │
+   │               │                    │                      │  (cooperative) │
+   │               │                    │  Pending{svc,body}───┤                │
+   │               │                    │◄─────────────────────┤                │
+   │               │                    │  callService()       │                │
+   │               │                    │  → HTTP/gRPC call    │                │
+   │               │                    │─────────────────────►│                │
+   │               │                    │                      │  step(response) │
+   │               │                    │  ◄── done/output─────┤                │
+   │               │  ◄── result ──────┤                      │                │
 ```
 
 ### Files Involved
@@ -312,12 +316,12 @@ Kafka      Partition Worker         Engine              ExecutionRuntime        
 |------|-------------|
 | `go/internal/transport/` | Kafka consumer/producer + interfaces, invokes handler with event bytes |
 | `go/internal/execnode/` | ExecutionNode: engine + scheduler + transport + admin + lifecycle |
-| `go/internal/engine/` | `ExecuteAll()`: collect active plans, bridge execute |
+| `go/internal/engine/` | `ActivePlanBytes()`: collect active plan bytes; `executePlan()`: cooperative step loop via `bridge.ExecuteStep` |
 | `go/internal/scheduler/` | Priority queue lanes (fast/normal/heavy), concurrency limits, backpressure |
 | `go/internal/reliability/ratelimit.go` | Token bucket rate limiter per name, ingress throttling |
-| `go/internal/reliability/circuitbreaker.go` | Per-svcID circuit breaker in svcCaller (threshold=5, recovery=30s) |
+| `go/internal/reliability/circuitbreaker.go` | Per-svcID circuit breaker in callService (threshold=5, recovery=30s) |
 | `go/internal/reliability/dlq.go` | Dead-letter queue with replay, bounded size |
-| `rust/src/ffi.rs` | `flowrulz_execute()`: deserialize plan, create VM with ExecutionContext |
+| `rust/src/ffi.rs` | `flowrulz_execute()` (sync callback-based) + `flowrulz_execute_step()` (cooperative step-based): deserialize plan, create VM with ExecutionContext |
 | `rust/src/executor/mod.rs` | VM dispatch loop, opcode handlers |
 | `rust/src/executor/runtime.rs` | ExecutionRuntime: Chunk/Buffer orchestration |
 | `rust/src/executor/context.rs` | ExecutionContext: event + body + variables + outputs |

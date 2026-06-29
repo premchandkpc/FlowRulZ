@@ -33,6 +33,21 @@ uint16_t flowrulz_intern(const unsigned char* s_ptr, size_t s_len);
 void flowrulz_intern_lookup(uint16_t id, unsigned char* out_ptr, size_t* out_len);
 
 size_t flowrulz_get_spans(unsigned char* out_ptr, size_t out_cap);
+
+int flowrulz_execute_step(
+    uint64_t ctx_id,
+    const unsigned char* plan_ptr, size_t plan_len,
+    const unsigned char* ctx_bytes_ptr, size_t ctx_bytes_len,
+    const unsigned char* resp_ptr, size_t resp_len,
+    caller_cb_t caller_cb,
+    unsigned char* out_ptr, size_t out_cap, size_t* out_len,
+    unsigned char* err_ptr, size_t err_cap, size_t* err_len,
+    uint16_t* pending_svc_id,
+    unsigned char* pending_body_ptr, size_t pending_body_cap, size_t* pending_body_len,
+    unsigned char* ctx_out_ptr, size_t ctx_out_cap, size_t* ctx_out_len
+);
+
+int flowrulz_plan_services(const unsigned char* plan_ptr, size_t plan_len, unsigned char* out_ptr, size_t out_cap, size_t* out_len);
 uint32_t flowrulz_plan_complexity(const unsigned char* plan_ptr, size_t plan_len);
 
 caller_cb_t getCallerBridgePtr(void);
@@ -40,6 +55,7 @@ caller_cb_t getCallerBridgePtr(void);
 import "C"
 
 import (
+	"encoding/json"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -59,6 +75,8 @@ type ExecContext struct {
 var (
 	callerMap sync.Map
 	nextExecID atomic.Uint64
+	// sentinel for "empty but present" response in ExecuteStep
+	emptyRespSentinel [1]byte
 )
 
 //export goServiceCaller
@@ -210,6 +228,121 @@ func GetSpans() []byte {
 	buf := make([]byte, 4096)
 	n := C.flowrulz_get_spans((*C.uchar)(unsafe.Pointer(&buf[0])), C.size_t(cap(buf)))
 	return buf[:n]
+}
+
+type ServiceEntry struct {
+	ID   uint16 `json:"id"`
+	Name string `json:"name"`
+}
+
+func PlanServices(plan []byte) ([]ServiceEntry, error) {
+	if len(plan) == 0 {
+		return nil, fmt.Errorf("plan services: empty plan")
+	}
+	outBuf := make([]byte, 4096)
+	var outLen C.size_t
+	rc := C.flowrulz_plan_services(
+		(*C.uchar)(unsafe.Pointer(&plan[0])), C.size_t(len(plan)),
+		(*C.uchar)(unsafe.Pointer(&outBuf[0])), C.size_t(cap(outBuf)), &outLen,
+	)
+	if rc != 0 {
+		return nil, fmt.Errorf("plan services: ffi error %d", rc)
+	}
+	var entries []ServiceEntry
+	if err := json.Unmarshal(outBuf[:outLen], &entries); err != nil {
+		return nil, fmt.Errorf("plan services: unmarshal: %w", err)
+	}
+	return entries, nil
+}
+
+type StepResult int
+
+const (
+	StepDone    StepResult = 0
+	StepPending StepResult = 1
+	StepContinue StepResult = 2
+)
+
+type StepOutput struct {
+	Result     StepResult
+	Output     []byte
+	Error      string
+	PendingSvc uint16
+	PendingBody []byte
+	CtxBytes   []byte
+}
+
+func ExecuteStep(plan, ctxBytes, respBytes []byte, caller ServiceCaller) (*StepOutput, error) {
+	ctxID := nextExecID.Add(1)
+	if caller != nil {
+		callerMap.Store(ctxID, caller)
+		defer callerMap.Delete(ctxID)
+	}
+
+	outBuf := make([]byte, 256*1024)
+	var outLen C.size_t
+	errBuf := make([]byte, 4096)
+	var errLen C.size_t
+	var pendingSvcID C.uint16_t
+	pendingBodyBuf := make([]byte, 256*1024)
+	var pendingBodyLen C.size_t
+	ctxOutBuf := make([]byte, 256*1024)
+	var ctxOutLen C.size_t
+
+	respP, respLen := respBytesPtr(respBytes)
+	rc := C.flowrulz_execute_step(
+		C.uint64_t(ctxID),
+		(*C.uchar)(unsafe.Pointer(&plan[0])), C.size_t(len(plan)),
+		ctxBytesPtr(ctxBytes), C.size_t(len(ctxBytes)),
+		respP, respLen,
+		C.getCallerBridgePtr(),
+		(*C.uchar)(unsafe.Pointer(&outBuf[0])), C.size_t(cap(outBuf)), &outLen,
+		(*C.uchar)(unsafe.Pointer(&errBuf[0])), C.size_t(cap(errBuf)), &errLen,
+		&pendingSvcID,
+		(*C.uchar)(unsafe.Pointer(&pendingBodyBuf[0])), C.size_t(cap(pendingBodyBuf)), &pendingBodyLen,
+		(*C.uchar)(unsafe.Pointer(&ctxOutBuf[0])), C.size_t(cap(ctxOutBuf)), &ctxOutLen,
+	)
+
+	out := &StepOutput{
+		Result:      StepResult(rc),
+		Output:      copyBytes(outBuf, int(outLen)),
+		PendingSvc:  uint16(pendingSvcID),
+		PendingBody: copyBytes(pendingBodyBuf, int(pendingBodyLen)),
+		CtxBytes:    copyBytes(ctxOutBuf, int(ctxOutLen)),
+	}
+
+	if rc == -8 || rc == -1 {
+		out.Error = string(errBuf[:errLen])
+	}
+
+	return out, nil
+}
+
+func ctxBytesPtr(b []byte) *C.uchar {
+	if len(b) == 0 {
+		return nil
+	}
+	return (*C.uchar)(unsafe.Pointer(&b[0]))
+}
+
+func respBytesPtr(b []byte) (*C.uchar, C.size_t) {
+	if b == nil {
+		return nil, 0
+	}
+	if len(b) == 0 {
+		// non-nil sentinel so Rust sees a response (of zero length)
+		return (*C.uchar)(unsafe.Pointer(&emptyRespSentinel[0])), 0
+	}
+	return (*C.uchar)(unsafe.Pointer(&b[0])), C.size_t(len(b))
+}
+
+func copyBytes(buf []byte, n int) []byte {
+	if n == 0 {
+		return []byte{}
+	}
+	out := make([]byte, n)
+	copy(out, buf[:n])
+	return out
 }
 
 func PlanComplexity(plan []byte) uint32 {

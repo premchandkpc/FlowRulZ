@@ -316,6 +316,19 @@ func (e *Engine) Rules() []Rule {
 	return out
 }
 
+func (e *Engine) ActivePlanBytes() [][]byte {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	var plans [][]byte
+	for _, r := range e.rules {
+		vp := r.ActivePlan()
+		if vp != nil && len(vp.Plan) > 0 {
+			plans = append(plans, vp.Plan)
+		}
+	}
+	return plans
+}
+
 func (e *Engine) ExecuteAll(body []byte, caller bridge.ServiceCaller, ctx *bridge.ExecContext) ([][]byte, error) {
 	e.mu.RLock()
 	var plans []*VersionedPlan

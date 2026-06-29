@@ -1,11 +1,13 @@
 package execnode
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -18,6 +20,7 @@ import (
 	"github.com/premchandkpc/FlowRulZ/go/internal/admin"
 	"github.com/premchandkpc/FlowRulZ/go/internal/bridge"
 	"github.com/premchandkpc/FlowRulZ/go/internal/engine"
+	"github.com/premchandkpc/FlowRulZ/go/internal/membership"
 	"github.com/premchandkpc/FlowRulZ/go/internal/observability"
 	"github.com/premchandkpc/FlowRulZ/go/internal/plandist"
 	"github.com/premchandkpc/FlowRulZ/go/internal/reliability"
@@ -25,6 +28,21 @@ import (
 	"github.com/premchandkpc/FlowRulZ/go/internal/scheduler"
 	"github.com/premchandkpc/FlowRulZ/go/internal/transport"
 )
+
+const (
+	DefaultMembersTopic = "_flowrulz_members"
+)
+
+type HeartbeatMessage struct {
+	NodeID    string    `json:"node_id"`
+	Address   string    `json:"address"`
+	Timestamp time.Time `json:"timestamp"`
+	Term      uint64    `json:"term"`
+}
+
+type ServiceResolver interface {
+	Resolve(svcID uint16, svcName string) (string, error)
+}
 
 type ExecutionNode struct {
 	Engine       *engine.Engine
@@ -37,6 +55,9 @@ type ExecutionNode struct {
 	Metrics      *observability.MetricsCollector
 	Dedup        *reliability.DedupTracker
 	PlanDist     *plandist.PlanDistributor
+	Membership   *membership.Membership
+
+	serviceResolver ServiceResolver
 
 	circuitBreakers sync.Map  // svcID uint16 → *reliability.CircuitBreaker
 
@@ -44,28 +65,34 @@ type ExecutionNode struct {
 	producers   []transport.MessageProducer
 	httpAddr    string
 	nodeID      string
+	config      Config
+	httpClient  *http.Client
 	mu          sync.Mutex
 	shutdownCh  chan struct{}
 	isLeader    int32  // atomic: 0 = follower, 1 = leader
 	clusterTerm uint64 // atomic: managed via LoadUint64/StoreUint64
+
+	membersProducer transport.MessageProducer
 }
 
 type Config struct {
-	PersistPath  string
-	HTTPAddr     string
-	Topic        string
-	NodeID       string
-	Seeds        []string
-	KafkaBrokers []string
-	APIKey       string
+	PersistPath   string
+	HTTPAddr      string
+	Topic         string
+	NodeID        string
+	Seeds         []string
+	KafkaBrokers  []string
+	KafkaGroupID  string
+	APIKey        string
 }
 
 func NewConfig() *Config {
 	return &Config{
-		HTTPAddr:     ":8080",
-		Topic:        "flowrulz-input",
-		NodeID:       "node-1",
-		KafkaBrokers: []string{"localhost:9092"},
+		HTTPAddr:      ":8080",
+		Topic:         "flowrulz-input",
+		NodeID:        "node-1",
+		KafkaBrokers:  []string{"localhost:9092"},
+		KafkaGroupID:  "flowrulz",
 	}
 }
 
@@ -78,6 +105,8 @@ func New(cfg *Config) *ExecutionNode {
 	en := &ExecutionNode{
 		httpAddr:   cfg.HTTPAddr,
 		nodeID:     nodeID,
+		config:     *cfg,
+		httpClient: &http.Client{Timeout: 10 * time.Second},
 		shutdownCh: make(chan struct{}),
 		consumers:  make([]transport.MessageConsumer, 0),
 		producers:  make([]transport.MessageProducer, 0),
@@ -91,15 +120,24 @@ func New(cfg *Config) *ExecutionNode {
 		replyrouter.WithMaxPending(10000),
 	)
 	en.Dedup = reliability.NewDedupTracker(10000, 5*time.Minute)
-	dlqProducer := transport.NewProducer(reliability.DefaultDLQTopic)
-	en.DLQ = reliability.NewDLQ(10000, reliability.WithDLQProducer(dlqProducer))
 	en.RateLimiter = reliability.NewRateLimiter()
 
-	planProducer := transport.NewProducer(plandist.DefaultPlanTopic)
-	ackProducer := transport.NewProducer(plandist.DefaultAckTopic)
+	kafkaCfg := transport.KafkaConfig{
+		Brokers: cfg.KafkaBrokers,
+		GroupID: cfg.KafkaGroupID,
+	}
+
+	dlqProducer := en.mkProducer(reliability.DefaultDLQTopic, kafkaCfg)
+	en.DLQ = reliability.NewDLQ(10000, reliability.WithDLQProducer(dlqProducer))
+
+	planProducer := en.mkProducer(plandist.DefaultPlanTopic, kafkaCfg)
+	ackProducer := en.mkProducer(plandist.DefaultAckTopic, kafkaCfg)
+	en.membersProducer = en.mkProducer(DefaultMembersTopic, kafkaCfg)
+	en.Membership = membership.New()
 	en.PlanDist = plandist.New(nodeID,
 		plandist.WithPlanProducer(planProducer),
 		plandist.WithAckProducer(ackProducer),
+		plandist.WithQuorumProvider(en.Membership),
 	)
 
 	en.AdminSrv = admin.New(en.Engine)
@@ -120,7 +158,7 @@ func New(cfg *Config) *ExecutionNode {
 	}
 
 	en.mu.Lock()
-	en.producers = append(en.producers, dlqProducer, planProducer, ackProducer)
+	en.producers = append(en.producers, dlqProducer, planProducer, ackProducer, en.membersProducer)
 	en.mu.Unlock()
 
 	return en
@@ -143,8 +181,38 @@ func (en *ExecutionNode) SetTerm(term uint64) {
 	en.PlanDist.SetTerm(term)
 }
 
+func (en *ExecutionNode) JoinCluster(id, address string) {
+	en.Membership.Add(id, address)
+}
+
+func (en *ExecutionNode) LeaveCluster(id string) {
+	en.Membership.Remove(id)
+}
+
+func (en *ExecutionNode) AliveCount() int {
+	return en.Membership.AliveCount()
+}
+
 func (en *ExecutionNode) CurrentTerm() uint64 {
 	return atomic.LoadUint64(&en.clusterTerm)
+}
+
+func (en *ExecutionNode) mkProducer(topic string, kc transport.KafkaConfig) transport.MessageProducer {
+	if len(kc.Brokers) > 0 {
+		p := transport.NewKafkaProducer(topic, kc)
+		en.mu.Lock()
+		en.producers = append(en.producers, p)
+		en.mu.Unlock()
+		return p
+	}
+	return transport.NewProducer(topic)
+}
+
+func (en *ExecutionNode) mkConsumer(topic string, handler transport.MessageHandler, kc transport.KafkaConfig) transport.MessageConsumer {
+	if len(kc.Brokers) > 0 {
+		return transport.NewKafkaConsumer(topic, handler, kc)
+	}
+	return transport.NewConsumer(topic, handler)
 }
 
 func (en *ExecutionNode) distributePlan(id, dsl string, plan []byte, version uint64) {
@@ -156,7 +224,7 @@ func (en *ExecutionNode) distributePlan(id, dsl string, plan []byte, version uin
 		return
 	}
 
-	if err := en.PlanDist.WaitForAcks(ctx, id, version, -1, 10*time.Second); err != nil {
+	if err := en.PlanDist.WaitForAcks(ctx, id, version, 0, 10*time.Second); err != nil {
 		log.Printf("plandist: ack wait error for %s v%d: %v", id, version, err)
 	}
 
@@ -171,6 +239,71 @@ func (en *ExecutionNode) distributeActivate(id string, version uint64) {
 
 	if err := en.PlanDist.ActivatePlan(ctx, id, version); err != nil {
 		log.Printf("plandist: activate error during promote %s v%d: %v", id, version, err)
+	}
+}
+
+func (en *ExecutionNode) startHeartbeat(ctx context.Context) {
+	ticker := time.NewTicker(membership.DefaultHeartbeatInterval)
+	defer ticker.Stop()
+
+	log.Printf("heartbeat: starting for node %s every %v", en.nodeID, membership.DefaultHeartbeatInterval)
+
+	for {
+		select {
+		case <-ticker.C:
+			hb := HeartbeatMessage{
+				NodeID:    en.nodeID,
+				Address:   en.httpAddr,
+				Timestamp: time.Now(),
+				Term:      atomic.LoadUint64(&en.clusterTerm),
+			}
+			data, err := json.Marshal(hb)
+			if err != nil {
+				log.Printf("heartbeat: marshal error: %v", err)
+				continue
+			}
+			if err := en.membersProducer.Send(ctx, []byte(en.nodeID), data); err != nil {
+				log.Printf("heartbeat: publish error: %v", err)
+			}
+		case <-ctx.Done():
+			log.Printf("heartbeat: stopped")
+			return
+		}
+	}
+}
+
+func (en *ExecutionNode) handleMembershipMessage(ctx context.Context, msg []byte) ([]byte, error) {
+	var hb HeartbeatMessage
+	if err := json.Unmarshal(msg, &hb); err != nil {
+		log.Printf("membership: unmarshal heartbeat error: %v", err)
+		return nil, nil
+	}
+
+	if hb.NodeID == en.nodeID {
+		return nil, nil
+	}
+
+	en.Membership.Heartbeat(hb.NodeID, hb.Address)
+	en.runLeaderElection()
+	return nil, nil
+}
+
+func (en *ExecutionNode) runLeaderElection() {
+	leaderID := en.Membership.LeaderID()
+	if leaderID == "" {
+		return
+	}
+
+	shouldBeLeader := leaderID == en.nodeID
+	isCurrentlyLeader := en.IsLeader()
+
+	if shouldBeLeader && !isCurrentlyLeader {
+		en.SetLeader(true)
+		en.SetTerm(en.PlanDist.CurrentTerm() + 1)
+		log.Printf("leader election: node %s promoted to leader (term %d)", en.nodeID, en.PlanDist.CurrentTerm())
+	} else if !shouldBeLeader && isCurrentlyLeader {
+		en.SetLeader(false)
+		log.Printf("leader election: node %s stepped down (new leader: %s)", en.nodeID, leaderID)
 	}
 }
 
@@ -211,32 +344,108 @@ func (en *ExecutionNode) handleAckMessage(ctx context.Context, msg []byte) ([]by
 	return nil, nil
 }
 
+func (en *ExecutionNode) callService(svcID uint16, body []byte) ([]byte, error) {
+	observability.RecordExec("svc_call")
+
+	v, _ := en.circuitBreakers.Load(svcID)
+	cb, ok := v.(*reliability.CircuitBreaker)
+	if !ok {
+		cb = reliability.NewCircuitBreaker(5, 30*time.Second)
+		en.circuitBreakers.Store(svcID, cb)
+	}
+
+	if !cb.Allow() {
+		observability.RecordError("circuit_breaker_open")
+		log.Printf("circuit breaker open for service %d", svcID)
+		return nil, fmt.Errorf("circuit breaker open for service %d", svcID)
+	}
+
+	if en.serviceResolver == nil {
+		log.Printf("service call: id=%d body=%d bytes (stub)", svcID, len(body))
+		cb.Success()
+		return body, nil
+	}
+
+	endpoint, err := en.serviceResolver.Resolve(svcID, "")
+	if err != nil {
+		cb.Failure()
+		return nil, fmt.Errorf("service %d: resolve: %w", svcID, err)
+	}
+
+	resp, err := en.httpClient.Post(endpoint, "application/octet-stream", bytes.NewReader(body))
+	if err != nil {
+		cb.Failure()
+		return nil, fmt.Errorf("service %d: call: %w", svcID, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 500 {
+		cb.Failure()
+		return nil, fmt.Errorf("service %d: status %d", svcID, resp.StatusCode)
+	}
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		cb.Failure()
+		return nil, fmt.Errorf("service %d: read: %w", svcID, err)
+	}
+
+	cb.Success()
+	return respBody, nil
+}
+
+func (en *ExecutionNode) executePlan(plan []byte, body []byte) ([]byte, error) {
+	var ctxBytes, respBytes []byte
+
+	for step := 0; step < 1000; step++ {
+		out, err := bridge.ExecuteStep(plan, ctxBytes, respBytes, nil)
+		if err != nil {
+			return nil, fmt.Errorf("step %d: %w", step, err)
+		}
+
+		ctxBytes = out.CtxBytes
+
+		switch out.Result {
+		case bridge.StepDone:
+			observability.RecordExec("completed")
+			return out.Output, nil
+
+		case bridge.StepPending:
+			observability.RecordExec("svc_pending")
+			resp, err := en.callService(out.PendingSvc, out.PendingBody)
+			if err != nil {
+				return nil, fmt.Errorf("service %d: %w", out.PendingSvc, err)
+			}
+			respBytes = resp
+
+		case bridge.StepContinue:
+			respBytes = nil
+		}
+	}
+
+	return nil, fmt.Errorf("execution exceeded max steps")
+}
+
+func (en *ExecutionNode) executeAll(body []byte) ([][]byte, error) {
+	plans := en.Engine.ActivePlanBytes()
+	if len(plans) == 0 {
+		return nil, nil
+	}
+
+	var results [][]byte
+	for _, plan := range plans {
+		res, err := en.executePlan(plan, body)
+		if err != nil {
+			return results, err
+		}
+		results = append(results, res)
+	}
+	return results, nil
+}
+
 func (en *ExecutionNode) Start() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	svcCaller := func(svcID uint16, body []byte) ([]byte, error) {
-		observability.RecordExec("svc_call")
-
-		v, _ := en.circuitBreakers.Load(svcID)
-		cb, ok := v.(*reliability.CircuitBreaker)
-		if !ok {
-			cb = reliability.NewCircuitBreaker(5, 30*time.Second)
-			en.circuitBreakers.Store(svcID, cb)
-		}
-
-		if !cb.Allow() {
-			observability.RecordError("circuit_breaker_open")
-			log.Printf("circuit breaker open for service %d", svcID)
-			return nil, fmt.Errorf("circuit breaker open for service %d", svcID)
-		}
-
-		log.Printf("service call: id=%d body=%s", svcID, body)
-		// TODO: replace with actual service call
-		resp := body
-		cb.Success()
-		return resp, nil
-	}
 
 	handler := func(ctx context.Context, msg []byte) ([]byte, error) {
 		if !en.RateLimiter.Allow("ingress") {
@@ -254,9 +463,6 @@ func (en *ExecutionNode) Start() {
 			return nil, fmt.Errorf("message id generation failed: %w", err)
 		}
 		msgIDStr := hex.EncodeToString(msgID)
-		ectx := &bridge.ExecContext{
-			MessageID: msgIDStr,
-		}
 
 		if en.Dedup.Seen(msgIDStr) {
 			observability.RecordExec("dedup_skipped")
@@ -264,7 +470,7 @@ func (en *ExecutionNode) Start() {
 		}
 		en.Dedup.Mark(msgIDStr)
 
-		results, err := en.Engine.ExecuteAll(msg, svcCaller, ectx)
+		results, err := en.executeAll(msg)
 		if err != nil {
 			observability.RecordError("exec")
 			en.DLQ.Send(&reliability.DeadLetterEntry{
@@ -274,25 +480,32 @@ func (en *ExecutionNode) Start() {
 			})
 			return nil, err
 		}
+		if len(results) == 0 {
+			return nil, nil
+		}
 		observability.RecordExec("msg")
 		return results[0], nil
 	}
 
-	consumer := transport.NewConsumer("flowrulz-input", handler)
+	kafkaCfg := transport.KafkaConfig{
+		Brokers: en.config.KafkaBrokers,
+		GroupID: en.config.KafkaGroupID,
+	}
+	inputConsumer := en.mkConsumer(en.config.Topic, handler, kafkaCfg)
+	membersConsumer := en.mkConsumer(DefaultMembersTopic, en.handleMembershipMessage, kafkaCfg)
+	planConsumer := en.mkConsumer(plandist.DefaultPlanTopic, en.handlePlanMessage, kafkaCfg)
+	ackConsumer := en.mkConsumer(plandist.DefaultAckTopic, en.handleAckMessage, kafkaCfg)
 	en.mu.Lock()
-	en.consumers = append(en.consumers, consumer)
+	en.consumers = append(en.consumers, inputConsumer, membersConsumer, planConsumer, ackConsumer)
 	en.mu.Unlock()
-	go consumer.Start(ctx)
-
-	planConsumer := transport.NewConsumer(plandist.DefaultPlanTopic, en.handlePlanMessage)
-	ackConsumer := transport.NewConsumer(plandist.DefaultAckTopic, en.handleAckMessage)
-	en.mu.Lock()
-	en.consumers = append(en.consumers, planConsumer, ackConsumer)
-	en.mu.Unlock()
+	go inputConsumer.Start(ctx)
+	go membersConsumer.Start(ctx)
 	go planConsumer.Start(ctx)
 	go ackConsumer.Start(ctx)
 
 	en.PlanDist.Start(ctx)
+	en.Membership.StartEviction(ctx, membership.DefaultHeartbeatTimeout)
+	go en.startHeartbeat(ctx)
 
 	en.Scheduler.Start(ctx)
 	en.ReplyRouter.StartCleanup()

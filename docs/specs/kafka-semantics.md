@@ -198,9 +198,9 @@ Follower receives activation → marks version active → begins executing new v
 
 | File | Role |
 |------|------|
-| `go/internal/transport/` | Kafka consumer/producer interfaces, in-memory + Kafka stubs |
-| `go/internal/execnode/execnode.go` | Wires consumers, scheduler, DLQ, rate limiter, admin |
-| `go/internal/engine/engine.go` | VersionedPlan store, ExecuteAll |
+| `go/internal/transport/` | Kafka consumer/producer interfaces, in-memory stubs, real Sarama `ConsumerGroup`/`SyncProducer` |
+| `go/internal/execnode/execnode.go` | Wires consumers, scheduler, DLQ, rate limiter, admin; `mkConsumer`/`mkProducer` select real Sarama or stubs based on `KafkaBrokers` config |
+| `go/internal/engine/engine.go` | VersionedPlan store, ExecuteAll, ActivePlanBytes |
 | `go/internal/scheduler/` | Priority queue lanes, concurrency limits |
 | `go/internal/plandist/` | Plan/ACK message types, WaitForAcks quorum |
 | `go/internal/replyrouter/` | Pending request tracking, timeout cleanup |

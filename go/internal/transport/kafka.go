@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
+
+	"github.com/IBM/sarama"
 )
 
 type KafkaConfig struct {
@@ -14,13 +17,15 @@ type KafkaConfig struct {
 }
 
 type KafkaConsumer struct {
-	topic   string
-	handler MessageHandler
-	cfg     KafkaConfig
-	msgCh   chan []byte
-	stopCh  chan struct{}
-	started bool
-	mu      sync.Mutex
+	topic     string
+	handler   MessageHandler
+	cfg       KafkaConfig
+	client    sarama.ConsumerGroup
+	msgCh     chan []byte
+	stopCh    chan struct{}
+	started   bool
+	mu        sync.Mutex
+	wg        sync.WaitGroup
 }
 
 func NewKafkaConsumer(topic string, handler MessageHandler, cfg KafkaConfig) *KafkaConsumer {
@@ -29,11 +34,11 @@ func NewKafkaConsumer(topic string, handler MessageHandler, cfg KafkaConfig) *Ka
 		ch = make(chan []byte, 1000)
 	}
 	return &KafkaConsumer{
-		topic:   topic,
+		topic:  topic,
 		handler: handler,
-		cfg:     cfg,
-		msgCh:   ch,
-		stopCh:  make(chan struct{}),
+		cfg:    cfg,
+		msgCh:  ch,
+		stopCh: make(chan struct{}),
 	}
 }
 
@@ -49,6 +54,50 @@ func (kc *KafkaConsumer) Start(ctx context.Context) {
 	kc.mu.Unlock()
 
 	log.Printf("kafka consumer: topic=%s brokers=%v group=%s", kc.topic, kc.cfg.Brokers, kc.cfg.GroupID)
+
+	if len(kc.cfg.Brokers) == 0 {
+		kc.runChannel(ctx)
+		return
+	}
+
+	config := sarama.NewConfig()
+	config.Version = sarama.MinVersion
+	config.Consumer.Group.Rebalance.GroupStrategies = []sarama.BalanceStrategy{sarama.NewBalanceStrategyRoundRobin()}
+	config.Consumer.Offsets.Initial = sarama.OffsetNewest
+	config.Consumer.Return.Errors = true
+	config.Consumer.MaxProcessingTime = 500 * time.Millisecond
+
+	client, err := sarama.NewConsumerGroup(kc.cfg.Brokers, kc.cfg.GroupID, config)
+	if err != nil {
+		log.Printf("kafka consumer %s: failed to create consumer group: %v", kc.topic, err)
+		kc.runChannel(ctx)
+		return
+	}
+	kc.client = client
+
+	kc.wg.Add(1)
+	go func() {
+		defer kc.wg.Done()
+		for {
+			select {
+			case <-kc.stopCh:
+				return
+			default:
+			}
+			err := client.Consume(ctx, []string{kc.topic}, kc)
+			if err != nil {
+				log.Printf("kafka consumer %s: consume error: %v", kc.topic, err)
+				select {
+				case <-kc.stopCh:
+					return
+				case <-time.After(time.Second):
+				}
+			}
+		}
+	}()
+}
+
+func (kc *KafkaConsumer) runChannel(ctx context.Context) {
 	for {
 		select {
 		case <-kc.stopCh:
@@ -71,6 +120,10 @@ func (kc *KafkaConsumer) Stop() {
 		return
 	}
 	close(kc.stopCh)
+	if kc.client != nil {
+		kc.client.Close()
+	}
+	kc.wg.Wait()
 	kc.started = false
 }
 
@@ -82,11 +135,26 @@ func (kc *KafkaConsumer) Inject(msg []byte) {
 	}
 }
 
+func (kc *KafkaConsumer) Setup(sarama.ConsumerGroupSession) error   { return nil }
+func (kc *KafkaConsumer) Cleanup(sarama.ConsumerGroupSession) error { return nil }
+
+func (kc *KafkaConsumer) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
+	for msg := range claim.Messages() {
+		_, err := kc.handler(context.Background(), msg.Value)
+		if err != nil {
+			log.Printf("kafka consumer %s: handler error: %v", kc.topic, err)
+		}
+		sess.MarkMessage(msg, "")
+	}
+	return nil
+}
+
 type KafkaProducer struct {
-	topic   string
-	cfg     KafkaConfig
-	closed  bool
-	mu      sync.Mutex
+	topic    string
+	cfg      KafkaConfig
+	producer sarama.SyncProducer
+	closed   bool
+	mu       sync.Mutex
 }
 
 func NewKafkaProducer(topic string, cfg KafkaConfig) *KafkaProducer {
@@ -95,16 +163,59 @@ func NewKafkaProducer(topic string, cfg KafkaConfig) *KafkaProducer {
 
 func (kp *KafkaProducer) Send(ctx context.Context, key, value []byte) error {
 	kp.mu.Lock()
-	defer kp.mu.Unlock()
 	if kp.closed {
+		kp.mu.Unlock()
 		return fmt.Errorf("kafka producer %s: closed", kp.topic)
 	}
-	log.Printf("kafka produce: topic=%s key=%s val=%d bytes", kp.topic, string(key), len(value))
+	if kp.producer == nil {
+		if err := kp.initProducer(); err != nil {
+			kp.mu.Unlock()
+			return err
+		}
+	}
+	kp.mu.Unlock()
+
+	msg := &sarama.ProducerMessage{
+		Topic: kp.topic,
+		Key:   sarama.ByteEncoder(key),
+		Value: sarama.ByteEncoder(value),
+	}
+
+	part, offset, err := kp.producer.SendMessage(msg)
+	if err != nil {
+		return fmt.Errorf("kafka produce %s: %w", kp.topic, err)
+	}
+	log.Printf("kafka produce: topic=%s key=%s partition=%d offset=%d bytes=%d", kp.topic, string(key), part, offset, len(value))
+	return nil
+}
+
+func (kp *KafkaProducer) initProducer() error {
+	if len(kp.cfg.Brokers) == 0 {
+		log.Printf("kafka producer %s: no brokers configured, using log-only mode", kp.topic)
+		return nil
+	}
+	config := sarama.NewConfig()
+	config.Version = sarama.MinVersion
+	config.Producer.Return.Successes = true
+	config.Producer.Return.Errors = true
+	config.Producer.RequiredAcks = sarama.WaitForLocal
+
+	producer, err := sarama.NewSyncProducer(kp.cfg.Brokers, config)
+	if err != nil {
+		return fmt.Errorf("kafka producer %s: create: %w", kp.topic, err)
+	}
+	kp.producer = producer
 	return nil
 }
 
 func (kp *KafkaProducer) Close() {
 	kp.mu.Lock()
 	defer kp.mu.Unlock()
+	if kp.closed {
+		return
+	}
 	kp.closed = true
+	if kp.producer != nil {
+		kp.producer.Close()
+	}
 }

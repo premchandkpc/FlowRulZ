@@ -17,8 +17,14 @@ use crate::bytecode::instruction::Instruction;
 use crate::bytecode::opcode::OpCode;
 use crate::bytecode::plan::ExecutionPlan;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StepResult {
+    Done,
+    Continue,
+    Pending { svc_id: u16, body: Vec<u8> },
+}
+
 pub struct VM<'a> {
-    pub ip: usize,
     pub plan: &'a ExecutionPlan,
     pub arena: crate::memory::arena::Arena,
     pub caller: Arc<dyn Fn(u16, &[u8], u64) -> Result<Vec<u8>, String> + Send + Sync + 'a>,
@@ -36,7 +42,6 @@ impl<'a> VM<'a> {
         F: Fn(u16, &[u8], u64) -> Result<Vec<u8>, String> + Send + Sync + 'a,
     {
         VM {
-            ip: 0,
             plan,
             arena,
             caller: Arc::new(caller),
@@ -45,13 +50,44 @@ impl<'a> VM<'a> {
     }
 
     pub fn run(&mut self) -> Result<(), String> {
-        self.ip = 0;
-        while self.ip < self.plan.instructions.len() {
-            let instr = &self.plan.instructions[self.ip];
-            self.ip += 1;
+        self.ctx.ip = 0;
+        while self.ctx.ip < self.plan.instructions.len() {
+            let instr = &self.plan.instructions[self.ctx.ip];
+            self.ctx.ip += 1;
             self.dispatch(instr)?;
         }
         Ok(())
+    }
+
+    pub fn step(&mut self, response: Option<&[u8]>) -> Result<StepResult, String> {
+        if let Some(resp) = response {
+            self.ctx.body = resp.to_vec();
+            self.ctx.hop_count += 1;
+            self.ctx.ip += 1;
+        }
+
+        if self.ctx.ip >= self.plan.instructions.len() {
+            return Ok(StepResult::Done);
+        }
+
+        let instr = &self.plan.instructions[self.ctx.ip];
+
+        match instr.op {
+            OpCode::Next | OpCode::Async | OpCode::Emit | OpCode::SvcCall => {
+                let svc_id = instr.a;
+                let body = self.ctx.body.clone();
+                Ok(StepResult::Pending { svc_id, body })
+            }
+            _ => {
+                self.ctx.ip += 1;
+                self.dispatch(instr)?;
+                if self.ctx.ip >= self.plan.instructions.len() {
+                    Ok(StepResult::Done)
+                } else {
+                    Ok(StepResult::Continue)
+                }
+            }
+        }
     }
 
     fn dispatch(&mut self, instr: &Instruction) -> Result<(), String> {
@@ -78,6 +114,7 @@ impl<'a> VM<'a> {
             OpCode::Label => Ok(()),
             OpCode::SvcArg | OpCode::RetryData | OpCode::JumpOffset => Ok(()),
             OpCode::TypeGuard => self.op_type_guard(instr),
+            OpCode::SvcCall => self.op_svc_call(instr, &*caller),
         };
 
         let duration_ns = start.elapsed().as_nanos() as u64;
@@ -160,7 +197,7 @@ impl<'a> VM<'a> {
     fn op_gate(&mut self, instr: &Instruction) -> Result<(), String> {
         let mut skip = 0usize;
         gate::exec_jmp_if_false(&self.ctx.body, instr, self.plan, &self.arena, &mut skip);
-        self.ip += skip;
+        self.ctx.ip += skip;
         Ok(())
     }
 
@@ -173,7 +210,7 @@ impl<'a> VM<'a> {
     }
 
     fn op_drop(&mut self) -> Result<(), String> {
-        self.ip = self.plan.instructions.len();
+        self.ctx.ip = self.plan.instructions.len();
         Ok(())
     }
 
@@ -195,7 +232,7 @@ impl<'a> VM<'a> {
     }
 
     fn op_jmp(&mut self, instr: &Instruction) -> Result<(), String> {
-        self.ip = instr.a as usize;
+        self.ctx.ip = instr.a as usize;
         Ok(())
     }
 
@@ -212,6 +249,28 @@ impl<'a> VM<'a> {
         let body: serde_json::Value = serde_json::from_slice(&self.ctx.body)
             .map_err(|e| format!("TypeGuard: failed to parse body: {}", e))?;
         schema.is_valid(&body).map_err(|e| format!("TypeGuard: {}", e))
+    }
+
+    fn op_svc_call(
+        &mut self,
+        instr: &Instruction,
+        caller: &dyn Fn(u16, &[u8], u64) -> Result<Vec<u8>, String>,
+    ) -> Result<(), String> {
+        let svc_id = instr.a;
+        let timeout_ms = instr.timeout_ms();
+        let body = self.ctx.body.clone();
+        match caller(svc_id, &body, timeout_ms) {
+            Ok(resp) => {
+                self.ctx.body = resp;
+                self.ctx.hop_count += 1;
+                Ok(())
+            }
+            Err(e) => {
+                self.ctx.failed = true;
+                self.ctx.errors.push(e.clone());
+                Err(e)
+            }
+        }
     }
 }
 

@@ -113,7 +113,7 @@ LEADER                                   FOLLOWER(s)
   │  └── if received >= quorum → signal done  │
   │                                          │
   │  WaitForAcks(rule_id, version,           │
-  │              quorum=alive_nodes,          │
+  │              quorum=majority(⌊N/2⌋+1),  │
   │              timeout=10s)                 │
   │  ├── blocks on done channel              │
   │  └── timeout → error (deploy fails)      │

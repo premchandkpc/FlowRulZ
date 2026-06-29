@@ -363,4 +363,44 @@ mod tests {
         vm.run().unwrap();
         assert!(vm.ctx.hop_count > 0);
     }
+
+    #[test]
+    fn test_vm_gate_on_any_type() {
+        let dsl = "schema:{x:any} g:x==1 n:svc";
+        let plan = compile_dsl(dsl);
+        let arena = crate::memory::arena::Arena::new();
+        let mut vm = VM::new(&plan, make_ctx(b"{\"x\":1}"), arena, &mock_caller);
+        vm.run().unwrap();
+        assert_eq!(vm.ctx.hop_count, 1);
+    }
+
+    #[test]
+    fn test_vm_map_on_any_type() {
+        let dsl = "schema:{x:any} m:.x n:svc";
+        let plan = compile_dsl(dsl);
+        let arena = crate::memory::arena::Arena::new();
+        let mut vm = VM::new(&plan, make_ctx(b"{\"x\":42}"), arena, &mock_caller);
+        vm.run().unwrap();
+        assert_eq!(vm.ctx.hop_count, 1);
+    }
+
+    #[test]
+    fn test_vm_gate_on_any_type_false() {
+        let dsl = "schema:{x:any} g:x==99 n:svc";
+        let plan = compile_dsl(dsl);
+        let arena = crate::memory::arena::Arena::new();
+        let mut vm = VM::new(&plan, make_ctx(b"{\"x\":1}"), arena, &mock_caller);
+        vm.run().unwrap();
+        assert_eq!(vm.ctx.hop_count, 0);
+    }
+
+    #[test]
+    fn test_vm_map_on_any_type_string() {
+        let dsl = "schema:{msg:any} m:.msg n:svc";
+        let plan = compile_dsl(dsl);
+        let arena = crate::memory::arena::Arena::new();
+        let mut vm = VM::new(&plan, make_ctx(b"{\"msg\":\"hello\"}"), arena, &mock_caller);
+        vm.run().unwrap();
+        assert_eq!(vm.ctx.hop_count, 1);
+    }
 }

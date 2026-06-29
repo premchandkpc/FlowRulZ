@@ -1,6 +1,7 @@
 use super::expr;
 use crate::bytecode::instruction::Instruction;
 use crate::bytecode::plan::ExecutionPlan;
+use crate::bytecode::resolved_type::ResolvedType;
 
 pub fn exec_map<'a>(
     body: &[u8],
@@ -9,6 +10,15 @@ pub fn exec_map<'a>(
     arena: &'a crate::memory::arena::Arena,
 ) -> Result<&'a mut [u8], String> {
     let expr_str = plan.const_pool.get(instr.a);
+
+    if let Some(ref schema) = plan.schema {
+        if let Some(field) = expr_str.strip_prefix('.') {
+            let field_path = field.split('=').next().unwrap_or(field);
+            if matches!(schema.field_type(field_path), Some(ResolvedType::Any)) {
+                eprintln!("[warn] map operates on field '{}' typed 'any' — no compile-time type checking", field_path);
+            }
+        }
+    }
 
     if expr_str.is_empty() {
         return Ok(arena.alloc_copy(body));

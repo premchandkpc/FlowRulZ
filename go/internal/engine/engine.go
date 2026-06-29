@@ -280,7 +280,7 @@ func (e *Engine) Rules() []Rule {
 	return out
 }
 
-func (e *Engine) ExecuteAll(body []byte, caller bridge.ServiceCaller) ([][]byte, error) {
+func (e *Engine) ExecuteAll(body []byte, caller bridge.ServiceCaller, ctx *bridge.ExecContext) ([][]byte, error) {
 	e.mu.RLock()
 	var plans []*VersionedPlan
 	for _, r := range e.rules {
@@ -294,7 +294,7 @@ func (e *Engine) ExecuteAll(body []byte, caller bridge.ServiceCaller) ([][]byte,
 
 	var results [][]byte
 	for _, vp := range plans {
-		res, err := bridge.Execute(vp.Plan, body, caller, nil)
+		res, err := bridge.Execute(vp.Plan, body, caller, ctx)
 		if err != nil {
 			vp.ActiveExec.Done()
 			return results, err

@@ -133,7 +133,9 @@ Algorithm:
 
 The leader publishes a leadership claim record to `_flowrulz_members` with key `_leader`. Only the leader updates this record (heartbeat + term number). Followers check: if `_leader` record is stale (no update for N seconds), or the claiming node is not the lowest-ID alive node, the next-lowest node claims leadership.
 
-**Split-brain prevention**: Since membership is determined by the sorted set of alive nodes, and all nodes independently compute the same ordering, there can be at most one leader at any point. If a former leader partitions away and rejoins, it sees the current leader in the member list and reverts to Follower.
+**Epoch-based fencing for split-brain prevention**: Each leader election increments a monotonic `term` number. The leader embeds its current term in every `PlanMessage` (plan and activate). Followers track the highest-known term and reject plan activation from any term lower than their known current term. This prevents a stale leader (from a partitioned minority) from activating plans upon rejoin.
+
+The `term` is stored in `_flowrulz_members` as part of the `_leader` record. A newly elected leader increments the term by 1. `PlanDistributor.SetTerm()` / `CurrentTerm()` manage the term atomically.
 
 ```
 Typical timeline:
@@ -179,14 +181,15 @@ When a rule is deployed or promoted on the leader:
 ```
 1. Admin API receives deploy/promote request on leader
 2. Leader compiles DSL → ExecutionPlan  
-3. Leader publishes plan to internal topic `_flowrulz_plans` (keyed by rule_id)
+3. Leader publishes plan to internal topic `_flowrulz_plans` (keyed by rule_id), including leader's epoch term:
+   { "type": "plan", "rule_id": "order-flow", "version": 17, "term": 3, "plan": ..., "dsl": ... }
 4. All followers consume `_flowrulz_plans`
-5. Each follower stores the plan in its local Engine (inactive)
+5. Each follower stores the plan in its local Engine (inactive), verifies term ≥ known term
 6. Each follower publishes ACK to `_flowrulz_acks`:
    { "node_id": "node-b", "rule_id": "order-flow", "version": 17, "status": "received" }
-7. Leader waits for ACKs from all alive nodes (configurable quorum, default=all)
+7. Leader waits for ACKs from a quorum of followers (configurable quorum, default=majority ⌊N/2⌋+1)
 8. Leader publishes activation command to `_flowrulz_plans`:
-   { "type": "activate", "rule_id": "order-flow", "version": 17 }
+   { "type": "activate", "rule_id": "order-flow", "version": 17, "term": 3 }
 9. Followers receive activation → mark version active
 10. Old version continues active executions, new executions use new version
 ```
@@ -214,6 +217,7 @@ Time    Leader              Follower A          Follower B
 | `_flowrulz_plans` | 1 | Compacted | Compiled plans + activation commands |
 | `_flowrulz_acks` | 1 | 1 hour | Acknowledgement records |
 | `_flowrulz_replies` | N | 1 hour | Cross-node reply routing |
+| `_flowrulz_dlq` | 1 | Compacted | Dead-letter entries |
 
 ## Service Registry
 
@@ -398,8 +402,8 @@ type ClusterConfig struct {
     TimeoutMS   int     // default: 3000 (3x heartbeat)
 
     // Plan distribution
-    AckQuorum   int     // default: 0 = all alive nodes
-    PlanTimeoutMS int   // default: 5000
+    AckQuorum   int     // default: 0 = majority (⌊N/2⌋ + 1); -1 = all alive nodes
+    PlanTimeoutMS int   // default: 10000
 
     // Service registry  
     HealthCheckMS int   // default: 5000

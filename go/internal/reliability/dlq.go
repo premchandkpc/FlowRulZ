@@ -6,18 +6,22 @@ import (
 	"log"
 	"sync"
 	"time"
+
+	"github.com/premchandkpc/FlowRulZ/go/internal/transport"
 )
 
+const DefaultDLQTopic = "_flowrulz_dlq"
+
 type DeadLetterEntry struct {
-	ID        string    `json:"id"`
-	RuleID    string    `json:"rule_id"`
-	Topic     string    `json:"topic"`
-	Partition int32     `json:"partition"`
-	Offset    int64     `json:"offset"`
-	Body      []byte    `json:"body"`
-	Error     string    `json:"error"`
-	FailedAt  time.Time `json:"failed_at"`
-	RetryCount int     `json:"retry_count"`
+	ID          string    `json:"id"`
+	RuleID      string    `json:"rule_id"`
+	Topic       string    `json:"topic"`
+	Partition   int32     `json:"partition"`
+	Offset      int64     `json:"offset"`
+	Body        []byte    `json:"body"`
+	Error       string    `json:"error"`
+	FailedAt    time.Time `json:"failed_at"`
+	RetryCount  int       `json:"retry_count"`
 }
 
 type DLQ struct {
@@ -25,16 +29,33 @@ type DLQ struct {
 	entries  []*DeadLetterEntry
 	maxSize  int
 	replayFn func(ctx context.Context, entry *DeadLetterEntry) error
+	producer transport.MessageProducer
+	topic    string
 }
 
-func NewDLQ(maxSize int) *DLQ {
+type DLQOption func(*DLQ)
+
+func WithDLQProducer(p transport.MessageProducer) DLQOption {
+	return func(d *DLQ) { d.producer = p }
+}
+
+func WithDLQTopic(t string) DLQOption {
+	return func(d *DLQ) { d.topic = t }
+}
+
+func NewDLQ(maxSize int, opts ...DLQOption) *DLQ {
 	if maxSize <= 0 {
 		maxSize = 10000
 	}
-	return &DLQ{
+	d := &DLQ{
 		entries: make([]*DeadLetterEntry, 0),
 		maxSize: maxSize,
+		topic:   DefaultDLQTopic,
 	}
+	for _, o := range opts {
+		o(d)
+	}
+	return d
 }
 
 func (d *DLQ) SetReplayFn(fn func(ctx context.Context, entry *DeadLetterEntry) error) {
@@ -45,16 +66,40 @@ func (d *DLQ) SetReplayFn(fn func(ctx context.Context, entry *DeadLetterEntry) e
 
 func (d *DLQ) Send(entry *DeadLetterEntry) error {
 	d.mu.Lock()
-	defer d.mu.Unlock()
-
 	if len(d.entries) >= d.maxSize {
 		d.entries = d.entries[1:]
 	}
-
 	entry.FailedAt = time.Now()
 	d.entries = append(d.entries, entry)
+	producer := d.producer
+	d.mu.Unlock()
+
 	log.Printf("dlq: rule=%s id=%s error=%s", entry.RuleID, entry.ID, entry.Error)
+
+	if producer != nil {
+		data, err := json.Marshal(entry)
+		if err != nil {
+			log.Printf("dlq: marshal error for kafka: %v", err)
+			return nil
+		}
+		if err := producer.Send(context.Background(), []byte(entry.ID), data); err != nil {
+			log.Printf("dlq: kafka produce error: %v", err)
+		}
+	}
 	return nil
+}
+
+type dlqMessage struct {
+	Type  string           `json:"type"`
+	Entry *DeadLetterEntry `json:"entry"`
+}
+
+func (d *DLQ) LoadFromTopic(ctx context.Context) {
+	d.mu.Lock()
+	topic := d.topic
+	d.mu.Unlock()
+
+	log.Printf("dlq: rebuild from topic %s (placeholder — real Kafka consumer needed)", topic)
 }
 
 func (d *DLQ) Replay(ctx context.Context, id string) error {

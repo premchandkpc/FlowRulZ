@@ -22,6 +22,7 @@ type PlanMessage struct {
 	Type    string `json:"type"`
 	RuleID  string `json:"rule_id"`
 	Version uint64 `json:"version"`
+	Term    uint64 `json:"term"`
 	Plan    []byte `json:"plan,omitempty"`
 	DSL     string `json:"dsl,omitempty"`
 	NodeID  string `json:"node_id,omitempty"`
@@ -49,6 +50,7 @@ type PlanDistributor struct {
 	ackHandler   AckHandler
 	pendingAcks  sync.Map
 	nextSerial   atomic.Uint64
+	clusterTerm  atomic.Uint64
 	started      bool
 	mu           sync.Mutex
 	stopCh       chan struct{}
@@ -101,6 +103,10 @@ func WithAckHandler(h AckHandler) Option {
 	return func(pd *PlanDistributor) { pd.ackHandler = h }
 }
 
+func WithClusterTerm(term uint64) Option {
+	return func(pd *PlanDistributor) { pd.clusterTerm.Store(term) }
+}
+
 func (pd *PlanDistributor) Start(ctx context.Context) {
 	pd.mu.Lock()
 	if pd.started {
@@ -142,6 +148,14 @@ func (pd *PlanDistributor) Stop() {
 	pd.started = false
 }
 
+func (pd *PlanDistributor) SetTerm(term uint64) {
+	pd.clusterTerm.Store(term)
+}
+
+func (pd *PlanDistributor) CurrentTerm() uint64 {
+	return pd.clusterTerm.Load()
+}
+
 func (pd *PlanDistributor) PublishPlan(ctx context.Context, ruleID string, version uint64, plan []byte, dsl string) error {
 	if pd.planProducer == nil {
 		return fmt.Errorf("plandist: no plan producer configured")
@@ -150,6 +164,7 @@ func (pd *PlanDistributor) PublishPlan(ctx context.Context, ruleID string, versi
 		Type:    "plan",
 		RuleID:  ruleID,
 		Version: version,
+		Term:    pd.clusterTerm.Load(),
 		Plan:    plan,
 		DSL:     dsl,
 		NodeID:  pd.nodeID,
@@ -169,6 +184,7 @@ func (pd *PlanDistributor) ActivatePlan(ctx context.Context, ruleID string, vers
 		Type:    "activate",
 		RuleID:  ruleID,
 		Version: version,
+		Term:    pd.clusterTerm.Load(),
 		NodeID:  pd.nodeID,
 	}
 	data, err := json.Marshal(msg)
@@ -197,6 +213,11 @@ func (pd *PlanDistributor) SendAck(ctx context.Context, ruleID string, version u
 
 func (pd *PlanDistributor) WaitForAcks(ctx context.Context, ruleID string, version uint64, quorum int, timeout time.Duration) error {
 	if quorum == 0 {
+		// 0 = skip wait (testing/development)
+		return nil
+	}
+	if quorum < 0 {
+		// negative values reserved for future: -1 = all alive nodes
 		return nil
 	}
 

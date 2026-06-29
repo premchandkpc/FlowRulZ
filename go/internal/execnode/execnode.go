@@ -2,7 +2,10 @@ package execnode
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -12,6 +15,7 @@ import (
 	"time"
 
 	"github.com/premchandkpc/FlowRulZ/go/internal/admin"
+	"github.com/premchandkpc/FlowRulZ/go/internal/bridge"
 	"github.com/premchandkpc/FlowRulZ/go/internal/engine"
 	"github.com/premchandkpc/FlowRulZ/go/internal/observability"
 	"github.com/premchandkpc/FlowRulZ/go/internal/reliability"
@@ -29,6 +33,9 @@ type ExecutionNode struct {
 	DLQ          *reliability.DLQ
 	RateLimiter  *reliability.RateLimiter
 	Metrics      *observability.MetricsCollector
+	Dedup        *reliability.DedupTracker
+
+	circuitBreakers sync.Map  // svcID uint16 → *reliability.CircuitBreaker
 
 	consumers  []transport.MessageConsumer
 	producers  []transport.MessageProducer
@@ -78,10 +85,16 @@ func New(cfg *Config) *ExecutionNode {
 		replyrouter.WithCleanupInterval(1 * time.Second),
 		replyrouter.WithMaxPending(10000),
 	)
-	en.DLQ = reliability.NewDLQ(10000)
+	en.Dedup = reliability.NewDedupTracker(10000, 5*time.Minute)
+	dlqProducer := transport.NewProducer(reliability.DefaultDLQTopic)
+	en.DLQ = reliability.NewDLQ(10000, reliability.WithDLQProducer(dlqProducer))
 	en.RateLimiter = reliability.NewRateLimiter()
 	en.AdminSrv = admin.New(en.Engine)
 	en.AdminSrv.RegisterDLQ(en.DLQ)
+
+	en.mu.Lock()
+	en.producers = append(en.producers, dlqProducer)
+	en.mu.Unlock()
 
 	return en
 }
@@ -92,8 +105,25 @@ func (en *ExecutionNode) Start() {
 
 	svcCaller := func(svcID uint16, body []byte) ([]byte, error) {
 		observability.RecordExec("svc_call")
+
+		v, _ := en.circuitBreakers.Load(svcID)
+		cb, ok := v.(*reliability.CircuitBreaker)
+		if !ok {
+			cb = reliability.NewCircuitBreaker(5, 30*time.Second)
+			en.circuitBreakers.Store(svcID, cb)
+		}
+
+		if !cb.Allow() {
+			observability.RecordError("circuit_breaker_open")
+			log.Printf("circuit breaker open for service %d", svcID)
+			return nil, fmt.Errorf("circuit breaker open for service %d", svcID)
+		}
+
 		log.Printf("service call: id=%d body=%s", svcID, body)
-		return body, nil
+		// TODO: replace with actual service call
+		resp := body
+		cb.Success()
+		return resp, nil
 	}
 
 	handler := func(ctx context.Context, msg []byte) ([]byte, error) {
@@ -107,7 +137,22 @@ func (en *ExecutionNode) Start() {
 			return nil, nil
 		}
 
-		results, err := en.Engine.ExecuteAll(msg, svcCaller)
+		msgID := make([]byte, 16)
+		if _, err := rand.Read(msgID); err != nil {
+			return nil, fmt.Errorf("message id generation failed: %w", err)
+		}
+		msgIDStr := hex.EncodeToString(msgID)
+		ectx := &bridge.ExecContext{
+			MessageID: msgIDStr,
+		}
+
+		if en.Dedup.Seen(msgIDStr) {
+			observability.RecordExec("dedup_skipped")
+			return nil, nil
+		}
+		en.Dedup.Mark(msgIDStr)
+
+		results, err := en.Engine.ExecuteAll(msg, svcCaller, ectx)
 		if err != nil {
 			observability.RecordError("exec")
 			en.DLQ.Send(&reliability.DeadLetterEntry{
@@ -129,6 +174,7 @@ func (en *ExecutionNode) Start() {
 
 	en.Scheduler.Start(ctx)
 	en.ReplyRouter.StartCleanup()
+	en.Dedup.StartCleanup(ctx, 30*time.Second)
 
 	mux := http.NewServeMux()
 	mux.Handle("/admin/", http.StripPrefix("/admin", en.AdminSrv.Handler()))

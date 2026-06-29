@@ -101,7 +101,7 @@ func TestExecuteAll(t *testing.T) {
 	e := New("")
 	e.Deploy("test-1", "n:validate")
 
-	results, err := e.ExecuteAll([]byte(`{}`), nil)
+	results, err := e.ExecuteAll([]byte(`{}`), nil, nil)
 	if err != nil {
 		t.Fatalf("ExecuteAll failed: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestExecuteAllPinsVersion(t *testing.T) {
 
 	ch := make(chan struct{})
 	go func() {
-		e.ExecuteAll([]byte(`{}`), nil)
+		e.ExecuteAll([]byte(`{}`), nil, nil)
 		close(ch)
 	}()
 

@@ -28,8 +28,11 @@ make clean     # cargo clean + remove binary
 - **Scheduler** (`go/internal/scheduler/`): Lane-based priority queues (fast/normal/heavy), semaphore-based concurrency limits, reject-on-full backpressure
 - **Plan Distribution** (`go/internal/plandist/`): Leader publishes plans to `_flowrulz_plans`, followers ACK on `_flowrulz_acks`, quorum-based activation with `WaitForAcks`
 - **Metrics** (`go/internal/observability/`): Counter, Gauge, Histogram with thread-safe per-name dedup and global shortcuts
-- **DLQ** (`go/internal/reliability/dlq.go`): Bounded dead-letter queue with per-entry replay, bulk ReplayAll, JSON export
+- **Circuit Breaker** (`go/internal/reliability/circuitbreaker.go`): Three-state (Closed/Open/HalfOpen) per-svcID breaker wired in `execnode` svcCaller (threshold=5, recovery=30s)
+- **Circuit Breaker** (`go/internal/reliability/circuitbreaker.go`): Three-state (Closed/Open/HalfOpen) per-svcID breaker wired in `execnode` svcCaller (threshold=5, recovery=30s)
+- **DLQ** (`go/internal/reliability/dlq.go`): Bounded dead-letter queue, Kafka-backed via `WithDLQProducer()`, per-entry replay, bulk ReplayAll, JSON export
 - **Rate Limiter** (`go/internal/reliability/ratelimit.go`): Token bucket per name, configurable rate/burst, isolation across services
+- **Dedup** (`go/internal/reliability/dedup.go`): Bounded in-memory dedup tracker with TTL eviction, wired in execnode handler via MessageID
 
 ## Key Layers
 
@@ -120,3 +123,13 @@ All endpoints (except `/health`) require `Authorization: Bearer <FLOWRULZ_API_KE
 ## Opcodes (0-22)
 
 0=Next, 1=Parallel, 2=Collect, 3=Fallback, 4=Gate, 5=Split, 6=Map, 7=Emit, 8=Drop, 9=Buffer, 10=Key, 11=Retry, 12=Pipe, 13=Timeout, 14=Async, 15=Chunk, 16=Dag, 17=Jmp, 18=Label, 19=SvcArg, 20=RetryData, 21=JumpOffset, 22=TypeGuard
+
+## Known Issues — Status
+
+| Issue | Status | File(s) |
+|-------|--------|---------|
+| P0 DLQ persistence | In-memory cache + Kafka producer (`_flowrulz_dlq`) when `WithDLQProducer()` configured | `go/internal/reliability/dlq.go` |
+| P0 Circuit breaker | Wired per-svcID in svcCaller (threshold=5, recovery=30s). Three-state FSM tested (6 tests). Stub caller never trips — real HTTP/gRPC caller needed | `reliability/circuitbreaker.go`, `execnode/execnode.go` |
+| P1 Leader epoch | `PlanMessage.Term` field (uint64), `PlanDistributor.SetTerm()`/`CurrentTerm()`. Follower term rejection needs plan handler wiring | `go/internal/plandist/plandist.go` |
+| P1 Workflow state | File-based checkpointing (`NewOrchestratorWithCheckpointDir`). Per-flow JSON files, atomic write, restore on start | `go/internal/flow/flow.go` |
+| P1 Message dedup | Bounded in-memory `DedupTracker` (10k, 5min TTL). Wired by MessageID in handler. Cleanup goroutine every 30s | `reliability/dedup.go`, `execnode/execnode.go` |

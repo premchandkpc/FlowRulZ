@@ -27,7 +27,9 @@ Public client SDK. Provides four communication models: `Publish` (async), `Reque
 
 Internal workflow state machine. Tracks execution state (`Pending`/`Running`/`Completed`/`Failed`) and collects per-service responses. The `Orchestrator` manages concurrent workflow instances by ID.
 
-**Exports:** `FlowState`, `Flow`, `Orchestrator`, `NewOrchestrator()`, `Start()`, `Get()`, `StoreResponse()`
+File-based checkpointing: `NewOrchestratorWithCheckpointDir(dir)` persists each flow as `<id>.json` after state transitions (Start, StoreResponse, Complete, Fail). Atomic write via `.tmp` + `Rename`. `loadCheckpoints()` scans `dir` on creation and restores all flows.
+
+**Exports:** `FlowState`, `Flow`, `Orchestrator`, `NewOrchestrator()`, `NewOrchestratorWithCheckpointDir()`, `Start()`, `Get()`, `StoreResponse()`, `Complete()`, `Fail()`, `Remove()`, `List()`
 
 ---
 
@@ -81,11 +83,12 @@ Persistence: atomic write via `os.WriteFile(path.tmp)` + `os.Rename(path.tmp, pa
 ### `go/internal/execnode/execnode.go`
 **Package:** `execnode`
 
-Data-plane process. `New()` wires together: Engine, Scheduler, ReplyRouter, DLQ, RateLimiter, MetricsCollector, and Admin server. `Start()`:
-1. Creates the ingress `MessageHandler` — rate-limits, schedules, then calls `engine.ExecuteAll`
-2. Launches the transport consumer goroutine
-3. Starts the HTTP server (admin + health + metrics)
-4. Blocks on SIGINT/SIGTERM
+Data-plane process. `New()` wires together: Engine, Scheduler, ReplyRouter, DLQ, RateLimiter, CircuitBreakers (per-svcID), MetricsCollector, and Admin server. `Start()`:
+1. Creates the ingress `MessageHandler` — rate-limits, schedules, generates message ID, passes `ExecContext` to engine, then calls `engine.ExecuteAll`
+2. Creates the `svcCaller` — per-service circuit breaker check (`Allow()`), then success/failure recording
+3. Launches the transport consumer goroutine
+4. Starts the HTTP server (admin + health + metrics)
+5. Blocks on SIGINT/SIGTERM
 
 `Shutdown()`: stops consumers → stops scheduler → stops reply router cleanup → closes producers → shuts down HTTP server.
 
@@ -126,12 +129,23 @@ Service registry mapping service names → healthy endpoints. Supports four load
 
 ---
 
+### `go/internal/reliability/dedup.go`
+**Package:** `reliability`
+
+Bounded in-memory dedup tracker. `Mark(id)` stores an entry; `Seen(id)` checks if already processed. Evicts oldest when at capacity (default 10k). Background cleanup goroutine removes entries past TTL (default 5min). Wired in `execnode` handler by MessageID.
+
+**Exports:** `DedupEntry`, `DedupTracker`, `NewDedupTracker()`, `Seen()`, `Mark()`, `StartCleanup()`, `Len()`, `Clear()`
+
+---
+
 ### `go/internal/reliability/circuitbreaker.go`
 **Package:** `reliability`
 
 Circuit breaker with three states: `Closed` (normal), `Open` (rejecting all), `HalfOpen` (probing). Transitions: `Closed` → `Open` when failure count reaches threshold; `Open` → `HalfOpen` after recovery timeout; `HalfOpen` → `Closed` on success, or → `Open` on failure.
 
 Allows up to `halfOpenMaxReqs` (default 3) concurrent probing requests. State and half-open counter use atomics for lock-free reads in the hot path.
+
+**Wiring:** `execnode/execnode.go` creates per-svcID instances in the `svcCaller` closure (threshold=5, recovery=30s). Before calling the service, `Allow()` is checked — returns "circuit breaker open" error if tripped. On success `Success()` resets the breaker; on error `Failure()` advances the failure count.
 
 **Exports:** `State`, `CircuitBreaker`, `NewCircuitBreaker()`, `Allow()`, `Success()`, `Failure()`
 
@@ -140,11 +154,11 @@ Allows up to `halfOpenMaxReqs` (default 3) concurrent probing requests. State an
 ### `go/internal/reliability/dlq.go`
 **Package:** `reliability`
 
-Bounded dead-letter queue. `Send()` appends to an in-memory slice; oldest entry evicted (FIFO) when at capacity (default 10,000). Always succeeds (no-fail design).
+Bounded dead-letter queue with Kafka persistence. `Send()` appends to an in-memory slice (oldest evicted FIFO at capacity, default 10k) and, when a `transport.MessageProducer` is configured via `WithDLQProducer()`, also produces to `_flowrulz_dlq`. Always succeeds (no-fail design).
 
 `Replay()`: removes entry from DLQ by ID, calls `replayFn`. `ReplayAll()`: drains all entries, replays each, re-enqueues any that fail again. `ToJSON()` serializes all entries for export. `SetReplayFn()` configures the callback (set by execnode to re-run `engine.ExecuteAll`).
 
-**Exports:** `DeadLetterEntry`, `DLQ`, `NewDLQ()`, `SetReplayFn()`, `Send()`, `Replay()`, `ReplayAll()`, `List()`, `Len()`, `Clear()`, `ToJSON()`
+**Exports:** `DeadLetterEntry`, `DLQ`, `NewDLQ()`, `DLQOption`, `WithDLQProducer()`, `WithDLQTopic()`, `DefaultDLQTopic`, `SetReplayFn()`, `Send()`, `LoadFromTopic()`, `Replay()`, `ReplayAll()`, `List()`, `Len()`, `Clear()`, `ToJSON()`
 
 ---
 

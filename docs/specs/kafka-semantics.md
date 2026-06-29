@@ -44,6 +44,7 @@ FlowRulZ does NOT implement its own storage, WAL, or replication. Kafka handles 
 | `_flowrulz_plans` | 1 | Compacted | Compiled plans + activation commands. Key = rule_id |
 | `_flowrulz_acks` | 1 | 1 hour | ACK records from followers. Key = "rule_id:version" |
 | `_flowrulz_replies` | N | 1 hour | Cross-node reply routing. Key = correlation_id |
+| `_flowrulz_dlq` | 1 | Compacted | Dead-letter entries. Key = entry_id |
 
 These topics are not exposed to client applications.
 
@@ -109,7 +110,7 @@ Batch size configurable per lane. Backpressure: scheduler rejects on full for he
 
 ## Dead Letter Queue (DLQ)
 
-DLQ is an **in-memory Go component**, not a Kafka topic. See `go/internal/reliability/dlq.go`.
+DLQ entries are durably written to `_flowrulz_dlq` when a `transport.MessageProducer` is configured via `WithDLQProducer()`. The in-memory slice is a read cache for the admin API. On restart, `LoadFromTopic()` rebuilds the cache from the compacted topic. See `go/internal/reliability/dlq.go`.
 
 ### Poison Message Handling
 
@@ -188,7 +189,7 @@ Leader compiles rule → publishes PlanMessage{type:"plan", rule_id, version, pl
 
 Follower consumes plan → stores locally (inactive) → publishes AckMessage to _flowrulz_acks
 
-Leader waits for ACK quorum from all alive nodes → publishes PlanMessage{type:"activate"}
+Leader waits for ACK quorum (default=majority ⌊N/2⌋+1) → publishes PlanMessage{type:"activate"}
 
 Follower receives activation → marks version active → begins executing new version
 ```

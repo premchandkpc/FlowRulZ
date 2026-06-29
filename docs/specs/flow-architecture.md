@@ -315,6 +315,7 @@ Kafka      Partition Worker         Engine              ExecutionRuntime        
 | `go/internal/engine/` | `ExecuteAll()`: collect active plans, bridge execute |
 | `go/internal/scheduler/` | Priority queue lanes (fast/normal/heavy), concurrency limits, backpressure |
 | `go/internal/reliability/ratelimit.go` | Token bucket rate limiter per name, ingress throttling |
+| `go/internal/reliability/circuitbreaker.go` | Per-svcID circuit breaker in svcCaller (threshold=5, recovery=30s) |
 | `go/internal/reliability/dlq.go` | Dead-letter queue with replay, bounded size |
 | `rust/src/ffi.rs` | `flowrulz_execute()`: deserialize plan, create VM with ExecutionContext |
 | `rust/src/executor/mod.rs` | VM dispatch loop, opcode handlers |

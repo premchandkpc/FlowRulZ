@@ -171,7 +171,7 @@ Circuit breaker with three states: `Closed` (normal), `Open` (rejecting all), `H
 
 Allows up to `halfOpenMaxReqs` (default 3) concurrent probing requests. State and half-open counter use atomics for lock-free reads in the hot path.
 
-**Wiring:** `execnode/execnode.go` creates per-svcID instances in the `svcCaller` closure (threshold=5, recovery=30s). Before calling the service, `Allow()` is checked — returns "circuit breaker open" error if tripped. On success `Success()` resets the breaker; on error `Failure()` advances the failure count.
+**Wiring:** `execnode/execnode.go` creates per-svcID instances in `callService()` (threshold=5, recovery=30s). Before calling the service, `Allow()` is checked — returns "circuit breaker open" error if tripped. On success `Success()` resets the breaker; on error `Failure()` advances the failure count.
 
 **Exports:** `State`, `CircuitBreaker`, `NewCircuitBreaker()`, `Allow()`, `Success()`, `Failure()`
 
@@ -182,7 +182,7 @@ Allows up to `halfOpenMaxReqs` (default 3) concurrent probing requests. State an
 
 Bounded dead-letter queue with Kafka persistence. `Send()` appends to an in-memory slice (oldest evicted FIFO at capacity, default 10k) and, when a `transport.MessageProducer` is configured via `WithDLQProducer()`, also produces to `_flowrulz_dlq`. Always succeeds (no-fail design).
 
-`Replay()`: removes entry from DLQ by ID, calls `replayFn`. `ReplayAll()`: drains all entries, replays each, re-enqueues any that fail again. `ToJSON()` serializes all entries for export. `SetReplayFn()` configures the callback (set by execnode to re-run `engine.ExecuteAll`).
+`Replay()`: removes entry from DLQ by ID, calls `replayFn`. `ReplayAll()`: drains all entries, replays each, re-enqueues any that fail again. `ToJSON()` serializes all entries for export. `SetReplayFn()` configures the callback (set by execnode to re-run `executeAll`).
 
 **Exports:** `DeadLetterEntry`, `DLQ`, `NewDLQ()`, `DLQOption`, `WithDLQProducer()`, `WithDLQTopic()`, `DefaultDLQTopic`, `SetReplayFn()`, `Send()`, `LoadFromTopic()`, `Replay()`, `ReplayAll()`, `List()`, `Len()`, `Clear()`, `ToJSON()`
 

@@ -200,12 +200,18 @@ laneWorker loop
     ├── go execTask(task)     (goroutine — releases sem via defer)
     │
     │   execTask:
-    │   ├── engine.ExecuteAll(task.Body, svcCaller)
-    │   │   ├── RLock rules
-    │   │   ├── for each rule with active plan:
-    │   │   │   ├── bridge.Execute(plan, body, caller)
-    │   │   │   └── collect result
-    │   │   └── RUnlock
+    │   ├── executeAll(task.Body)
+    │   │   ├── Engine.ActivePlanBytes() → []plan_bytes
+    │   │   ├── for each plan:
+    │   │   │   └── executePlan(plan, body)
+    │   │   │       └── bridge.ExecuteStep loop:
+    │   │   │           ├── StepDone     → collect result
+    │   │   │           ├── StepPending  → callService(svc_id, body)
+    │   │   │           │                  ├── circuit breaker check
+    │   │   │           │                  ├── serviceResolver.Resolve()
+    │   │   │           │                  └── HTTP call → response
+    │   │   │           └── StepContinue → next instruction
+    │   │   └── collect results
     │   │
     │   ├── on success: Metrics.RecordExec(rule_id)
     │   ├── on error:   Metrics.RecordError(rule_id)
@@ -542,7 +548,7 @@ Admin API replay:
     │   │   ├── Unlock
     │   │   ├── entry.RetryCount++
     │   │   └── replayFn(ctx, entry)
-    │   │       (replayFn is set by execnode: re-runs engine.ExecuteAll)
+    │   │       (replayFn is set by execnode: re-runs executeAll)
     │   │
     │   └── on success: entry removed from DLQ
     │       on error:   (entry already removed — not re-added)
@@ -841,8 +847,8 @@ admin.ServeHTTP(w, r)
                  └──────────────────┘            │
                                                  ▼
                                        ┌──────────────────┐
-                                       │ Engine.ExecuteAll│
-                                       │ (flow 5)         │
+                                        │ executeAll       │
+                                        │ (flow 5)         │
                                        └────────┬─────────┘
                                                 │
                                                 ▼
@@ -876,13 +882,13 @@ admin.ServeHTTP(w, r)
 | 2 | Node Lifecycle | `execnode.Start()` | Consumer, scheduler, HTTP server | In-memory |
 | 3 | Plan Distribution | `plandist.PublishPlan()` | `_flowrulz_plans`, `_flowrulz_acks`, quorum | Kafka |
 | 4 | Rule Deployment | `POST /rules` | Admin, engine, bridge, plandist | JSON file |
-| 5 | Message Ingestion | Kafka `Consumer.handler` | Rate limiter, scheduler, engine | Kafka |
+| 5 | Message Ingestion | Kafka `Consumer.handler` | Rate limiter, scheduler, `executeAll`/`executePlan`/`callService` | Kafka |
 | 6 | Scheduling | `Scheduler.Enqueue()` | Lane queues, semaphore, goroutines | None |
-| 7 | Execution (VM) | `VM::run()` | Instruction dispatch, opcode handlers | None |
-| 8 | Service Call | `op_next` / `caller()` | Bridge CGo, registry, external service | None |
+| 7 | Execution (VM) | `VM::run()` / `VM::step()` | Instruction dispatch, opcode handlers, cooperative step loop | None |
+| 8 | Service Call | `op_next` / `StepPending` | Bridge CGo, registry, external service, `callService()` | None |
 | 9 | Request/Reply | `flow.Request()` | `_flowrulz_replies`, ReplyRouter | Kafka |
 | 10 | DAG Execution | `op_dag` | Layers, parent merge, failure policy | None |
-| 11 | DLQ | `bridge.Execute()` error | `DLQ.Send`, admin replay | In-memory (bounded) |
+| 11 | DLQ | `bridge.Execute()`/`ExecuteStep()` error | `DLQ.Send`, admin replay | In-memory (bounded) |
 | 12 | Rate Limiting | `RateLimiter.Allow()` | Token bucket refill, allow/deny | None |
 | 13 | Metrics | `emit_span()` | Ring buffer, `flowrulz_get_spans`, counters | None |
 | 14 | Buffer/Chunk | First opcode check | `ExecutionRuntime` accumulator/splitter | None |

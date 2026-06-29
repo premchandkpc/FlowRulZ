@@ -44,11 +44,12 @@ make clean     # cargo clean + remove binary
 | VM | `rust/src/executor/` | `VM::run()` dispatches opcodes, operates on `ExecutionContext` |
 | Runtime | `rust/src/executor/runtime.rs` | `ExecutionRuntime` wraps VM, handles Chunk/Buffer at runtime level |
 | FFI | `rust/src/ffi.rs` | `flowrulz_compile`, `flowrulz_execute`, `flowrulz_get_spans`, etc. |
-| Bridge | `go/internal/bridge/` | CGo bindings + C caller bridge |
+| Bridge | `go/bridge/` | CGo bindings + C caller bridge |
 | Engine | `go/internal/engine/` | `VersionedPlan`, lane routing, persistence, `ExecuteAll`, `AddVersion`, `LaneForScore` |
 | ExecNode | `go/internal/execnode/` | Data plane process: engine + transport + admin + lifecycle |
 | Admin | `go/internal/admin/` | HTTP API with API key auth, rule CRUD, validate, lanes |
 | SDK | `go/flow/` | Client SDK — `Publish`, `Request`, `Execute`, `Stream` |
+| Simulator | `simulator/` | Simulator for testing rules, services, and cluster behavior |
 | Registry | `go/internal/registry/` | `ServiceRegistry` — service name → healthy endpoints, LB, health checks |
 | ReplyRouter | `go/internal/replyrouter/` | `ReplyRouter` — correlation ID → pending request channel, timeout/cleanup |
 | Scheduler | `go/internal/scheduler/` | Priority queue per lane (fast/normal/heavy), semaphore-based concurrency limits, reject-on-full backpressure |
@@ -128,3 +129,21 @@ All endpoints (except `/health`) require `Authorization: Bearer <FLOWRULZ_API_KE
 | P2 Leader election | Auto-elected via heartbeat on `_flowrulz_members` — lowest-ID alive node wins. `startHeartbeat()` goroutine sends `HeartbeatMessage` every 3s. `runLeaderElection()` promotes/step-down on every heartbeat receipt. Transport is stubbed (log-only) — real Kafka heartbeat not verified | `execnode/execnode.go`, `membership/membership.go` |
 | P2 AckQuorum | `WaitForAcks` with quorum=0 or -1 always returns immediately. Real quorum requires membership counting via `_flowrulz_members` topic | `plandist/plandist.go` |
 | P2 Plan distribution | `AfterDeploy`/`AfterPromote` callbacks wired in execnode. `distributePlan()` calls `PublishPlan()` + `WaitForAcks()` + `ActivatePlan()`. Works with stubs — needs real transport + membership for ACK quorum | `execnode/execnode.go`, `engine/engine.go` |
+
+## Progress
+### Done
+- Added `ResultCh` + `Output` fields to `ExecutionContext` for client result delivery.
+- Added `sendResult()` helper to `Scheduler` — sends result to channel on completion/failure.
+- Added `Client` type in `simulator/client.go` with `Send()`, `RegisterService()`, `AddRule()`, `Plans()`, `Services()`.
+- Simulator extracted from `go/simulator/` to `simulator/` at project root.
+- Bridge moved from `go/internal/bridge/` to `go/bridge/` (needed to allow import from outside `go/`).
+- `sendResult` fires on all exit paths (stop, error, done) in both `executeContext` and `executeBridge`.
+- `PlanCache.List()` method added.
+- `Scheduler.Stop()` made idempotent (stopped bool guard).
+- All 4 client tests pass: Send with bridge rule, rule not found, AddRule across nodes, RegisterService.
+- 17 Go packages, `go vet ./go/...` clean.
+
+### Next Steps
+1. Let user write sender/receiver code using `Client.Send()` + `Client.RegisterService()` + `Client.AddRule()`.
+2. Wire rule deployment through admin API + plan distribution for end-to-end test.
+3. Full test suite after each change.

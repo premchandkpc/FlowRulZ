@@ -5,8 +5,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/premchandkpc/FlowRulZ/go/simulator/timeline"
+	"github.com/premchandkpc/FlowRulZ/simulator/timeline"
 )
+
+type Result struct {
+	Body  []byte
+	Error error
+}
 
 type State int
 
@@ -47,8 +52,10 @@ type ExecutionContext struct {
 	State            State
 	Variables        map[string]any
 	IncomingBody     []byte
+	Output           []byte
 	WaitingService   string
 	WaitingStartTime time.Time
+	ResultCh         chan *Result
 
 	StateChanges []StateChange
 	Events       []timeline.Event

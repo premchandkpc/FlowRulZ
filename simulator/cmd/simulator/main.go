@@ -6,10 +6,10 @@ import (
 	"log"
 	"os"
 
-	"github.com/premchandkpc/FlowRulZ/go/simulator"
-	"github.com/premchandkpc/FlowRulZ/go/simulator/config"
-	"github.com/premchandkpc/FlowRulZ/go/simulator/network"
-	"github.com/premchandkpc/FlowRulZ/go/simulator/scenarios"
+	"github.com/premchandkpc/FlowRulZ/simulator"
+	"github.com/premchandkpc/FlowRulZ/simulator/config"
+	"github.com/premchandkpc/FlowRulZ/simulator/network"
+	"github.com/premchandkpc/FlowRulZ/simulator/scenarios"
 )
 
 func main() {

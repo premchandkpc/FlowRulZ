@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/premchandkpc/FlowRulZ/go/simulator/services"
+	"github.com/premchandkpc/FlowRulZ/simulator/services"
 )
 
 type Config struct {

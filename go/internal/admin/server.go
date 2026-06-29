@@ -8,7 +8,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/premchandkpc/FlowRulZ/go/internal/bridge"
+	"github.com/premchandkpc/FlowRulZ/go/bridge"
 	"github.com/premchandkpc/FlowRulZ/go/internal/engine"
 	"github.com/premchandkpc/FlowRulZ/go/internal/reliability"
 )

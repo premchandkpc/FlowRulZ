@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/premchandkpc/FlowRulZ/go/internal/admin"
-	"github.com/premchandkpc/FlowRulZ/go/internal/bridge"
+	"github.com/premchandkpc/FlowRulZ/go/bridge"
 	"github.com/premchandkpc/FlowRulZ/go/internal/engine"
 	"github.com/premchandkpc/FlowRulZ/go/internal/membership"
 	"github.com/premchandkpc/FlowRulZ/go/internal/observability"

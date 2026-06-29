@@ -9,9 +9,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/premchandkpc/FlowRulZ/go/simulator/dispatcher"
-	"github.com/premchandkpc/FlowRulZ/go/simulator/execution"
-	"github.com/premchandkpc/FlowRulZ/go/simulator/metrics"
+	"github.com/premchandkpc/FlowRulZ/simulator/dispatcher"
+	"github.com/premchandkpc/FlowRulZ/simulator/execution"
+	"github.com/premchandkpc/FlowRulZ/simulator/metrics"
 )
 
 type Pattern int

@@ -4,9 +4,9 @@ import (
 	"hash/fnv"
 	"log"
 
-	"github.com/premchandkpc/FlowRulZ/go/simulator/execution"
-	"github.com/premchandkpc/FlowRulZ/go/simulator/scheduler"
-	"github.com/premchandkpc/FlowRulZ/go/simulator/timeline"
+	"github.com/premchandkpc/FlowRulZ/simulator/execution"
+	"github.com/premchandkpc/FlowRulZ/simulator/scheduler"
+	"github.com/premchandkpc/FlowRulZ/simulator/timeline"
 )
 
 type Dispatcher struct {

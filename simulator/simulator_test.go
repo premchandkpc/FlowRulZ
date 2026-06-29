@@ -4,14 +4,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/premchandkpc/FlowRulZ/go/simulator/config"
-	"github.com/premchandkpc/FlowRulZ/go/simulator/dispatcher"
-	"github.com/premchandkpc/FlowRulZ/go/simulator/execution"
-	"github.com/premchandkpc/FlowRulZ/go/simulator/metrics"
-	"github.com/premchandkpc/FlowRulZ/go/simulator/network"
-	"github.com/premchandkpc/FlowRulZ/go/simulator/scheduler"
-	"github.com/premchandkpc/FlowRulZ/go/simulator/services"
-	"github.com/premchandkpc/FlowRulZ/go/simulator/timeline"
+	"github.com/premchandkpc/FlowRulZ/simulator/config"
+	"github.com/premchandkpc/FlowRulZ/simulator/dispatcher"
+	"github.com/premchandkpc/FlowRulZ/simulator/execution"
+	"github.com/premchandkpc/FlowRulZ/simulator/metrics"
+	"github.com/premchandkpc/FlowRulZ/simulator/network"
+	"github.com/premchandkpc/FlowRulZ/simulator/scheduler"
+	"github.com/premchandkpc/FlowRulZ/simulator/services"
+	"github.com/premchandkpc/FlowRulZ/simulator/timeline"
 )
 
 func TestOrderFlowExecution(t *testing.T) {

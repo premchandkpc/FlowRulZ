@@ -8,12 +8,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/premchandkpc/FlowRulZ/go/internal/bridge"
-	"github.com/premchandkpc/FlowRulZ/go/simulator/execution"
-	"github.com/premchandkpc/FlowRulZ/go/simulator/metrics"
-	"github.com/premchandkpc/FlowRulZ/go/simulator/network"
-	"github.com/premchandkpc/FlowRulZ/go/simulator/services"
-	"github.com/premchandkpc/FlowRulZ/go/simulator/timeline"
+	"github.com/premchandkpc/FlowRulZ/go/bridge"
+	"github.com/premchandkpc/FlowRulZ/simulator/execution"
+	"github.com/premchandkpc/FlowRulZ/simulator/metrics"
+	"github.com/premchandkpc/FlowRulZ/simulator/network"
+	"github.com/premchandkpc/FlowRulZ/simulator/services"
+	"github.com/premchandkpc/FlowRulZ/simulator/timeline"
 )
 
 type Result struct {
@@ -35,6 +35,7 @@ type Scheduler struct {
 	ExecCount  atomic.Int64
 	mu         sync.Mutex
 	stopCh     chan struct{}
+	stopped    bool
 	wg         sync.WaitGroup
 	serviceCtx context.Context
 	cancel     context.CancelFunc
@@ -53,6 +54,16 @@ func (pc *PlanCache) Add(plan *execution.Plan) {
 	pc.mu.Lock()
 	pc.plans[plan.ID] = plan
 	pc.mu.Unlock()
+}
+
+func (pc *PlanCache) List() []string {
+	pc.mu.RLock()
+	names := make([]string, 0, len(pc.plans))
+	for n := range pc.plans {
+		names = append(names, n)
+	}
+	pc.mu.RUnlock()
+	return names
 }
 
 func (pc *PlanCache) Get(id string) *execution.Plan {
@@ -93,7 +104,10 @@ func (s *Scheduler) Start() {
 func (s *Scheduler) Stop() {
 	s.cancel()
 	s.mu.Lock()
-	close(s.stopCh)
+	if !s.stopped {
+		s.stopped = true
+		close(s.stopCh)
+	}
 	s.mu.Unlock()
 	s.wg.Wait()
 }
@@ -130,6 +144,7 @@ func (s *Scheduler) executeContext(ctx *execution.ExecutionContext, workerID int
 		case <-s.stopCh:
 			ctx.MarkFailed(fmt.Errorf("scheduler stopped"))
 			s.Metrics.RecordFailed()
+			s.sendResult(ctx)
 			return
 		default:
 		}
@@ -160,6 +175,7 @@ func (s *Scheduler) executeContext(ctx *execution.ExecutionContext, workerID int
 					Meta:      result.Error.Error(),
 				})
 				s.Metrics.RecordFailed()
+				s.sendResult(ctx)
 				return
 			}
 			ctx.Variables[instr.Service+"_result"] = string(result.Body)
@@ -196,6 +212,7 @@ func (s *Scheduler) executeContext(ctx *execution.ExecutionContext, workerID int
 				Meta:      fmt.Sprintf("duration=%v", ctx.Duration),
 			})
 			s.Metrics.RecordCompleted(ctx.Duration)
+			s.sendResult(ctx)
 			return
 		}
 		ctx.IP++
@@ -207,6 +224,7 @@ func (s *Scheduler) executeContext(ctx *execution.ExecutionContext, workerID int
 		Type:      timeline.EventCompleted,
 	})
 	s.Metrics.RecordCompleted(ctx.Duration)
+	s.sendResult(ctx)
 }
 
 func (s *Scheduler) executeBridge(ctx *execution.ExecutionContext) {
@@ -218,6 +236,7 @@ func (s *Scheduler) executeBridge(ctx *execution.ExecutionContext) {
 		case <-s.stopCh:
 			ctx.MarkFailed(fmt.Errorf("scheduler stopped"))
 			s.Metrics.RecordFailed()
+			s.sendResult(ctx)
 			return
 		default:
 		}
@@ -233,6 +252,7 @@ func (s *Scheduler) executeBridge(ctx *execution.ExecutionContext) {
 				Meta:      err.Error(),
 			})
 			s.Metrics.RecordFailed()
+			s.sendResult(ctx)
 			return
 		}
 
@@ -242,6 +262,7 @@ func (s *Scheduler) executeBridge(ctx *execution.ExecutionContext) {
 		case bridge.StepDone:
 			latency := time.Since(ctx.CreatedAt)
 			ctx.Duration = latency
+			ctx.Output = out.Output
 			ctx.Transition(execution.StateCompleted, "real vm execution completed")
 			s.Timeline.Record(timeline.Event{
 				ExecID:    ctx.ID,
@@ -250,6 +271,7 @@ func (s *Scheduler) executeBridge(ctx *execution.ExecutionContext) {
 				Meta:      fmt.Sprintf("duration=%v", latency),
 			})
 			s.Metrics.RecordCompleted(latency)
+			s.sendResult(ctx)
 			return
 
 		case bridge.StepPending:
@@ -261,6 +283,7 @@ func (s *Scheduler) executeBridge(ctx *execution.ExecutionContext) {
 			if svc == nil {
 				ctx.MarkFailed(fmt.Errorf("unknown service: %s", svcName))
 				s.Metrics.RecordFailed()
+				s.sendResult(ctx)
 				return
 			}
 
@@ -289,6 +312,7 @@ func (s *Scheduler) executeBridge(ctx *execution.ExecutionContext) {
 			case <-s.serviceCtx.Done():
 				ctx.MarkFailed(s.serviceCtx.Err())
 				s.Metrics.RecordFailed()
+				s.sendResult(ctx)
 				return
 			}
 
@@ -303,6 +327,7 @@ func (s *Scheduler) executeBridge(ctx *execution.ExecutionContext) {
 				})
 				ctx.MarkFailed(result.Error)
 				s.Metrics.RecordFailed()
+				s.sendResult(ctx)
 				return
 			}
 
@@ -322,6 +347,21 @@ func (s *Scheduler) executeBridge(ctx *execution.ExecutionContext) {
 			respBytes = nil
 		}
 	}
+}
+
+func (s *Scheduler) sendResult(ctx *execution.ExecutionContext) {
+	if ctx.ResultCh == nil {
+		return
+	}
+	var err error
+	if ctx.State == execution.StateFailed {
+		if len(ctx.StateChanges) > 0 {
+			err = fmt.Errorf("%s", ctx.StateChanges[len(ctx.StateChanges)-1].Meta)
+		} else {
+			err = fmt.Errorf("execution failed")
+		}
+	}
+	ctx.ResultCh <- &execution.Result{Body: ctx.Output, Error: err}
 }
 
 func (s *Scheduler) callService(ctx *execution.ExecutionContext, instr execution.Instruction) services.CallResult {

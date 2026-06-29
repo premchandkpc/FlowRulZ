@@ -3,10 +3,10 @@ package scenarios
 import (
 	"time"
 
-	"github.com/premchandkpc/FlowRulZ/go/simulator/execution"
-	"github.com/premchandkpc/FlowRulZ/go/simulator/loadgen"
-	"github.com/premchandkpc/FlowRulZ/go/simulator/network"
-	"github.com/premchandkpc/FlowRulZ/go/simulator/services"
+	"github.com/premchandkpc/FlowRulZ/simulator/execution"
+	"github.com/premchandkpc/FlowRulZ/simulator/loadgen"
+	"github.com/premchandkpc/FlowRulZ/simulator/network"
+	"github.com/premchandkpc/FlowRulZ/simulator/services"
 )
 
 type Scenario struct {

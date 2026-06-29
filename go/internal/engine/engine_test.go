@@ -3,7 +3,7 @@ package engine
 import (
 	"testing"
 
-	"github.com/premchandkpc/FlowRulZ/go/internal/bridge"
+	"github.com/premchandkpc/FlowRulZ/go/bridge"
 )
 
 func TestNewEngine(t *testing.T) {

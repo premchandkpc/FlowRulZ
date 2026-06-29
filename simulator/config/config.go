@@ -3,7 +3,7 @@ package config
 import (
 	"time"
 
-	"github.com/premchandkpc/FlowRulZ/go/simulator/network"
+	"github.com/premchandkpc/FlowRulZ/simulator/network"
 )
 
 type SimConfig struct {

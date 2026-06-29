@@ -87,7 +87,8 @@ type ExecutionNode struct {
 
 	StateStore *execstate.FileStore
 
-	GRPCBus *grpctransport.GRPCBus
+	GRPCBus     *grpctransport.GRPCBus
+	OtelExporter *observability.SpanExporter
 }
 
 type Config struct {
@@ -208,6 +209,10 @@ func New(cfg *Config) *ExecutionNode {
 
 	if cfg.GRPCAddr != "" {
 		en.GRPCBus = grpctransport.NewGRPCBus(cfg.GRPCAddr)
+	}
+
+	if ep := os.Getenv("FLOWRULZ_OTEL_ENDPOINT"); ep != "" {
+		en.OtelExporter = observability.NewSpanExporter(ep)
 	}
 
 	return en
@@ -748,6 +753,10 @@ func (en *ExecutionNode) Start() {
 		}
 	}
 
+	if en.OtelExporter != nil {
+		go en.OtelExporter.Start(ctx)
+	}
+
 	mux := http.NewServeMux()
 	mux.Handle("/admin/", http.StripPrefix("/admin", en.AdminSrv.Handler()))
 	mux.HandleFunc("/register", en.Registry.RegisterHTTPHandler)
@@ -809,6 +818,10 @@ func (en *ExecutionNode) Shutdown() {
 
 	if en.GRPCBus != nil {
 		en.GRPCBus.Stop()
+	}
+
+	if en.OtelExporter != nil {
+		en.OtelExporter.Stop()
 	}
 
 	if en.StateStore != nil {

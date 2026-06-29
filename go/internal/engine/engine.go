@@ -18,7 +18,7 @@ const (
 	LaneHeavy  Lane = "heavy"
 )
 
-func laneForScore(score uint32) Lane {
+func LaneForScore(score uint32) Lane {
 	switch {
 	case score < 10:
 		return LaneFast
@@ -67,6 +67,9 @@ type Engine struct {
 	rules       map[string]*Rule
 	nextVersion atomic.Uint64
 	persistPath string
+
+	AfterDeploy  func(id, dsl string, plan []byte, version uint64)
+	AfterPromote func(id string, version uint64)
 }
 
 func New(persistPath string) *Engine {
@@ -169,7 +172,7 @@ func (e *Engine) Deploy(id, dsl string) error {
 		Plan:    plan,
 		DSL:     dsl,
 		Version: e.nextVersion.Add(1),
-		Lane:    laneForScore(score),
+		Lane:    LaneForScore(score),
 	}
 	e.mu.Lock()
 	r, ok := e.rules[id]
@@ -180,6 +183,36 @@ func (e *Engine) Deploy(id, dsl string) error {
 	r.Versions = append(r.Versions, vp)
 	r.ActiveVersion = len(r.Versions) - 1
 	e.mu.Unlock()
+	e.saveRules()
+
+	if e.AfterDeploy != nil {
+		e.AfterDeploy(id, dsl, plan, vp.Version)
+	}
+	return nil
+}
+
+func (e *Engine) AddVersion(id, dsl string, plan []byte, version uint64) error {
+	vp := &VersionedPlan{
+		Plan:    plan,
+		DSL:     dsl,
+		Version: version,
+		Lane:    LaneForScore(bridge.PlanComplexity(plan)),
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	r, ok := e.rules[id]
+	if !ok {
+		r = &Rule{ID: id, ActiveVersion: -1}
+		e.rules[id] = r
+	}
+	for i, v := range r.Versions {
+		if v.Version == version {
+			r.Versions[i] = vp
+			e.saveRules()
+			return nil
+		}
+	}
+	r.Versions = append(r.Versions, vp)
 	e.saveRules()
 	return nil
 }
@@ -194,6 +227,9 @@ func (e *Engine) Promote(id string, version uint64) error {
 	for i, v := range r.Versions {
 		if v.Version == version {
 			r.ActiveVersion = i
+			if e.AfterPromote != nil {
+				e.AfterPromote(id, version)
+			}
 			return nil
 		}
 	}

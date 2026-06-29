@@ -72,27 +72,44 @@ Static C function bridging the Rust `caller_cb_t` function pointer to the Go-exp
 ### `go/internal/engine/engine.go`
 **Package:** `engine`
 
-Core rule engine. Maintains a `map[string]*Rule` of versioned plans in memory. Each `Rule` holds a slice of `VersionedPlan`s with an `ActiveVersion` index. `Deploy()` compiles DSL via bridge, assigns a lane (fast/normal/heavy) by `PlanComplexity` score, persists to disk, and returns. `ExecuteAll()` iterates active plans and runs each through `bridge.Execute()`, collecting results.
+Core rule engine. Maintains a `map[string]*Rule` of versioned plans in memory. Each `Rule` holds a slice of `VersionedPlan`s with an `ActiveVersion` index. `Deploy()` compiles DSL via bridge, assigns a lane (fast/normal/heavy) by `PlanComplexity` score, persists to disk, and returns. `AddVersion()` stores a pre-compiled plan (used by followers receiving plans via PlanDistributor) without auto-activating. `Promote()` activates a specific version.
+
+Callback hooks: `AfterDeploy` and `AfterPromote` are set by execnode to trigger plan distribution on the leader. After a successful deploy, `AfterDeploy(id, dsl, plan, version)` is called (leader spawns `distributePlan`). After promote, `AfterPromote(id, version)` is called (leader spawns `distributeActivate`).
 
 Persistence: atomic write via `os.WriteFile(path.tmp)` + `os.Rename(path.tmp, path)`.
 
-**Exports:** `Lane`, `LaneConfig`, `DefaultLanes`, `VersionedPlan`, `Rule`, `Engine`, `New()`, `Deploy()`, `Promote()`, `Rollback()`, `Drain()`, `Remove()`, `Rules()`, `ExecuteAll()`
+**Exports:** `Lane`, `LaneConfig`, `DefaultLanes`, `VersionedPlan`, `Rule`, `Engine`, `New()`, `Deploy()`, `AddVersion()`, `Promote()`, `Rollback()`, `Drain()`, `Remove()`, `Rules()`, `ExecuteAll()`, `LaneForScore()`
 
 ---
 
 ### `go/internal/execnode/execnode.go`
 **Package:** `execnode`
 
-Data-plane process. `New()` wires together: Engine, Scheduler, ReplyRouter, DLQ, RateLimiter, CircuitBreakers (per-svcID), MetricsCollector, and Admin server. `Start()`:
-1. Creates the ingress `MessageHandler` — rate-limits, schedules, generates message ID, passes `ExecContext` to engine, then calls `engine.ExecuteAll`
+Data-plane process. `New()` wires together: Engine, PlanDistributor (with plan/ack producers), Scheduler, ReplyRouter, DLQ, RateLimiter, CircuitBreakers (per-svcID), MetricsCollector, and Admin server. Sets `Engine.AfterDeploy` and `Engine.AfterPromote` callbacks that trigger plan distribution when the node is leader.
+
+Leader/follower role managed by `SetLeader()`/`IsLeader()`. `SetLeader(true)` marks the node as leader; `SetTerm(n)` synchronizes the cluster term to both the node and PlanDistributor.
+
+`Start()`:
+1. Creates the ingress `MessageHandler` — rate-limits, dedup by MessageID, generates `ExecContext`, passes to `engine.ExecuteAll`
 2. Creates the `svcCaller` — per-service circuit breaker check (`Allow()`), then success/failure recording
-3. Launches the transport consumer goroutine
-4. Starts the HTTP server (admin + health + metrics)
-5. Blocks on SIGINT/SIGTERM
+3. Launches the ingress transport consumer goroutine
+4. Creates plan/ack consumers that listen on `_flowrulz_plans`/`_flowrulz_acks`:
+   - `handlePlanMessage` deserializes `PlanMessage`, rejects stale terms, calls `Engine.AddVersion()` for "plan" type (and sends ACK) or `Engine.Promote()` for "activate" type
+   - `handleAckMessage` deserializes `AckMessage` and calls `PlanDist.RecordAck()`
+5. Starts `PlanDistributor`
+6. Starts the HTTP server (admin + health + metrics)
+7. Blocks on SIGINT/SIGTERM
 
-`Shutdown()`: stops consumers → stops scheduler → stops reply router cleanup → closes producers → shuts down HTTP server.
+`Shutdown()`: stops consumers → stops PlanDistributor → stops scheduler → stops reply router cleanup → closes producers → shuts down HTTP server.
 
-**Exports:** `Config`, `NewConfig()`, `ExecutionNode`, `New()`, `Start()`, `Shutdown()`
+Leader-only distribution flow:
+- After `Engine.Deploy()` → `AfterDeploy` callback → spawns `distributePlan()` goroutine:
+  1. Increments cluster term
+  2. `PlanDist.PublishPlan()` → `PlanDist.WaitForAcks()` → `PlanDist.ActivatePlan()`
+- After `Engine.Promote()` → `AfterPromote` callback → spawns `distributeActivate()` goroutine:
+  1. `PlanDist.ActivatePlan()` publishes activate message
+
+**Exports:** `Config`, `NewConfig()`, `ExecutionNode`, `New()`, `Start()`, `Shutdown()`, `SetLeader()`, `IsLeader()`, `SetTerm()`, `CurrentTerm()`
 
 ---
 
@@ -111,6 +128,10 @@ Histogram `Observe()`: linear scan of sorted bucket bounds, increments the first
 **Package:** `plandist`
 
 Plan distribution across the cluster. The leader publishes `PlanMessage{type:"plan"}` with compiled bytecode to `_flowrulz_plans`, then waits for ACKs from a quorum of followers on `_flowrulz_acks`. Once quorum is reached, publishes `PlanMessage{type:"activate"}`.
+
+Wired in execnode: `handlePlanMessage` deserializes `PlanMessage`, rejects plans with stale terms (lower than current cluster term), calls `Engine.AddVersion()` for "plan" type (and sends ACK via `PlanDist.SendAck()`) or `Engine.Promote()` for "activate" type. `handleAckMessage` deserializes `AckMessage` and calls `PlanDist.RecordAck()`.
+
+Plan/ACK consumers listen on `_flowrulz_plans`/`_flowrulz_acks` respectively, registered in `execnode.Start()`.
 
 `WaitForAcks()`: creates a `pendingAck` entry in a `sync.Map`, blocks on a `done` channel with timeout. `RecordAck()` (called by the ACK consumer handler) increments the atomic counter and signals the channel when quorum is met.
 

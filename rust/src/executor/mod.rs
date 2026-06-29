@@ -160,6 +160,7 @@ impl<'a> VM<'a> {
     fn op_gate(&mut self, instr: &Instruction) -> Result<(), String> {
         let mut skip = 0usize;
         gate::exec_jmp_if_false(&self.ctx.body, instr, self.plan, &self.arena, &mut skip);
+        self.ip += skip;
         Ok(())
     }
 

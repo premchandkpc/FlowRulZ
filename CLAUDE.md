@@ -1,6 +1,6 @@
 # FlowRulZ
 
-Distributed Programmable Event Runtime — fast rule evaluation for event-driven systems.
+Distributed execution runtime. Pub/Sub, RPC, workflows, and rules are all execution plans running on the same VM.
 
 > **AI rules** — On each conversation start, read `docs/` dir. After any code change, update relevant `.md` files in `docs/` to stay in sync. Never let docs go stale.
 
@@ -8,7 +8,7 @@ Distributed Programmable Event Runtime — fast rule evaluation for event-driven
 
 ```bash
 make all       # rust release + go binary
-make test      # all rust (111) + go tests (53+)
+make test      # all rust (119) + go tests (63+)
 make bench     # criterion benchmarks
 make vet       # go vet
 make clean     # cargo clean + remove binary
@@ -18,7 +18,7 @@ make clean     # cargo clean + remove binary
 
 - **Control Plane** (Go): Rule registry, DSL compiler, scheduling, leader election. Simple single-leader — no Raft. No WAL/storage beyond rules JSON file.
 - **Data Plane** (Go + Rust): Partition workers, ExecutionRuntime, service callers, span collection. Multiple nodes scale horizontally.
-- **Execution Node** (`go/internal/execnode/`): process wrapping Engine + Bridge + Runtime + transport consumers + admin HTTP
+- **Execution Node** (`go/internal/execnode/`): process wrapping Engine + Bridge + Runtime + PlanDistributor + transport consumers + admin HTTP. Leader/follower role via `SetLeader()`/`IsLeader()`. Leader distributes plans via `Engine.AfterDeploy`/`AfterPromote` hooks that call `PlanDist.PublishPlan()` + ACK quorum + `ActivatePlan()`.
 - **Kafka** is the durable event log; FlowRulZ is a consumer group with programmable execution
 - C FFI prefix: `flowrulz_` — all exported functions use `#[no_mangle] pub extern "C"`
 - Bridge: `sync.Map callerMap` + `atomic.Uint64 nextExecID` — no mutex in hot path
@@ -26,9 +26,8 @@ make clean     # cargo clean + remove binary
 - **Service Registry** (`go/internal/registry/`): Maps service names → healthy endpoints, round-robin/random/least-loaded LB, passive+active health checks
 - **Reply Router** (`go/internal/replyrouter/`): Per-node pending request tracker by correlation_id, timeout-based cleanup, duplicate detection
 - **Scheduler** (`go/internal/scheduler/`): Lane-based priority queues (fast/normal/heavy), semaphore-based concurrency limits, reject-on-full backpressure
-- **Plan Distribution** (`go/internal/plandist/`): Leader publishes plans to `_flowrulz_plans`, followers ACK on `_flowrulz_acks`, quorum-based activation with `WaitForAcks`
+- **Plan Distribution** (`go/internal/plandist/`): Leader publishes plans to `_flowrulz_plans`, followers ACK on `_flowrulz_acks`, quorum-based activation with `WaitForAcks`. Wired in execnode via `handlePlanMessage`/`handleAckMessage` — plan/ack consumers listen on `_flowrulz_plans`/`_flowrulz_acks`, call `Engine.AddVersion()` for "plan" type and `Engine.Promote()` for "activate". Term-based rejection prevents stale plans.
 - **Metrics** (`go/internal/observability/`): Counter, Gauge, Histogram with thread-safe per-name dedup and global shortcuts
-- **Circuit Breaker** (`go/internal/reliability/circuitbreaker.go`): Three-state (Closed/Open/HalfOpen) per-svcID breaker wired in `execnode` svcCaller (threshold=5, recovery=30s)
 - **Circuit Breaker** (`go/internal/reliability/circuitbreaker.go`): Three-state (Closed/Open/HalfOpen) per-svcID breaker wired in `execnode` svcCaller (threshold=5, recovery=30s)
 - **DLQ** (`go/internal/reliability/dlq.go`): Bounded dead-letter queue, Kafka-backed via `WithDLQProducer()`, per-entry replay, bulk ReplayAll, JSON export
 - **Rate Limiter** (`go/internal/reliability/ratelimit.go`): Token bucket per name, configurable rate/burst, isolation across services
@@ -46,18 +45,13 @@ make clean     # cargo clean + remove binary
 | Runtime | `rust/src/executor/runtime.rs` | `ExecutionRuntime` wraps VM, handles Chunk/Buffer at runtime level |
 | FFI | `rust/src/ffi.rs` | `flowrulz_compile`, `flowrulz_execute`, `flowrulz_get_spans`, etc. |
 | Bridge | `go/internal/bridge/` | CGo bindings + C caller bridge |
-| Engine | `go/internal/engine/` | `VersionedPlan`, lane routing, persistence, `ExecuteAll` |
+| Engine | `go/internal/engine/` | `VersionedPlan`, lane routing, persistence, `ExecuteAll`, `AddVersion`, `LaneForScore` |
 | ExecNode | `go/internal/execnode/` | Data plane process: engine + transport + admin + lifecycle |
 | Admin | `go/internal/admin/` | HTTP API with API key auth, rule CRUD, validate, lanes |
 | SDK | `go/flow/` | Client SDK — `Publish`, `Request`, `Execute`, `Stream` |
 | Registry | `go/internal/registry/` | `ServiceRegistry` — service name → healthy endpoints, LB, health checks |
 | ReplyRouter | `go/internal/replyrouter/` | `ReplyRouter` — correlation ID → pending request channel, timeout/cleanup |
 | Scheduler | `go/internal/scheduler/` | Priority queue per lane (fast/normal/heavy), semaphore-based concurrency limits, reject-on-full backpressure |
-| PlanDist | `go/internal/plandist/` | `PlanDistributor` — plan/ack topics, versioned ACK quorum, activation |
-| Metrics | `go/internal/observability/` | `MetricsCollector` — counters, gauges, histograms, global shortcuts |
-| DLQ | `go/internal/reliability/dlq.go` | Dead-letter queue with replay, bounded size, JSON export |
-| RateLimiter | `go/internal/reliability/ratelimit.go` | Token bucket per name, configurable rate/burst |
-| Scheduler | `go/internal/scheduler/` | Priority queue (fast/normal/heavy), concurrency limits, worker pool, backpressure |
 | PlanDist | `go/internal/plandist/` | `PlanDistributor` — plan/ack topics, versioned ACK quorum, activation |
 | Metrics | `go/internal/observability/` | `MetricsCollector` — counters, gauges, histograms, global shortcuts |
 | DLQ | `go/internal/reliability/dlq.go` | Dead-letter queue with replay, bounded size, JSON export |
@@ -74,9 +68,7 @@ make clean     # cargo clean + remove binary
 - **Reply Router**: Per-node component tracking pending request/reply by correlation_id. Replies hash to origin node's partition.
 - **Node lifecycle**: Join (announce → catch-up → consume), Drain (rebalance → drain execs → leave), Crash (rejoin with same ID → catch-up).
 - **Scheduler**: Lane-based priority queues; Fast (50 concurrent, 5k queue), Normal (20, 2k), Heavy (5, 500). RejectOnFull for heavy lane.
-- **Plan Distribution**: `PlanDistributor` publishes `PlanMessage{type, rule_id, version, plan, dsl}` to `_flowrulz_plans`. Followers send `AckMessage{node_id, rule_id, version, status}` to `_flowrulz_acks`. `WaitForAcks(ruleID, version, quorum, timeout)` implements ACK-quorum activation.
-- **Scheduler**: Lane-based priority queues; Fast (50 concurrent, 5k queue), Normal (20, 2k), Heavy (5, 500). RejectOnFull for heavy lane.
-- **Plan Distribution**: `PlanDistributor` publishes `PlanMessage{type, rule_id, version, plan, dsl}` to `_flowrulz_plans`. Followers send `AckMessage{node_id, rule_id, version, status}` to `_flowrulz_acks`. `WaitForAcks(ruleID, version, quorum, timeout)` implements ACK-quorum activation.
+- **Plan Distribution**: `PlanDistributor` publishes `PlanMessage{type, rule_id, version, plan, dsl}` to `_flowrulz_plans`. Followers send `AckMessage{node_id, rule_id, version, status}` to `_flowrulz_acks`. `WaitForAcks(ruleID, version, quorum, timeout)` implements ACK-quorum activation. Wired in execnode via `handlePlanMessage`/`handleAckMessage` — plan/ack consumers listen on `_flowrulz_plans`/`_flowrulz_acks`, call `Engine.AddVersion()` for "plan" type and `Engine.Promote()` for "activate". Term-based rejection prevents stale plans.
 
 ## Conventions
 
@@ -130,6 +122,9 @@ All endpoints (except `/health`) require `Authorization: Bearer <FLOWRULZ_API_KE
 |-------|--------|---------|
 | P0 DLQ persistence | In-memory cache + Kafka producer (`_flowrulz_dlq`) when `WithDLQProducer()` configured | `go/internal/reliability/dlq.go` |
 | P0 Circuit breaker | Wired per-svcID in svcCaller (threshold=5, recovery=30s). Three-state FSM tested (6 tests). Stub caller never trips — real HTTP/gRPC caller needed | `reliability/circuitbreaker.go`, `execnode/execnode.go` |
-| P1 Leader epoch | `PlanMessage.Term` field (uint64), `PlanDistributor.SetTerm()`/`CurrentTerm()`. Follower term rejection needs plan handler wiring | `go/internal/plandist/plandist.go` |
+| P1 Leader epoch | `PlanMessage.Term` field (uint64), `PlanDistributor.SetTerm()`/`CurrentTerm()`. Term-based rejection in execnode `handlePlanMessage` (rejects plans with older term) | `go/internal/plandist/plandist.go`, `go/internal/execnode/execnode.go` |
 | P1 Workflow state | File-based checkpointing (`NewOrchestratorWithCheckpointDir`). Per-flow JSON files, atomic write, restore on start | `go/internal/flow/flow.go` |
 | P1 Message dedup | Bounded in-memory `DedupTracker` (10k, 5min TTL). Wired by MessageID in handler. Cleanup goroutine every 30s | `reliability/dedup.go`, `execnode/execnode.go` |
+| P2 Leader election | `SetLeader()`/`IsLeader()` scaffold in execnode. No heartbeat or membership yet — role must be set externally. `SetTerm()` syncs term to PlanDistributor | `execnode/execnode.go` |
+| P2 AckQuorum | `WaitForAcks` with quorum=0 or -1 always returns immediately. Real quorum requires membership counting via `_flowrulz_members` topic | `plandist/plandist.go` |
+| P2 Plan distribution | `AfterDeploy`/`AfterPromote` callbacks wired in execnode. `distributePlan()` calls `PublishPlan()` + `WaitForAcks()` + `ActivatePlan()`. Works with stubs — needs real transport + membership for ACK quorum | `execnode/execnode.go`, `engine/engine.go` |

@@ -2,6 +2,8 @@ package engine
 
 import (
 	"testing"
+
+	"github.com/premchandkpc/FlowRulZ/go/internal/bridge"
 )
 
 func TestNewEngine(t *testing.T) {
@@ -124,4 +126,64 @@ func TestExecuteAllPinsVersion(t *testing.T) {
 	vp := rules[0].ActivePlan()
 	vp.ActiveExec.Wait()
 	<-ch
+}
+
+func TestAddVersion(t *testing.T) {
+	e := New("")
+	plan, err := bridge.Compile("n:validate", "dist-test")
+	if err != nil {
+		t.Fatalf("bridge.Compile failed: %v", err)
+	}
+	err = e.AddVersion("dist-rule", "n:validate", plan, 42)
+	if err != nil {
+		t.Fatalf("AddVersion failed: %v", err)
+	}
+	rules := e.Rules()
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	if rules[0].ActivePlan() != nil {
+		t.Fatal("AddVersion should not auto-activate")
+	}
+}
+
+func TestAddVersionReplacesExisting(t *testing.T) {
+	e := New("")
+	plan1, _ := bridge.Compile("n:validate", "dist-test")
+	plan2, _ := bridge.Compile("n:other", "dist-test")
+
+	err := e.AddVersion("dist-rule", "n:validate", plan1, 42)
+	if err != nil {
+		t.Fatalf("first AddVersion failed: %v", err)
+	}
+	err = e.AddVersion("dist-rule", "n:other", plan2, 42)
+	if err != nil {
+		t.Fatalf("second AddVersion failed: %v", err)
+	}
+
+	rules := e.Rules()
+	if len(rules[0].Versions) != 1 {
+		t.Fatalf("expected 1 version after replace, got %d", len(rules[0].Versions))
+	}
+	if rules[0].Versions[0].DSL != "n:other" {
+		t.Fatalf("expected replaced DSL, got %s", rules[0].Versions[0].DSL)
+	}
+}
+
+func TestAddVersionThenPromote(t *testing.T) {
+	e := New("")
+	plan, _ := bridge.Compile("n:validate", "dist-test")
+
+	e.AddVersion("dist-rule", "n:validate", plan, 42)
+	err := e.Promote("dist-rule", 42)
+	if err != nil {
+		t.Fatalf("Promote after AddVersion failed: %v", err)
+	}
+	rules := e.Rules()
+	if rules[0].ActivePlan() == nil {
+		t.Fatal("expected active plan after Promote")
+	}
+	if rules[0].ActivePlan().Version != 42 {
+		t.Fatalf("expected version 42, got %d", rules[0].ActivePlan().Version)
+	}
 }

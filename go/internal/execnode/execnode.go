@@ -23,6 +23,7 @@ import (
 	"github.com/premchandkpc/FlowRulZ/go/internal/membership"
 	"github.com/premchandkpc/FlowRulZ/go/internal/observability"
 	"github.com/premchandkpc/FlowRulZ/go/internal/plandist"
+	"github.com/premchandkpc/FlowRulZ/go/internal/registry"
 	"github.com/premchandkpc/FlowRulZ/go/internal/reliability"
 	"github.com/premchandkpc/FlowRulZ/go/internal/replyrouter"
 	"github.com/premchandkpc/FlowRulZ/go/internal/scheduler"
@@ -56,6 +57,7 @@ type ExecutionNode struct {
 	Dedup        *reliability.DedupTracker
 	PlanDist     *plandist.PlanDistributor
 	Membership   *membership.Membership
+	Registry     *registry.ServiceRegistry
 
 	serviceResolver ServiceResolver
 
@@ -69,6 +71,7 @@ type ExecutionNode struct {
 	httpClient  *http.Client
 	mu          sync.Mutex
 	shutdownCh  chan struct{}
+	stopHb      chan struct{}
 	isLeader    int32  // atomic: 0 = follower, 1 = leader
 	clusterTerm uint64 // atomic: managed via LoadUint64/StoreUint64
 
@@ -108,8 +111,10 @@ func New(cfg *Config) *ExecutionNode {
 		config:     *cfg,
 		httpClient: &http.Client{Timeout: 10 * time.Second},
 		shutdownCh: make(chan struct{}),
+		stopHb:     make(chan struct{}),
 		consumers:  make([]transport.MessageConsumer, 0),
 		producers:  make([]transport.MessageProducer, 0),
+		Registry:   registry.New(),
 	}
 
 	en.Engine = engine.New(cfg.PersistPath)
@@ -161,6 +166,8 @@ func New(cfg *Config) *ExecutionNode {
 	en.producers = append(en.producers, dlqProducer, planProducer, ackProducer, en.membersProducer)
 	en.mu.Unlock()
 
+	en.Registry.SetHeartbeatTimeout(30 * time.Second)
+
 	return en
 }
 
@@ -195,6 +202,29 @@ func (en *ExecutionNode) AliveCount() int {
 
 func (en *ExecutionNode) CurrentTerm() uint64 {
 	return atomic.LoadUint64(&en.clusterTerm)
+}
+
+func (en *ExecutionNode) httpCall(endpoint string, body []byte, cb *reliability.CircuitBreaker) ([]byte, error) {
+	resp, err := en.httpClient.Post(endpoint, "application/octet-stream", bytes.NewReader(body))
+	if err != nil {
+		cb.Failure()
+		return nil, fmt.Errorf("http call: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 500 {
+		cb.Failure()
+		return nil, fmt.Errorf("http call: status %d", resp.StatusCode)
+	}
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		cb.Failure()
+		return nil, fmt.Errorf("http call: read: %w", err)
+	}
+
+	cb.Success()
+	return respBody, nil
 }
 
 func (en *ExecutionNode) mkProducer(topic string, kc transport.KafkaConfig) transport.MessageProducer {
@@ -360,38 +390,47 @@ func (en *ExecutionNode) callService(svcID uint16, body []byte) ([]byte, error) 
 		return nil, fmt.Errorf("circuit breaker open for service %d", svcID)
 	}
 
-	if en.serviceResolver == nil {
-		log.Printf("service call: id=%d body=%d bytes (stub)", svcID, len(body))
+	svcName := bridge.InternLookup(svcID)
+
+	inst, _ := en.Registry.LookupInstance(svcName, "")
+	if inst != nil {
+		endpoint := fmt.Sprintf("%s://%s:%d", inst.Endpoint.Protocol, inst.Endpoint.Address, inst.Endpoint.Port)
+		resp, err := en.httpClient.Post(endpoint, "application/octet-stream", bytes.NewReader(body))
+		if err != nil {
+			cb.Failure()
+			en.Registry.MarkUnhealthy(svcName, inst.Endpoint.NodeID)
+			return nil, fmt.Errorf("service %s: call: %w", svcName, err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode >= 500 {
+			cb.Failure()
+			en.Registry.MarkUnhealthy(svcName, inst.Endpoint.NodeID)
+			return nil, fmt.Errorf("service %s: status %d", svcName, resp.StatusCode)
+		}
+
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			cb.Failure()
+			return nil, fmt.Errorf("service %s: read: %w", svcName, err)
+		}
+
 		cb.Success()
-		return body, nil
+		return respBody, nil
 	}
 
-	endpoint, err := en.serviceResolver.Resolve(svcID, "")
-	if err != nil {
-		cb.Failure()
-		return nil, fmt.Errorf("service %d: resolve: %w", svcID, err)
+	if en.serviceResolver != nil {
+		endpoint, err := en.serviceResolver.Resolve(svcID, "")
+		if err != nil {
+			cb.Failure()
+			return nil, fmt.Errorf("service %d: resolve: %w", svcID, err)
+		}
+		return en.httpCall(endpoint, body, cb)
 	}
 
-	resp, err := en.httpClient.Post(endpoint, "application/octet-stream", bytes.NewReader(body))
-	if err != nil {
-		cb.Failure()
-		return nil, fmt.Errorf("service %d: call: %w", svcID, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 500 {
-		cb.Failure()
-		return nil, fmt.Errorf("service %d: status %d", svcID, resp.StatusCode)
-	}
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		cb.Failure()
-		return nil, fmt.Errorf("service %d: read: %w", svcID, err)
-	}
-
+	log.Printf("service call: id=%d name=%s body=%d bytes (stub)", svcID, svcName, len(body))
 	cb.Success()
-	return respBody, nil
+	return body, nil
 }
 
 func (en *ExecutionNode) executePlan(plan []byte, body []byte) ([]byte, error) {
@@ -511,8 +550,13 @@ func (en *ExecutionNode) Start() {
 	en.ReplyRouter.StartCleanup()
 	en.Dedup.StartCleanup(ctx, 30*time.Second)
 
+	en.Registry.StartHeartbeatChecker(en.stopHb)
+
 	mux := http.NewServeMux()
 	mux.Handle("/admin/", http.StripPrefix("/admin", en.AdminSrv.Handler()))
+	mux.HandleFunc("/register", en.Registry.RegisterHTTPHandler)
+	mux.HandleFunc("/heartbeat", en.Registry.HeartbeatHTTPHandler)
+	mux.HandleFunc("/services", en.Registry.ListServicesHTTPHandler)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"status":"ok"}`))
 	})
@@ -549,6 +593,7 @@ func (en *ExecutionNode) Shutdown() {
 	}
 	en.consumers = nil
 
+	close(en.stopHb)
 	en.PlanDist.Stop()
 	en.Scheduler.Stop()
 	en.ReplyRouter.StopCleanup()

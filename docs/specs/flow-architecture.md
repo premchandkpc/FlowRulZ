@@ -314,7 +314,8 @@ Kafka      Partition Worker         Engine              ExecutionRuntime        
 
 | File | What It Does |
 |------|-------------|
-| `go/internal/transport/` | Kafka consumer/producer + interfaces, invokes handler with event bytes |
+| `go/pkg/transport/eventbus.go` | Canonical `EventBus` interface — `Publish`, `Subscribe`, `Request`, `Reply`, `Broadcast` |
+| `go/internal/transport/` | Kafka consumer/producer + interfaces (`MessageConsumer`/`MessageProducer`), invokes handler with event bytes |
 | `go/internal/execnode/` | ExecutionNode: engine + scheduler + transport + admin + lifecycle |
 | `go/internal/engine/` | `ActivePlanBytes()`: collect active plan bytes; `executePlan()`: cooperative step loop via `bridge.ExecuteStep` |
 | `go/internal/scheduler/` | Priority queue lanes (fast/normal/heavy), concurrency limits, backpressure |

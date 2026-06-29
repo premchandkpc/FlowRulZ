@@ -1,6 +1,6 @@
 # Kafka Semantics Specification
 
-**Status:** Kafka is the durable event log for FlowRulZ. FlowRulZ is a consumer group with programmable execution. The Control Plane manages rules; Data Plane nodes consume from Kafka, execute rules, and produce results. Kafka topics also serve as the coordination backbone for cluster membership, plan distribution, and cross-node replies.
+**Status:** Kafka is a **legacy/placeholder durable transport** for FlowRulZ. The canonical transport abstraction is `go/pkg/transport/eventbus.go` (`EventBus` interface). Kafka was the original backbone — FlowRulZ ran as a consumer group with programmable execution. Kafka topics served as the coordination backbone for cluster membership, plan distribution, and cross-node replies. Today, the `go/internal/transport/` package provides Sarama-backed Kafka, HTTP, and in-memory stub implementations of the underlying `MessageConsumer`/`MessageProducer` interfaces, while the higher-level `EventBus` interface in `go/pkg/transport/` is the primary pub/sub abstraction used by new code (simulator, SDK). Kafka remains available as one transport option.
 
 ## Architecture
 
@@ -198,7 +198,8 @@ Follower receives activation → marks version active → begins executing new v
 
 | File | Role |
 |------|------|
-| `go/internal/transport/` | Kafka consumer/producer interfaces, in-memory stubs, real Sarama `ConsumerGroup`/`SyncProducer` |
+| `go/pkg/transport/eventbus.go` | Canonical `EventBus` interface — `Publish`, `Subscribe`, `Request`, `Reply`, `Broadcast`, `Unsubscribe` |
+| `go/internal/transport/` | Kafka consumer/producer interfaces (`MessageConsumer`/`MessageProducer`), in-memory stubs, real Sarama `ConsumerGroup`/`SyncProducer` |
 | `go/internal/execnode/execnode.go` | Wires consumers, scheduler, DLQ, rate limiter, admin; `mkConsumer`/`mkProducer` select real Sarama or stubs based on `KafkaBrokers` config |
 | `go/internal/engine/engine.go` | VersionedPlan store, ExecuteAll, ActivePlanBytes |
 | `go/internal/scheduler/` | Priority queue lanes, concurrency limits |

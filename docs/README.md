@@ -19,10 +19,11 @@ FlowRulZ/
 │   ├── bridge/          # cgo bindings to Rust FFI (sync.Map caller dispatch)
 │   ├── cmd/flowrulz/    # Entry point (ExecutionNode)
 │   ├── flow/            # Client SDK (Publish, Request, Execute, Stream)
+│   ├── pkg/transport/   # Public EventBus interface — canonical pub/sub abstraction
 │   └── internal/
 │       ├── engine/         # Rule lifecycle, versioning, lane routing, persistence
 │       ├── execnode/       # ExecutionNode process (engine + transport + admin lifecycle)
-│       ├── transport/      # Kafka consumer/producer
+│       ├── transport/      # Kafka consumer/producer (Sarama) + HTTP transport
 │       ├── admin/          # HTTP API (rules CRUD, validate, promote, lanes)
 │       ├── flow/           # Flow orchestration
 │       ├── registry/       # ServiceRegistry — service name → healthy endpoints, LB

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/premchandkpc/FlowRulZ/go/bridge"
+	"github.com/premchandkpc/FlowRulZ/go/pkg/transport"
 	"github.com/premchandkpc/FlowRulZ/simulator/execution"
 	"github.com/premchandkpc/FlowRulZ/simulator/metrics"
 	"github.com/premchandkpc/FlowRulZ/simulator/network"
@@ -30,6 +31,7 @@ type Scheduler struct {
 	Services  *services.ServiceRegistry
 	Network   *network.Network
 	Plans     *PlanCache
+	Bus       transport.EventBus
 
 	Workers    int
 	ExecCount  atomic.Int64
@@ -39,6 +41,7 @@ type Scheduler struct {
 	wg         sync.WaitGroup
 	serviceCtx context.Context
 	cancel     context.CancelFunc
+	busSub     *transport.Subscription
 }
 
 type PlanCache struct {
@@ -427,9 +430,64 @@ func (s *Scheduler) callService(ctx *execution.ExecutionContext, instr execution
 	}
 }
 
+func (s *Scheduler) SetBus(bus transport.EventBus) {
+	s.Bus = bus
+}
+
+func (s *Scheduler) SubscribeBus() {
+	if s.Bus == nil {
+		return
+	}
+	s.busSub = s.Bus.Subscribe("execution", func(ctx context.Context, msg *transport.Message) {
+		ruleID := msg.Headers["rule_id"]
+		if ruleID == "" {
+			return
+		}
+		plan := s.Plans.Get(ruleID)
+		if plan == nil {
+			if msg.CorrelationID != "" {
+			s.Bus.Reply("execution", msg.CorrelationID, &transport.Message{
+					Body: []byte(`{"error":"rule not found"}`),
+				})
+			}
+			return
+		}
+
+		resultCh := make(chan *execution.Result, 1)
+		ec := execution.NewContext(plan, msg.Body)
+		ec.ResultCh = resultCh
+		ec.Transition(execution.StateRunning, "bus dispatch")
+
+		s.Enqueue(ec)
+
+		res := <-resultCh
+		if msg.CorrelationID != "" {
+			var respBody []byte
+			if res.Error != nil {
+				respBody = []byte(fmt.Sprintf(`{"error":"%s"}`, res.Error.Error()))
+			} else {
+				respBody = res.Body
+			}
+			s.Bus.Reply("execution", msg.CorrelationID, &transport.Message{
+				Body: respBody,
+				Headers: map[string]string{
+					"duration": ec.Duration.String(),
+				},
+			})
+		}
+	})
+}
+
 func (s *Scheduler) Snapshot() map[string]int {
 	return map[string]int{
 		"ready":   s.ReadyQ.Len(),
 		"waiting": s.WaitingQ.Len(),
+	}
+}
+
+func (s *Scheduler) StopBus() {
+	if s.busSub != nil {
+		s.Bus.Unsubscribe(s.busSub.ID)
+		s.busSub = nil
 	}
 }

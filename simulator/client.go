@@ -2,9 +2,11 @@ package simulator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/premchandkpc/FlowRulZ/go/pkg/transport"
 	"github.com/premchandkpc/FlowRulZ/simulator/execution"
 	"github.com/premchandkpc/FlowRulZ/simulator/services"
 )
@@ -23,6 +25,10 @@ func (s *Simulator) Client() *Client {
 }
 
 func (c *Client) Send(ctx context.Context, ruleID string, body []byte) (*SendResult, error) {
+	if c.sim.Bus != nil {
+		return c.sendViaBus(ctx, ruleID, body)
+	}
+
 	plan := c.sim.Nodes[0].Plans.Get(ruleID)
 	if plan == nil {
 		return nil, fmt.Errorf("rule %q not found", ruleID)
@@ -44,6 +50,38 @@ func (c *Client) Send(ctx context.Context, ruleID string, body []byte) (*SendRes
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+func (c *Client) sendViaBus(ctx context.Context, ruleID string, body []byte) (*SendResult, error) {
+	timeout := 30 * time.Second
+	if deadline, ok := ctx.Deadline(); ok {
+		if d := time.Until(deadline); d < timeout {
+			timeout = d
+		}
+	}
+	reply, err := c.sim.Bus.Request("execution", &transport.Message{
+		Headers: map[string]string{"rule_id": ruleID},
+		Body:    body,
+	}, timeout)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check for application-level error in reply body
+	if len(reply.Body) > 0 && reply.Body[0] == '{' {
+		var errResp struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(reply.Body, &errResp) == nil && errResp.Error != "" {
+			return nil, fmt.Errorf("%s", errResp.Error)
+		}
+	}
+
+	var dur time.Duration
+	if d := reply.Headers["duration"]; d != "" {
+		dur, _ = time.ParseDuration(d)
+	}
+	return &SendResult{Body: reply.Body, Duration: dur}, nil
 }
 
 func (c *Client) RegisterService(svc *services.MockService) {

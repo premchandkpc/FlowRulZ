@@ -4,7 +4,7 @@ Every source file in the project, grouped by package, with its purpose and key e
 
 ---
 
-## Go (21 source files + 18 simulator files)
+## Go (22 source files + 18 simulator files)
 
 ### `go/cmd/flowrulz/main.go`
 **Package:** `main`
@@ -222,6 +222,17 @@ Lane-based priority scheduler. Three lanes: `Fast` (50 concurrent, 5k queue), `N
 Lane workers: one goroutine per lane, each acquires a semaphore slot, dequeues a task, and spawns `execTask` as a goroutine (which releases the semaphore on completion). `PriorityForScore()` maps complexity scores to lanes.
 
 **Exports:** `Priority`, `Task`, `TaskResult`, `LaneConfig`, `Scheduler`, `New()`, `Start()`, `Stop()`, `Enqueue()`, `EnqueueAndWait()`, `QueuedCount()`, `RunningCount()`, `TotalEnqueued()`, `TotalDequeued()`, `TotalRejected()`, `DefaultLanes`, `PriorityForScore()`, `ErrQueueFull`
+
+---
+
+### `go/pkg/transport/eventbus.go`
+**Package:** `transport`
+
+Public `EventBus` interface — the canonical pub/sub abstraction for FlowRulZ. Defines `Publish`, `Subscribe`, `Request`, `Reply`, `Broadcast`, `PublishToPartition`, `Unsubscribe`, `TopicStats`, and `Close`. Also defines `Message` (universal message type with ID, Type, Topic, Body, Headers, CorrelationID, etc.), `Handler` callback type, and `Subscription` struct.
+
+This interface lives in `go/pkg/` (not `go/internal/`) so it can be imported by both `go/...` and `simulator/...` packages. The in-memory implementation is at `simulator/eventbus/eventbus.go`; production Kafka/HTTP implementations are at `go/internal/transport/`.
+
+**Exports:** `EventBus`, `Message`, `MessageType`, `TypePublish`, `TypeRequest`, `TypeReply`, `TypeBroadcast`, `TypeExecution`, `Handler`, `Subscription`
 
 ---
 

@@ -99,10 +99,12 @@ go/
 ├── cmd/flowrulz/           # Entry point (uses execnode package)
 ├── flow/                   # Client SDK (Publish, Request, Execute, Stream)
 │   └── client.go
+├── pkg/transport/          # Public EventBus interface — canonical pub/sub abstraction
+│   └── eventbus.go         # EventBus, Message, Handler, Subscription types
 └── internal/
     ├── engine/             # Rule lifecycle, versioning, lane routing, persistence
     ├── execnode/           # ExecutionNode: process wrapping engine + transport + admin
-    ├── transport/          # Kafka consumer/producer (internal topics: _flowrulz_members, _plans, _acks, _replies)
+    ├── transport/          # Kafka consumer/producer (Sarama-backed) + HTTP transport, MessageConsumer/MessageProducer interfaces
     ├── admin/              # HTTP API (rules CRUD, validate, promote, lanes)
     ├── flow/               # Flow orchestrator with state machine
     ├── registry/           # ServiceRegistry — service name → healthy endpoints, LB, health checks

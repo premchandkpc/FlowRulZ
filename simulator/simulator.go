@@ -7,10 +7,12 @@ import (
 	"time"
 
 	"github.com/premchandkpc/FlowRulZ/go/bridge"
+	"github.com/premchandkpc/FlowRulZ/go/pkg/transport"
 	"github.com/premchandkpc/FlowRulZ/simulator/config"
-	"github.com/premchandkpc/FlowRulZ/simulator/execution"
 	"github.com/premchandkpc/FlowRulZ/simulator/dashboard"
 	"github.com/premchandkpc/FlowRulZ/simulator/dispatcher"
+	"github.com/premchandkpc/FlowRulZ/simulator/eventbus"
+	"github.com/premchandkpc/FlowRulZ/simulator/execution"
 	"github.com/premchandkpc/FlowRulZ/simulator/loadgen"
 	"github.com/premchandkpc/FlowRulZ/simulator/metrics"
 	"github.com/premchandkpc/FlowRulZ/simulator/network"
@@ -47,6 +49,7 @@ type Simulator struct {
 	Metrics    *metrics.Collector
 	Nodes      []*scheduler.Scheduler
 	Dispatcher *dispatcher.Dispatcher
+	Bus        transport.EventBus
 	LoadGen    *loadgen.Generator
 	Dashboard  *dashboard.Dashboard
 	Scenario   *scenarios.Scenario
@@ -151,6 +154,12 @@ func New(cfg config.SimConfig) *Simulator {
 		dash = dashboard.New(cfg.DashboardAddr, nodes, tl, mc)
 	}
 
+	bus := eventbus.New(100)
+	for _, node := range nodes {
+		node.SetBus(bus)
+		node.SubscribeBus()
+	}
+
 	return &Simulator{
 		cfg:        cfg,
 		Services:   svcs,
@@ -159,6 +168,7 @@ func New(cfg config.SimConfig) *Simulator {
 		Metrics:    mc,
 		Nodes:      nodes,
 		Dispatcher: disp,
+		Bus:        bus,
 		LoadGen:    lg,
 		Dashboard:  dash,
 		Scenario:   scenario,

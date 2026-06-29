@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type Protocol string
@@ -24,6 +25,21 @@ const (
 	LBStrategyLeastLoaded  LBStrategy = "leastloaded"
 )
 
+type MethodInfo struct {
+	Name       string   `json:"name"`
+	InputType  string   `json:"input_type,omitempty"`
+	OutputType string   `json:"output_type,omitempty"`
+	Sync       bool     `json:"sync"`
+	Async      bool     `json:"async"`
+	TimeoutMs  int      `json:"timeout_ms,omitempty"`
+	Tags       []string `json:"tags,omitempty"`
+}
+
+type ServiceCapabilities struct {
+	Sync  bool `json:"sync"`
+	Async bool `json:"async"`
+}
+
 type Endpoint struct {
 	NodeID   string   `json:"node_id"`
 	Address  string   `json:"address"`
@@ -35,23 +51,45 @@ type Endpoint struct {
 	nodeID string
 }
 
+type ServiceInstance struct {
+	ID           string              `json:"id"`
+	Name         string              `json:"name"`
+	Version      string              `json:"version,omitempty"`
+	Methods      []MethodInfo        `json:"methods,omitempty"`
+	Capabilities ServiceCapabilities `json:"capabilities"`
+	Endpoint     Endpoint            `json:"endpoint"`
+	Zone         string              `json:"zone,omitempty"`
+	Weight       int                 `json:"weight,omitempty"`
+	Tags         []string            `json:"tags,omitempty"`
+	Metadata     map[string]string   `json:"metadata,omitempty"`
+	Healthy      bool                `json:"healthy"`
+	HeartbeatAt  time.Time           `json:"heartbeat_at"`
+	RegisteredAt time.Time           `json:"registered_at"`
+}
+
 type ServiceInfo struct {
 	Name      string      `json:"name"`
+	Methods   []MethodInfo `json:"methods,omitempty"`
+	Instances []*ServiceInstance `json:"instances"`
 	Endpoints []*Endpoint `json:"endpoints"`
 }
 
 type ServiceRegistry struct {
-	mu        sync.RWMutex
-	services  map[string][]*Endpoint
-	roundRobin map[string]*uint64 // per-service round-robin counter
+	mu          sync.RWMutex
+	services    map[string][]*Endpoint
+	instances   map[string][]*ServiceInstance
+	roundRobin  map[string]*uint64
 	defStrategy LBStrategy
+	hbTimeout   time.Duration
 }
 
 func New() *ServiceRegistry {
 	return &ServiceRegistry{
-		services:    make(map[string][]*Endpoint),
-		roundRobin:  make(map[string]*uint64),
+		services:   make(map[string][]*Endpoint),
+		instances:  make(map[string][]*ServiceInstance),
+		roundRobin: make(map[string]*uint64),
 		defStrategy: LBStrategyRandom,
+		hbTimeout:  30 * time.Second,
 	}
 }
 
@@ -59,6 +97,12 @@ func NewWithStrategy(strategy LBStrategy) *ServiceRegistry {
 	r := New()
 	r.defStrategy = strategy
 	return r
+}
+
+func (r *ServiceRegistry) SetHeartbeatTimeout(d time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.hbTimeout = d
 }
 
 func (r *ServiceRegistry) Register(name string, endpoint *Endpoint) error {
@@ -80,7 +124,6 @@ func (r *ServiceRegistry) Register(name string, endpoint *Endpoint) error {
 	if endpoint.NodeID == "" {
 		endpoint.NodeID = localNodeID()
 	}
-
 	endpoint.Healthy = true
 
 	r.mu.Lock()
@@ -102,6 +145,79 @@ func (r *ServiceRegistry) Register(name string, endpoint *Endpoint) error {
 	return nil
 }
 
+func (r *ServiceRegistry) RegisterInstance(inst *ServiceInstance) error {
+	if inst.Name == "" {
+		return fmt.Errorf("registry: empty service name")
+	}
+	if inst.Endpoint.Address == "" {
+		return fmt.Errorf("registry: empty endpoint address")
+	}
+	if inst.Endpoint.Port <= 0 {
+		return fmt.Errorf("registry: invalid port %d", inst.Endpoint.Port)
+	}
+	if inst.ID == "" {
+		inst.ID = fmt.Sprintf("%s-%s-%d", inst.Name, inst.Endpoint.Address, inst.Endpoint.Port)
+	}
+	if inst.Endpoint.Protocol == "" {
+		inst.Endpoint.Protocol = ProtocolHTTP
+	}
+	if inst.Weight <= 0 {
+		inst.Weight = 100
+	}
+	inst.Healthy = true
+	inst.HeartbeatAt = time.Now()
+	if inst.RegisteredAt.IsZero() {
+		inst.RegisteredAt = time.Now()
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.services[inst.Name] = append(r.services[inst.Name], &Endpoint{
+		NodeID:   inst.Endpoint.NodeID,
+		Address:  inst.Endpoint.Address,
+		Port:     inst.Endpoint.Port,
+		Protocol: inst.Endpoint.Protocol,
+		Healthy:  true,
+	})
+
+	existing := r.instances[inst.Name]
+	for i, e := range existing {
+		if e.ID == inst.ID {
+			existing[i] = inst
+			r.instances[inst.Name] = existing
+			return nil
+		}
+	}
+	r.instances[inst.Name] = append(existing, inst)
+	if _, ok := r.roundRobin[inst.Name]; !ok {
+		var zero uint64
+		r.roundRobin[inst.Name] = &zero
+	}
+	return nil
+}
+
+func (r *ServiceRegistry) Heartbeat(name, instanceID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	instances := r.instances[name]
+	for _, inst := range instances {
+		if inst.ID == instanceID {
+			inst.HeartbeatAt = time.Now()
+			inst.Healthy = true
+			for _, ep := range r.services[name] {
+				if ep.NodeID == inst.Endpoint.NodeID && ep.Address == inst.Endpoint.Address {
+					ep.Healthy = true
+					return nil
+				}
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("registry: instance %s/%s not found", name, instanceID)
+}
+
 func (r *ServiceRegistry) Unregister(name string, nodeID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -119,6 +235,59 @@ func (r *ServiceRegistry) Unregister(name string, nodeID string) {
 	} else {
 		r.services[name] = filtered
 	}
+
+	instances := r.instances[name]
+	kept := make([]*ServiceInstance, 0, len(instances))
+	for _, inst := range instances {
+		if inst.Endpoint.NodeID != nodeID {
+			kept = append(kept, inst)
+		}
+	}
+	if len(kept) == 0 {
+		delete(r.instances, name)
+	} else {
+		r.instances[name] = kept
+	}
+}
+
+func (r *ServiceRegistry) UnregisterInstance(name, instanceID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	instances := r.instances[name]
+	kept := make([]*ServiceInstance, 0, len(instances))
+	for _, inst := range instances {
+		if inst.ID != instanceID {
+			kept = append(kept, inst)
+		}
+	}
+	if len(kept) == 0 {
+		delete(r.instances, name)
+	} else {
+		r.instances[name] = kept
+	}
+}
+
+func (r *ServiceRegistry) CheckExpired() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var expired []string
+	now := time.Now()
+	for name, instances := range r.instances {
+		for _, inst := range instances {
+			if now.Sub(inst.HeartbeatAt) > r.hbTimeout {
+				inst.Healthy = false
+				for _, ep := range r.services[name] {
+					if ep.NodeID == inst.Endpoint.NodeID && ep.Address == inst.Endpoint.Address {
+						ep.Healthy = false
+					}
+				}
+				expired = append(expired, fmt.Sprintf("%s/%s", name, inst.ID))
+			}
+		}
+	}
+	return expired
 }
 
 func (r *ServiceRegistry) Lookup(name string) []*Endpoint {
@@ -129,7 +298,6 @@ func (r *ServiceRegistry) Lookup(name string) []*Endpoint {
 	if !ok {
 		return nil
 	}
-
 	healthy := make([]*Endpoint, 0, len(eps))
 	for _, ep := range eps {
 		if ep.Healthy {
@@ -137,6 +305,41 @@ func (r *ServiceRegistry) Lookup(name string) []*Endpoint {
 		}
 	}
 	return healthy
+}
+
+func (r *ServiceRegistry) LookupInstance(name, method string) (*ServiceInstance, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	instances, ok := r.instances[name]
+	if !ok || len(instances) == 0 {
+		return nil, fmt.Errorf("registry: service %q not found", name)
+	}
+
+	var candidates []*ServiceInstance
+	for _, inst := range instances {
+		if !inst.Healthy {
+			continue
+		}
+		if time.Since(inst.HeartbeatAt) > r.hbTimeout {
+			continue
+		}
+		if method != "" {
+			for _, m := range inst.Methods {
+				if m.Name == method {
+					candidates = append(candidates, inst)
+					break
+				}
+			}
+		} else {
+			candidates = append(candidates, inst)
+		}
+	}
+
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("registry: no healthy instance of %q for method %q", name, method)
+	}
+	return candidates[rand.Intn(len(candidates))], nil
 }
 
 func (r *ServiceRegistry) Pick(name string) (*Endpoint, error) {
@@ -158,7 +361,6 @@ func (r *ServiceRegistry) PickWithStrategy(name string, strategy LBStrategy) (*E
 			healthy = append(healthy, ep)
 		}
 	}
-
 	if len(healthy) == 0 {
 		return nil, fmt.Errorf("registry: no healthy endpoints for %q", name)
 	}
@@ -202,10 +404,14 @@ func (r *ServiceRegistry) MarkUnhealthy(name string, nodeID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	eps := r.services[name]
-	for _, ep := range eps {
+	for _, ep := range r.services[name] {
 		if ep.NodeID == nodeID {
 			ep.Healthy = false
+		}
+	}
+	for _, inst := range r.instances[name] {
+		if inst.Endpoint.NodeID == nodeID {
+			inst.Healthy = false
 		}
 	}
 }
@@ -214,10 +420,14 @@ func (r *ServiceRegistry) MarkHealthy(name string, nodeID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	eps := r.services[name]
-	for _, ep := range eps {
+	for _, ep := range r.services[name] {
 		if ep.NodeID == nodeID {
 			ep.Healthy = true
+		}
+	}
+	for _, inst := range r.instances[name] {
+		if inst.Endpoint.NodeID == nodeID {
+			inst.Healthy = true
 		}
 	}
 }
@@ -226,9 +436,16 @@ func (r *ServiceRegistry) ListServices() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	names := make([]string, 0, len(r.services))
+	seen := make(map[string]bool)
+	for name := range r.instances {
+		seen[name] = true
+	}
 	for name := range r.services {
-		names = append(names, name)
+		seen[name] = true
+	}
+	names := make([]string, 0, len(seen))
+	for n := range seen {
+		names = append(names, n)
 	}
 	return names
 }
@@ -246,6 +463,19 @@ func (r *ServiceRegistry) ListEndpoints(name string) []*Endpoint {
 	return out
 }
 
+func (r *ServiceRegistry) ListInstances(name string) []*ServiceInstance {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	instances, ok := r.instances[name]
+	if !ok {
+		return nil
+	}
+	out := make([]*ServiceInstance, len(instances))
+	copy(out, instances)
+	return out
+}
+
 func (r *ServiceRegistry) Snapshot() map[string][]*Endpoint {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -257,6 +487,60 @@ func (r *ServiceRegistry) Snapshot() map[string][]*Endpoint {
 		snap[name] = out
 	}
 	return snap
+}
+
+func (r *ServiceRegistry) SnapshotInstances() map[string][]*ServiceInstance {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	snap := make(map[string][]*ServiceInstance, len(r.instances))
+	for name, instances := range r.instances {
+		out := make([]*ServiceInstance, len(instances))
+		copy(out, instances)
+		snap[name] = out
+	}
+	return snap
+}
+
+func (r *ServiceRegistry) ServiceInfo(name string) *ServiceInfo {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	instances, ok := r.instances[name]
+	if !ok {
+		return nil
+	}
+	eps := r.services[name]
+	var methods []MethodInfo
+	if len(instances) > 0 {
+		methods = instances[0].Methods
+	}
+	return &ServiceInfo{
+		Name:      name,
+		Methods:   methods,
+		Instances: copyInstances(instances),
+		Endpoints: copyEndpoints(eps),
+	}
+}
+
+func (r *ServiceRegistry) AllServiceInfo() []*ServiceInfo {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var out []*ServiceInfo
+	for name, instances := range r.instances {
+		var methods []MethodInfo
+		if len(instances) > 0 {
+			methods = instances[0].Methods
+		}
+		out = append(out, &ServiceInfo{
+			Name:      name,
+			Methods:   methods,
+			Instances: copyInstances(instances),
+			Endpoints: copyEndpoints(r.services[name]),
+		})
+	}
+	return out
 }
 
 var localNodeIDValue atomic.Value
@@ -272,4 +556,22 @@ func SetLocalNodeID(id string) {
 func localNodeID() string {
 	v, _ := localNodeIDValue.Load().(string)
 	return v
+}
+
+func copyEndpoints(src []*Endpoint) []*Endpoint {
+	if src == nil {
+		return nil
+	}
+	out := make([]*Endpoint, len(src))
+	copy(out, src)
+	return out
+}
+
+func copyInstances(src []*ServiceInstance) []*ServiceInstance {
+	if src == nil {
+		return nil
+	}
+	out := make([]*ServiceInstance, len(src))
+	copy(out, src)
+	return out
 }

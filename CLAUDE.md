@@ -19,7 +19,7 @@ make clean     # cargo clean + remove binary
 - **Control Plane** (Go): Rule registry, DSL compiler, scheduling, leader election. Simple single-leader — no Raft. No WAL/storage beyond rules JSON file.
 - **Data Plane** (Go + Rust): Partition workers, ExecutionRuntime, service callers, span collection. Multiple nodes scale horizontally.
 - **Execution Node** (`go/internal/execnode/`): process wrapping Engine + Bridge + Runtime + PlanDistributor + transport consumers + admin HTTP. Leader/follower role via `SetLeader()`/`IsLeader()`. Leader distributes plans via `Engine.AfterDeploy`/`AfterPromote` hooks that call `PlanDist.PublishPlan()` + ACK quorum + `ActivatePlan()`.
-- **Kafka** is the durable event log; FlowRulZ is a consumer group with programmable execution
+- **EventBus** (`go/pkg/transport/eventbus.go`) is the canonical pub/sub abstraction; `Message`, `Handler`, `Subscription` types are shared across `go/` and `simulator/`. **Kafka** (`go/internal/transport/`) is a legacy transport implementation — one consumer group with programmable execution
 - C FFI prefix: `flowrulz_` — all exported functions use `#[no_mangle] pub extern "C"`
 - Bridge: `sync.Map callerMap` + `atomic.Uint64 nextExecID` — no mutex in hot path
 - Span tracing: `thread_local!` ring buffer, lock-free atomic head/tail, drained via `flowrulz_get_spans`
@@ -37,6 +37,8 @@ make clean     # cargo clean + remove binary
 
 | Layer | Dir | Description |
 |---|---|---|
+| EventBus (interface) | `go/pkg/transport/eventbus.go` | Canonical `EventBus` interface — `Publish`, `Subscribe`, `Request`, `Reply`, `Broadcast` |
+| EventBus (impl) | `simulator/eventbus/` | In-memory pub/sub with Go channels: Publish, Subscribe, Request/Reply, Broadcast, Delay, Drop, Duplicate |
 | Event | `rust/src/bytecode/event.rs` | `Event` + `Mode` — universal message type |
 | Execution | `rust/src/bytecode/execution.rs` | `ExecutionContext` — body + variables + outputs |
 | DSL | `rust/src/dsl/` | Lexer → Parser → Optimizer → Compiler |
@@ -132,31 +134,34 @@ All endpoints (except `/health`) require `Authorization: Bearer <FLOWRULZ_API_KE
 
 ## Progress
 ### Done
-- Added `ResultCh` + `Output` fields to `ExecutionContext` for client result delivery.
-- Added `sendResult()` helper to `Scheduler` — sends result to channel on completion/failure.
-- Added `Client` type in `simulator/client.go` with `Send()`, `RegisterService()`, `AddRule()`, `Plans()`, `Services()`.
-- Simulator extracted from `go/simulator/` to `simulator/` at project root.
-- Bridge moved from `go/internal/bridge/` to `go/bridge/` (needed to allow import from outside `go/`).
-- `sendResult` fires on all exit paths (stop, error, done) in both `executeContext` and `executeBridge`.
-- `PlanCache.List()` method added.
-- `Scheduler.Stop()` made idempotent (stopped bool guard).
-- All 4 client tests pass: Send with bridge rule, rule not found, AddRule across nodes, RegisterService.
-- Admin API endpoints for interactive mode: `POST /api/admin/send`, `GET|POST /api/admin/rules`, `GET|POST /api/admin/services`. Registered on dashboard mux via `RegisterAdminHandlers()`.
-- `Dashboard.AddHandler()` hook for injecting extra HTTP routes.
-- `--interactive` flag on simulator CLI: no auto-stop, runs until Ctrl+C, admin API available on dashboard port.
-- 22 Go packages (14 prod + 8 simulator), `go vet ./go/... ./simulator/...` clean.
+- In-memory EventBus: Go channel pub/sub with Publish, Subscribe, Request/Reply, Broadcast, Delay, Drop, Duplicate. 12 tests covering delivery, timeout, unsubscribe, delayed delivery, duplicate, close semantics, topic isolation.
+- EventBus wired into simulator: `Client.Send()` uses `Bus.Request("execution", msg)` → scheduler subscribers receive → execute → reply. Replaces direct scheduler dispatch for interactive/API usage.
+- Animated execution graph dashboard: SVG service DAG with active path highlighting, pulsing execution dots, real-time refresh
+- Dashboard API: `/api/executions` (list all), `/api/executions/{id}` (per-execution), `/api/metrics` (latency/throughput/counts), `/api/nodes` (per-node queues), `/api/events` (timeline), `/api/stats` (event type counts)
+- Service latency cards with p50/p95/error rate + bar chart
+- Execution flow visualization per execution: service list, status badges (completed/failed/running), event count
+- Per-node queue bars (ready/waiting) in sidebar
+- Event type distribution in sidebar
+- `fmt()` JS helper properly converts Go nanosecond durations to human-readable ms/µs/s
+- `handleExecutions` endpoint groups timeline events by execution, extracts service list and status
+- Both `sim` (in-memory EventBus based simulator) and `flowrulz` (Kafka + Rust VM production node) binaries build and work independently
+- 23 Go packages (15 prod + 8 simulator), `go vet ./go/... ./simulator/...` clean
+
+### In Progress
+- (none)
 
 ### Next Steps
-1. Let user write sender/receiver code using `Client.Send()` + `Client.RegisterService()` + `Client.AddRule()`.
-2. Wire rule deployment through admin API + plan distribution for end-to-end test.
-3. Full test suite after each change.
+1. Add chaos scenario types: Network Delay, Duplicate Messages, Slow Consumer, Retry Storm, Node Failure
+2. Build Scenario composition framework — combine multiple scenarios in sequence/parallel
+3. Add event-sourcing export for scenario runs (JSON log of every event)
+4. Add Planner diff visualization — compare `flowrulz simulate` runs side-by-side
 
 ## Admin API (Interactive Mode)
 
 Start the simulator in interactive mode:
 ```bash
 make sim
-./simulator --interactive --dashboard-addr :8081
+./sim --interactive --dashboard-addr :8081
 ```
 
 Then use curl to interact:

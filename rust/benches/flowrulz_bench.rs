@@ -1,5 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
+use flowrulz_core::bytecode::execution::ExecutionContext;
 use flowrulz_core::bytecode::plan::ExecutionPlan;
 use flowrulz_core::dsl::{compiler, lexer, optimizer, parser};
 
@@ -39,14 +40,15 @@ fn bench_compile(c: &mut Criterion) {
 
 fn bench_vm_execute(c: &mut Criterion) {
     let plan = compile_plan("t500 n:validate");
-    let body = b"{\"type\":\"ORDER\",\"amount\":500}";
 
     let mut group = c.benchmark_group("vm_execute");
     group.bench_with_input("simple_next", &plan, |b, plan| {
         b.iter(|| {
+            let body = b"{\"type\":\"ORDER\",\"amount\":500}";
             let arena = flowrulz_core::memory::arena::Arena::new();
             let caller = |_svc_id: u16, body: &[u8], _timeout: u64| Ok(body.to_vec());
-            let mut vm = flowrulz_core::executor::VM::new(plan, black_box(body), arena, &caller);
+            let ctx = ExecutionContext::from_body(black_box(body).to_vec());
+            let mut vm = flowrulz_core::executor::VM::new(plan, ctx, arena, &caller);
             vm.run().unwrap();
         });
     });
@@ -56,14 +58,15 @@ fn bench_vm_execute(c: &mut Criterion) {
 fn bench_full_pipeline(c: &mut Criterion) {
     let dsl = "t500 n:validate t1000 p:fraud,inventory c f:dlq n:fulfill e:notify,analytics";
     let plan = compile_plan(dsl);
-    let body = b"{\"type\":\"ORDER\",\"amount\":500,\"user\":\"alice\"}";
 
     let mut group = c.benchmark_group("full_pipeline");
     group.bench_with_input("standard", &plan, |b, plan| {
         b.iter(|| {
+            let body = b"{\"type\":\"ORDER\",\"amount\":500,\"user\":\"alice\"}";
             let arena = flowrulz_core::memory::arena::Arena::new();
             let caller = |_svc_id: u16, body: &[u8], _timeout: u64| Ok(body.to_vec());
-            let mut vm = flowrulz_core::executor::VM::new(plan, black_box(body), arena, &caller);
+            let ctx = ExecutionContext::from_body(black_box(body).to_vec());
+            let mut vm = flowrulz_core::executor::VM::new(plan, ctx, arena, &caller);
             vm.run().unwrap();
         });
     });
@@ -73,14 +76,15 @@ fn bench_full_pipeline(c: &mut Criterion) {
 fn bench_gate_eval(c: &mut Criterion) {
     let dsl = "g:amount>10000 n:validate";
     let plan = compile_plan(dsl);
-    let body = b"{\"amount\":15000}";
 
     let mut group = c.benchmark_group("gate_eval");
     group.bench_with_input("true_branch", &plan, |b, plan| {
         b.iter(|| {
+            let body = b"{\"amount\":15000}";
             let arena = flowrulz_core::memory::arena::Arena::new();
             let caller = |_svc_id: u16, body: &[u8], _timeout: u64| Ok(body.to_vec());
-            let mut vm = flowrulz_core::executor::VM::new(plan, black_box(body), arena, &caller);
+            let ctx = ExecutionContext::from_body(black_box(body).to_vec());
+            let mut vm = flowrulz_core::executor::VM::new(plan, ctx, arena, &caller);
             vm.run().unwrap();
         });
     });
@@ -90,14 +94,15 @@ fn bench_gate_eval(c: &mut Criterion) {
 fn bench_dag(c: &mut Criterion) {
     let dsl = "dag:{A:[B,C],D:[A]} e:audit";
     let plan = compile_plan(dsl);
-    let body = b"{\"x\":1}";
 
     let mut group = c.benchmark_group("dag");
     group.bench_with_input("4_node", &plan, |b, plan| {
         b.iter(|| {
+            let body = b"{\"x\":1}";
             let arena = flowrulz_core::memory::arena::Arena::new();
             let caller = |_svc_id: u16, body: &[u8], _timeout: u64| Ok(body.to_vec());
-            let mut vm = flowrulz_core::executor::VM::new(plan, black_box(body), arena, &caller);
+            let ctx = ExecutionContext::from_body(black_box(body).to_vec());
+            let mut vm = flowrulz_core::executor::VM::new(plan, ctx, arena, &caller);
             vm.run().unwrap();
         });
     });

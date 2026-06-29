@@ -20,14 +20,15 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/premchandkpc/FlowRulZ/go/internal/admin"
 	"github.com/premchandkpc/FlowRulZ/go/bridge"
+	"github.com/premchandkpc/FlowRulZ/go/internal/admin"
 	"github.com/premchandkpc/FlowRulZ/go/internal/compiler"
 	"github.com/premchandkpc/FlowRulZ/go/internal/engine"
 	"github.com/premchandkpc/FlowRulZ/go/internal/execstate"
 	"github.com/premchandkpc/FlowRulZ/go/internal/membership"
 	"github.com/premchandkpc/FlowRulZ/go/internal/observability"
 	"github.com/premchandkpc/FlowRulZ/go/internal/plandist"
+	"github.com/premchandkpc/FlowRulZ/go/internal/plugins"
 	"github.com/premchandkpc/FlowRulZ/go/internal/registry"
 	"github.com/premchandkpc/FlowRulZ/go/internal/reliability"
 	"github.com/premchandkpc/FlowRulZ/go/internal/replyrouter"
@@ -97,6 +98,7 @@ type Config struct {
 	HTTPAddr      string
 	GRPCAddr      string
 	CompilerAddr  string
+	PluginDir     string
 	Topic         string
 	NodeID        string
 	Seeds         []string
@@ -213,6 +215,16 @@ func New(cfg *Config) *ExecutionNode {
 
 	if ep := os.Getenv("FLOWRULZ_OTEL_ENDPOINT"); ep != "" {
 		en.OtelExporter = observability.NewSpanExporter(ep)
+	}
+
+	if cfg.PluginDir != "" {
+		if err := plugins.LoadDir(cfg.PluginDir); err != nil {
+			log.Printf("[execnode] plugin load warning: %v", err)
+		}
+	} else if pd := os.Getenv("FLOWRULZ_PLUGIN_DIR"); pd != "" {
+		if err := plugins.LoadDir(pd); err != nil {
+			log.Printf("[execnode] plugin load warning: %v", err)
+		}
 	}
 
 	return en

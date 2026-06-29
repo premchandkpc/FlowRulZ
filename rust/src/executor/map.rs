@@ -1,4 +1,5 @@
 use super::expr;
+use super::plugin;
 use crate::bytecode::instruction::Instruction;
 use crate::bytecode::plan::ExecutionPlan;
 use crate::bytecode::resolved_type::ResolvedType;
@@ -10,6 +11,11 @@ pub fn exec_map<'a>(
     arena: &'a crate::memory::arena::Arena,
 ) -> Result<&'a mut [u8], String> {
     let expr_str = plan.const_pool.get(instr.a);
+
+    if expr_str.starts_with("w:") {
+        let result = plugin::call_plugin(expr_str, body)?;
+        return Ok(arena.alloc_copy(&result));
+    }
 
     if let Some(ref schema) = plan.schema {
         if let Some(field) = expr_str.strip_prefix('.') {

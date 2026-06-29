@@ -301,6 +301,16 @@ fn classify(word: &str) -> Result<Token, LexError> {
             }
             Ok(Token::Map(expr))
         }
+        b'w' => {
+            if word.len() < 3 || &word[1..2] != ":" {
+                return Err(LexError::UnknownToken(word.to_string()));
+            }
+            let expr = word.to_string();
+            if expr.is_empty() {
+                return Err(LexError::EmptyOperand(word.to_string()));
+            }
+            Ok(Token::Map(expr))
+        }
         b'e' => {
             if word.len() < 3 || &word[1..2] != ":" {
                 return Err(LexError::UnknownToken(word.to_string()));

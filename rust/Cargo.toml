@@ -24,6 +24,7 @@ wasmtime = "24"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+wat = "1"
 
 [[bench]]
 name = "flowrulz_bench"

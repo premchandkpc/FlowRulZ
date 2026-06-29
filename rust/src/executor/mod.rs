@@ -7,6 +7,7 @@ pub mod gate;
 pub mod helpers;
 pub mod map;
 pub mod next;
+pub mod plugin;
 pub mod parallel;
 pub mod runtime;
 

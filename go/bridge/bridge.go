@@ -51,6 +51,8 @@ int flowrulz_execute_step(
 int flowrulz_plan_services(const unsigned char* plan_ptr, size_t plan_len, unsigned char* out_ptr, size_t out_cap, size_t* out_len);
 uint32_t flowrulz_plan_complexity(const unsigned char* plan_ptr, size_t plan_len);
 
+int flowrulz_register_plugin(const unsigned char* name_ptr, size_t name_len, const unsigned char* wasm_ptr, size_t wasm_len);
+
 caller_cb_t getCallerBridgePtr(void);
 */
 import "C"
@@ -382,6 +384,24 @@ func copyBytes(buf []byte, n int) []byte {
 	out := make([]byte, n)
 	copy(out, buf[:n])
 	return out
+}
+
+func RegisterPlugin(name string, wasmBytes []byte) error {
+	if len(name) == 0 {
+		return fmt.Errorf("register plugin: empty name")
+	}
+	if len(wasmBytes) == 0 {
+		return fmt.Errorf("register plugin '%s': empty wasm bytes", name)
+	}
+	nameBytes := []byte(name)
+	rc := C.flowrulz_register_plugin(
+		(*C.uchar)(unsafe.Pointer(&nameBytes[0])), C.size_t(len(nameBytes)),
+		(*C.uchar)(unsafe.Pointer(&wasmBytes[0])), C.size_t(len(wasmBytes)),
+	)
+	if rc != 0 {
+		return fmt.Errorf("register plugin '%s': ffi error %d", name, rc)
+	}
+	return nil
 }
 
 func PlanComplexity(plan []byte) uint32 {

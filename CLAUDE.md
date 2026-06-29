@@ -1,6 +1,24 @@
 # FlowRulZ
 
-Distributed execution runtime. Pub/Sub, RPC, workflows, and rules are all execution plans running on the same VM.
+Distributed Rule Broker — a unified execution runtime combining service discovery, rule engine, scheduler, router, and message broker. Services self-register with their capabilities; rules route events between them.
+
+```
+                 Producer
+                     │
+                     ▼
+        ┌─────────────────────┐
+        │      FlowRulZ       │
+        │  Registry · Rules   │
+        │  Runtime · Router   │
+        │  Scheduler · Queue  │
+        └──────────┬──────────┘
+                   │
+       ┌─────┬─────┼──────┬──────┐
+       │     │     │      │      │
+    Payment Email Fraud Inventory ...
+```
+
+Services register themselves (`POST /register` with methods, version, protocol, zone). Rules reference them by name (`n:payment`). FlowRulZ resolves → load-balances → calls → routes → response. No service knows about any other service.
 
 > **AI rules** — On each conversation start, read `docs/` dir. After any code change, update relevant `.md` files in `docs/` to stay in sync. Never let docs go stale.
 
@@ -18,12 +36,13 @@ make clean     # cargo clean + remove binary
 
 - **Control Plane** (Go): Rule registry, DSL compiler, scheduling, leader election. Simple single-leader — no Raft. No WAL/storage beyond rules JSON file.
 - **Data Plane** (Go + Rust): Partition workers, ExecutionRuntime, service callers, span collection. Multiple nodes scale horizontally.
-- **Execution Node** (`go/internal/execnode/`): process wrapping Engine + Bridge + Runtime + PlanDistributor + transport consumers + admin HTTP. Leader/follower role via `SetLeader()`/`IsLeader()`. Leader distributes plans via `Engine.AfterDeploy`/`AfterPromote` hooks that call `PlanDist.PublishPlan()` + ACK quorum + `ActivatePlan()`.
+- **Execution Node** (`go/internal/execnode/`): process wrapping Engine + Bridge + Runtime + Registry + PlanDistributor + transport consumers + admin HTTP. Leader/follower role via `SetLeader()`/`IsLeader()`. Leader distributes plans via `Engine.AfterDeploy`/`AfterPromote` hooks that call `PlanDist.PublishPlan()` + ACK quorum + `ActivatePlan()`.
+- **Service Registry** (`go/internal/registry/`): Rich registry — services self-register with `ServiceInstance` (ID, name, version, methods, capabilities, endpoint, zone, weight, tags, metadata, heartbeat). Two registration paths: legacy `Register(name, endpoint)` and rich `RegisterInstance(inst)`. Heartbeat expiry (default 30s) marks unhealthy. LB strategies: random, round-robin, least-loaded, local-prefer.
+- **Registration API**: `POST /register` (service announces name, version, methods, address, port, protocol, zone, weight) and `POST /heartbeat` (keeps instance alive). `GET /services` lists all registered services with full instance details.
 - **EventBus** (`go/pkg/transport/eventbus.go`) is the canonical pub/sub abstraction; `Message`, `Handler`, `Subscription` types are shared across `go/` and `simulator/`. **Kafka** (`go/internal/transport/`) is a legacy transport implementation — one consumer group with programmable execution
 - C FFI prefix: `flowrulz_` — all exported functions use `#[no_mangle] pub extern "C"`
 - Bridge: `sync.Map callerMap` + `atomic.Uint64 nextExecID` — no mutex in hot path
 - Span tracing: `thread_local!` ring buffer, lock-free atomic head/tail, drained via `flowrulz_get_spans`
-- **Service Registry** (`go/internal/registry/`): Maps service names → healthy endpoints, round-robin/random/least-loaded LB, passive+active health checks
 - **Reply Router** (`go/internal/replyrouter/`): Per-node pending request tracker by correlation_id, timeout-based cleanup, duplicate detection
 - **Scheduler** (`go/internal/scheduler/`): Lane-based priority queues (fast/normal/heavy), semaphore-based concurrency limits, reject-on-full backpressure
 - **Plan Distribution** (`go/internal/plandist/`): Leader publishes plans to `_flowrulz_plans`, followers ACK on `_flowrulz_acks`, quorum-based activation with `WaitForAcks`. Wired in execnode via `handlePlanMessage`/`handleAckMessage` — plan/ack consumers listen on `_flowrulz_plans`/`_flowrulz_acks`, call `Engine.AddVersion()` for "plan" type and `Engine.Promote()` for "activate". Term-based rejection prevents stale plans.
@@ -52,7 +71,7 @@ make clean     # cargo clean + remove binary
 | Admin | `go/internal/admin/` | HTTP API with API key auth, rule CRUD, validate, lanes |
 | SDK | `go/flow/` | Client SDK — `Publish`, `Request`, `Execute`, `Stream` |
 | Simulator | `simulator/` | Simulator for testing rules, services, and cluster behavior |
-| Registry | `go/internal/registry/` | `ServiceRegistry` — service name → healthy endpoints, LB, health checks |
+| Registry | `go/internal/registry/` | `ServiceRegistry` — service name → healthy endpoints, LB, health checks. Rich model: `ServiceInstance` with methods, version, capabilities, zone, weight, tags |
 | ReplyRouter | `go/internal/replyrouter/` | `ReplyRouter` — correlation ID → pending request channel, timeout/cleanup |
 | Scheduler | `go/internal/scheduler/` | Priority queue per lane (fast/normal/heavy), semaphore-based concurrency limits, reject-on-full backpressure |
 | PlanDist | `go/internal/plandist/` | `PlanDistributor` — plan/ack topics, versioned ACK quorum, activation |

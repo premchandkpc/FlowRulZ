@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 
 	"github.com/premchandkpc/FlowRulZ/go/bridge"
+	"github.com/premchandkpc/FlowRulZ/go/internal/compiler"
 )
 
 type Lane string
@@ -68,14 +69,21 @@ type Engine struct {
 	nextVersion atomic.Uint64
 	persistPath string
 
+	compiler compiler.Compiler
+
 	AfterDeploy  func(id, dsl string, plan []byte, version uint64)
 	AfterPromote func(id string, version uint64)
 }
 
 func New(persistPath string) *Engine {
+	return NewWithCompiler(persistPath, compiler.NewLocal())
+}
+
+func NewWithCompiler(persistPath string, comp compiler.Compiler) *Engine {
 	e := &Engine{
 		rules:       make(map[string]*Rule),
 		persistPath: persistPath,
+		compiler:    comp,
 	}
 	if persistPath != "" {
 		e.loadRules()
@@ -111,12 +119,12 @@ func (e *Engine) loadRules() {
 			ActiveVersion: len(r.Versions) - 1,
 		}
 		for i, v := range r.Versions {
-			plan, err := bridge.Compile(v.DSL, r.ID)
+			result, err := e.compiler.Compile(v.DSL, r.ID)
 			if err != nil {
 				continue
 			}
 			rule.Versions[i] = &VersionedPlan{
-				Plan:    plan,
+				Plan:    result.Plan,
 				DSL:     v.DSL,
 				Version: v.Version,
 				Lane:    v.Lane,
@@ -163,16 +171,15 @@ func (e *Engine) saveRules() {
 }
 
 func (e *Engine) Deploy(id, dsl string) error {
-	plan, err := bridge.Compile(dsl, id)
+	result, err := e.compiler.Compile(dsl, id)
 	if err != nil {
 		return err
 	}
-	score := bridge.PlanComplexity(plan)
 	vp := &VersionedPlan{
-		Plan:    plan,
+		Plan:    result.Plan,
 		DSL:     dsl,
 		Version: e.nextVersion.Add(1),
-		Lane:    LaneForScore(score),
+		Lane:    LaneForScore(result.Complexity),
 	}
 	e.mu.Lock()
 	r, ok := e.rules[id]
@@ -186,7 +193,7 @@ func (e *Engine) Deploy(id, dsl string) error {
 	e.saveRules()
 
 	if e.AfterDeploy != nil {
-		e.AfterDeploy(id, dsl, plan, vp.Version)
+		e.AfterDeploy(id, dsl, result.Plan, vp.Version)
 	}
 	return nil
 }

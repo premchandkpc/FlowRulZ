@@ -313,6 +313,34 @@ func TestExecuteWithMethodSyntax(t *testing.T) {
 	}
 }
 
+func TestParseCompensationNoCompensator(t *testing.T) {
+	svc, method, comp, compM := ParseCompensation("payment.authorize")
+	if svc != "payment" || method != "authorize" || comp != "" || compM != "" {
+		t.Fatalf("expected ('payment','authorize','',''), got (%q,%q,%q,%q)", svc, method, comp, compM)
+	}
+}
+
+func TestParseCompensationSameService(t *testing.T) {
+	svc, method, comp, compM := ParseCompensation("payment.authorize:refund")
+	if svc != "payment" || method != "authorize" || comp != "payment" || compM != "refund" {
+		t.Fatalf("expected ('payment','authorize','payment','refund'), got (%q,%q,%q,%q)", svc, method, comp, compM)
+	}
+}
+
+func TestParseCompensationCrossService(t *testing.T) {
+	svc, method, comp, compM := ParseCompensation("payment.authorize:inventory.restock")
+	if svc != "payment" || method != "authorize" || comp != "inventory" || compM != "restock" {
+		t.Fatalf("expected ('payment','authorize','inventory','restock'), got (%q,%q,%q,%q)", svc, method, comp, compM)
+	}
+}
+
+func TestParseCompensationNoMethod(t *testing.T) {
+	svc, method, comp, compM := ParseCompensation("payment:refund")
+	if svc != "payment" || method != "" || comp != "payment" || compM != "refund" {
+		t.Fatalf("expected ('payment','','payment','refund'), got (%q,%q,%q,%q)", svc, method, comp, compM)
+	}
+}
+
 func TestExecuteWithPartialContext(t *testing.T) {
 	plan, err := Compile("n:validate", "test-partial")
 	if err != nil {

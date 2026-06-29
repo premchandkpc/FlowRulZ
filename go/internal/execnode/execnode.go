@@ -12,14 +12,19 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/premchandkpc/FlowRulZ/go/internal/admin"
 	"github.com/premchandkpc/FlowRulZ/go/bridge"
+	"github.com/premchandkpc/FlowRulZ/go/internal/compiler"
 	"github.com/premchandkpc/FlowRulZ/go/internal/engine"
+	"github.com/premchandkpc/FlowRulZ/go/internal/execstate"
 	"github.com/premchandkpc/FlowRulZ/go/internal/membership"
 	"github.com/premchandkpc/FlowRulZ/go/internal/observability"
 	"github.com/premchandkpc/FlowRulZ/go/internal/plandist"
@@ -28,6 +33,7 @@ import (
 	"github.com/premchandkpc/FlowRulZ/go/internal/replyrouter"
 	"github.com/premchandkpc/FlowRulZ/go/internal/scheduler"
 	"github.com/premchandkpc/FlowRulZ/go/internal/transport"
+	grpctransport "github.com/premchandkpc/FlowRulZ/go/internal/transport/grpc"
 )
 
 const (
@@ -63,6 +69,8 @@ type ExecutionNode struct {
 
 	circuitBreakers sync.Map  // svcName string → *reliability.CircuitBreaker
 
+	Saga *reliability.SagaTracker
+
 	consumers   []transport.MessageConsumer
 	producers   []transport.MessageProducer
 	httpAddr    string
@@ -76,11 +84,18 @@ type ExecutionNode struct {
 	clusterTerm uint64 // atomic: managed via LoadUint64/StoreUint64
 
 	membersProducer transport.MessageProducer
+
+	StateStore *execstate.FileStore
+
+	GRPCBus *grpctransport.GRPCBus
 }
 
 type Config struct {
 	PersistPath   string
+	ExecStateDir  string
 	HTTPAddr      string
+	GRPCAddr      string
+	CompilerAddr  string
 	Topic         string
 	NodeID        string
 	Seeds         []string
@@ -117,7 +132,11 @@ func New(cfg *Config) *ExecutionNode {
 		Registry:   registry.New(),
 	}
 
-	en.Engine = engine.New(cfg.PersistPath)
+	if cfg.CompilerAddr != "" {
+		en.Engine = engine.NewWithCompiler(cfg.PersistPath, compiler.NewRemote(cfg.CompilerAddr))
+	} else {
+		en.Engine = engine.New(cfg.PersistPath)
+	}
 	en.Metrics = observability.NewMetricsCollector()
 	en.Scheduler = scheduler.New(nil)
 	en.ReplyRouter = replyrouter.New(
@@ -145,7 +164,11 @@ func New(cfg *Config) *ExecutionNode {
 		plandist.WithQuorumProvider(en.Membership),
 	)
 
-	en.AdminSrv = admin.New(en.Engine)
+	if cfg.CompilerAddr != "" {
+		en.AdminSrv = admin.NewWithCompiler(en.Engine, compiler.NewRemote(cfg.CompilerAddr))
+	} else {
+		en.AdminSrv = admin.New(en.Engine)
+	}
 	en.AdminSrv.RegisterDLQ(en.DLQ)
 
 	en.Engine.AfterDeploy = func(id, dsl string, plan []byte, version uint64) {
@@ -166,7 +189,26 @@ func New(cfg *Config) *ExecutionNode {
 	en.producers = append(en.producers, dlqProducer, planProducer, ackProducer, en.membersProducer)
 	en.mu.Unlock()
 
+	execDir := cfg.ExecStateDir
+	if execDir == "" {
+		execDir = filepath.Join(os.TempDir(), "flowrulz-execstate")
+	}
+	store, err := execstate.NewFileStore(execDir)
+	if err != nil {
+		log.Printf("execstate: init warning: %v", err)
+	}
+	en.StateStore = store
+
+	en.Saga = reliability.NewSagaTracker(func(svc, method string, body []byte) error {
+		_, err := en.callService(svc, method, body)
+		return err
+	})
+
 	en.Registry.SetHeartbeatTimeout(30 * time.Second)
+
+	if cfg.GRPCAddr != "" {
+		en.GRPCBus = grpctransport.NewGRPCBus(cfg.GRPCAddr)
+	}
 
 	return en
 }
@@ -432,18 +474,47 @@ func (en *ExecutionNode) callService(svcName, method string, body []byte) ([]byt
 }
 
 func (en *ExecutionNode) executePlan(plan []byte, body []byte) ([]byte, error) {
-	svcMap := make(map[uint16]string)
+	names := make(map[uint16]string)
 	if entries, err := bridge.PlanServices(plan); err == nil {
 		for _, e := range entries {
-			svcMap[e.ID] = e.Name
+			names[e.ID] = e.Name
 		}
 	}
 
-	var ctxBytes, respBytes []byte
+	execID := uuid.New().String()
+	now := time.Now().UTC()
+
+	st := &execstate.State{
+		ID:        execID,
+		PlanBytes: plan,
+		Status:    execstate.StatusCreated,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if en.StateStore != nil {
+		en.StateStore.Create(context.Background(), st)
+	}
+
+	out, err := en.runSteps(execID, plan, names, nil, nil, st)
+	if en.StateStore != nil {
+		if err != nil {
+			st.Status = execstate.StatusFailed
+			st.Error = err.Error()
+			en.StateStore.Save(context.Background(), st)
+		} else {
+			en.StateStore.Delete(context.Background(), execID)
+		}
+	}
+	return out, err
+}
+
+func (en *ExecutionNode) runSteps(execID string, plan []byte, names map[uint16]string, startCtx, startResp []byte, st *execstate.State) ([]byte, error) {
+	ctxBytes, respBytes := startCtx, startResp
 
 	for step := 0; step < 1000; step++ {
 		out, err := bridge.ExecuteStep(plan, ctxBytes, respBytes, nil)
 		if err != nil {
+			en.tryCompensate(execID)
 			return nil, fmt.Errorf("step %d: %w", step, err)
 		}
 
@@ -452,27 +523,134 @@ func (en *ExecutionNode) executePlan(plan []byte, body []byte) ([]byte, error) {
 		switch out.Result {
 		case bridge.StepDone:
 			observability.RecordExec("completed")
+			if en.Saga != nil {
+				en.Saga.Clear(execID)
+			}
 			return out.Output, nil
 
 		case bridge.StepPending:
 			observability.RecordExec("svc_pending")
-			rawName, ok := svcMap[out.PendingSvc]
+			if en.StateStore != nil {
+				st.Status = execstate.StatusWaitingForService
+				st.PendingSvc = out.PendingSvc
+				st.PendingBody = out.PendingBody
+				st.CtxBytes = ctxBytes
+				en.StateStore.Save(context.Background(), st)
+			}
+
+			rawName, ok := names[out.PendingSvc]
 			if !ok {
 				rawName = fmt.Sprintf("svc-%d", out.PendingSvc)
 			}
-			svcName, method := bridge.ParseServiceMethod(rawName)
+			svcName, method, compSvc, compMethod := bridge.ParseCompensation(rawName)
+
+			if en.Saga != nil && compSvc != "" {
+				en.Saga.RegisterStep(execID, reliability.SagaStep{
+					ServiceName: svcName,
+					Method:      method,
+					Body:        out.PendingBody,
+					CompSvc:     compSvc,
+					CompMethod:  compMethod,
+				})
+			}
+
 			resp, err := en.callService(svcName, method, out.PendingBody)
 			if err != nil {
+				en.tryCompensate(execID)
 				return nil, fmt.Errorf("service %s: %w", svcName, err)
+			}
+
+			if en.StateStore != nil {
+				st.Status = execstate.StatusRunning
+				st.PendingSvc = 0
+				st.PendingBody = nil
+				st.CtxBytes = ctxBytes
+				en.StateStore.Save(context.Background(), st)
 			}
 			respBytes = resp
 
 		case bridge.StepContinue:
 			respBytes = nil
+			if en.StateStore != nil {
+				st.Status = execstate.StatusRunning
+				st.CtxBytes = ctxBytes
+				en.StateStore.Save(context.Background(), st)
+			}
 		}
 	}
 
+	en.tryCompensate(execID)
 	return nil, fmt.Errorf("execution exceeded max steps")
+}
+
+func (en *ExecutionNode) tryCompensate(execID string) {
+	if en.Saga == nil {
+		return
+	}
+	if err := en.Saga.Compensate(execID); err != nil {
+		log.Printf("saga: compensation error for %s: %v", execID, err)
+	}
+}
+
+func (en *ExecutionNode) recoverInFlight(ctx context.Context) {
+	if en.StateStore == nil {
+		return
+	}
+
+	inflight, err := en.StateStore.List(ctx, execstate.StatusRunning, execstate.StatusWaitingForService)
+	if err != nil {
+		log.Printf("recovery: list error: %v", err)
+		return
+	}
+
+	for _, st := range inflight {
+		go en.recoverExecution(st)
+	}
+}
+
+func (en *ExecutionNode) recoverExecution(st *execstate.State) {
+	log.Printf("recovery: resuming execution %s (status=%s, rule=%s)", st.ID, st.Status, st.RuleID)
+
+	names := make(map[uint16]string)
+	if entries, err := bridge.PlanServices(st.PlanBytes); err == nil {
+		for _, e := range entries {
+			names[e.ID] = e.Name
+		}
+	}
+
+	var startResp []byte
+	if st.Status == execstate.StatusWaitingForService {
+		rawName, ok := names[st.PendingSvc]
+		if !ok {
+			rawName = fmt.Sprintf("svc-%d", st.PendingSvc)
+		}
+		svcName, method := bridge.ParseServiceMethod(rawName)
+		resp, err := en.callService(svcName, method, st.PendingBody)
+		if err != nil {
+			log.Printf("recovery: exec %s service %s retry failed: %v", st.ID, svcName, err)
+			st.Status = execstate.StatusFailed
+			st.Error = fmt.Sprintf("recovery retry: %v", err)
+			en.StateStore.Save(context.Background(), st)
+			return
+		}
+		startResp = resp
+		st.Status = execstate.StatusRunning
+		st.PendingSvc = 0
+		st.PendingBody = nil
+		en.StateStore.Save(context.Background(), st)
+	}
+
+	out, err := en.runSteps(st.ID, st.PlanBytes, names, st.CtxBytes, startResp, st)
+	if err != nil {
+		log.Printf("recovery: exec %s failed: %v", st.ID, err)
+		st.Status = execstate.StatusFailed
+		st.Error = err.Error()
+		en.StateStore.Save(context.Background(), st)
+		return
+	}
+
+	log.Printf("recovery: exec %s completed (%d bytes)", st.ID, len(out))
+	en.StateStore.Delete(context.Background(), st.ID)
 }
 
 func (en *ExecutionNode) executeAll(body []byte) ([][]byte, error) {
@@ -562,6 +740,14 @@ func (en *ExecutionNode) Start() {
 
 	en.Registry.StartHeartbeatChecker(en.stopHb)
 
+	en.recoverInFlight(ctx)
+
+	if en.GRPCBus != nil {
+		if err := en.GRPCBus.Start(); err != nil {
+			log.Printf("grpc: start error: %v", err)
+		}
+	}
+
 	mux := http.NewServeMux()
 	mux.Handle("/admin/", http.StripPrefix("/admin", en.AdminSrv.Handler()))
 	mux.HandleFunc("/register", en.Registry.RegisterHTTPHandler)
@@ -619,6 +805,14 @@ func (en *ExecutionNode) Shutdown() {
 		if err := en.HTTP.Shutdown(shutdownCtx); err != nil {
 			log.Printf("http shutdown error: %v", err)
 		}
+	}
+
+	if en.GRPCBus != nil {
+		en.GRPCBus.Stop()
+	}
+
+	if en.StateStore != nil {
+		en.StateStore.Close()
 	}
 
 	close(en.shutdownCh)

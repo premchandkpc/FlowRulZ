@@ -1,0 +1,64 @@
+syntax = "proto3";
+package flowrulz;
+option go_package = "github.com/premchandkpc/FlowRulZ/go/internal/transport/grpc;grpctransport";
+
+import "google/protobuf/timestamp.proto";
+
+message BusMessage {
+  string id = 1;
+  int32 type = 2;
+  string topic = 3;
+  bytes body = 4;
+  map<string, string> headers = 5;
+  string correlation_id = 6;
+  string reply_to = 7;
+  google.protobuf.Timestamp created_at = 8;
+  int64 delay_nanos = 9;
+  string partition_key = 10;
+  map<string, bytes> metadata = 11;
+}
+
+service EventBus {
+  rpc Publish(PublishRequest) returns (PublishResponse);
+  rpc Request(RequestRequest) returns (RequestResponse);
+  rpc Reply(ReplyRequest) returns (ReplyResponse);
+  rpc Subscribe(SubscribeRequest) returns (stream BusMessage);
+  rpc Broadcast(BroadcastRequest) returns (BroadcastResponse);
+}
+
+message PublishRequest {
+  string topic = 1;
+  BusMessage msg = 2;
+}
+
+message PublishResponse {}
+
+message SubscribeRequest {
+  string topic = 1;
+  string sub_id = 2;
+}
+
+message RequestRequest {
+  string topic = 1;
+  BusMessage msg = 2;
+  int64 timeout_ms = 3;
+}
+
+message RequestResponse {
+  BusMessage msg = 1;
+}
+
+message ReplyRequest {
+  string topic = 1;
+  string correlation_id = 2;
+  BusMessage msg = 3;
+}
+
+message ReplyResponse {}
+
+message BroadcastRequest {
+  string topic = 1;
+  BusMessage msg = 2;
+}
+
+message BroadcastResponse {}

@@ -278,6 +278,11 @@ pub extern "C" fn flowrulz_intern_lookup(id: u16, out_ptr: *mut u8, out_len: *mu
 }
 
 #[no_mangle]
+pub extern "C" fn flowrulz_span_size() -> usize {
+    std::mem::size_of::<crate::tracing::Span>()
+}
+
+#[no_mangle]
 pub extern "C" fn flowrulz_get_spans(out_ptr: *mut u8, out_cap: usize) -> usize {
     if out_ptr.is_null() || out_cap == 0 {
         return 0;

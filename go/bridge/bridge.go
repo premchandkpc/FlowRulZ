@@ -32,6 +32,7 @@ void flowrulz_msg_release(unsigned char* ptr);
 uint16_t flowrulz_intern(const unsigned char* s_ptr, size_t s_len);
 void flowrulz_intern_lookup(uint16_t id, unsigned char* out_ptr, size_t* out_len);
 
+size_t flowrulz_span_size(void);
 size_t flowrulz_get_spans(unsigned char* out_ptr, size_t out_cap);
 
 int flowrulz_execute_step(
@@ -225,6 +226,10 @@ func InternLookup(id uint16) string {
 	return string(buf[:outLen])
 }
 
+func SpanSize() int {
+	return int(C.flowrulz_span_size())
+}
+
 func GetSpans() []byte {
 	buf := make([]byte, 4096)
 	n := C.flowrulz_get_spans((*C.uchar)(unsafe.Pointer(&buf[0])), C.size_t(cap(buf)))
@@ -243,6 +248,30 @@ func ParseServiceMethod(s string) (service, method string) {
 		return s[:idx], s[idx+1:]
 	}
 	return s, ""
+}
+
+// ParseCompensation splits "service.method:compensator" into
+// ("service", "method", "compensator", "compMethod").
+// If the compensator has no dot, it's a method on the same service.
+// Usage in DSL: n:payment.authorize:refund → calls payment.authorize,
+// compensates via payment.refund on failure.
+func ParseCompensation(s string) (service, method, compensator, compMethod string) {
+	colonIdx := strings.IndexByte(s, ':')
+	if colonIdx < 0 {
+		svc, m := ParseServiceMethod(s)
+		return svc, m, "", ""
+	}
+
+	beforeColon := s[:colonIdx]
+	afterColon := s[colonIdx+1:]
+
+	svc, method := ParseServiceMethod(beforeColon)
+
+	if dot := strings.IndexByte(afterColon, '.'); dot >= 0 {
+		return svc, method, afterColon[:dot], afterColon[dot+1:]
+	}
+
+	return svc, method, svc, afterColon
 }
 
 func PlanServices(plan []byte) ([]ServiceEntry, error) {

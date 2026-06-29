@@ -8,7 +8,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/premchandkpc/FlowRulZ/go/bridge"
+	"github.com/premchandkpc/FlowRulZ/go/internal/compiler"
 	"github.com/premchandkpc/FlowRulZ/go/internal/engine"
 	"github.com/premchandkpc/FlowRulZ/go/internal/reliability"
 )
@@ -18,13 +18,22 @@ type Server struct {
 	mux       *http.ServeMux
 	apiKey    string
 	dlq       *reliability.DLQ
+	compiler  compiler.Compiler
 }
 
 func New(eng *engine.Engine) *Server {
+	return NewWithCompiler(eng, compiler.NewLocal())
+}
+
+func NewWithCompiler(eng *engine.Engine, comp compiler.Compiler) *Server {
+	if comp == nil {
+		comp = compiler.NewLocal()
+	}
 	s := &Server{
-		engine: eng,
-		mux:    http.NewServeMux(),
-		apiKey: os.Getenv("FLOWRULZ_API_KEY"),
+		engine:   eng,
+		mux:      http.NewServeMux(),
+		apiKey:   os.Getenv("FLOWRULZ_API_KEY"),
+		compiler: comp,
 	}
 	s.mux.HandleFunc("POST /rules", s.auth(s.deployRule))
 	s.mux.HandleFunc("DELETE /rules/{id}", s.auth(s.removeRule))
@@ -171,7 +180,7 @@ func (s *Server) validateRule(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	plan, err := bridge.Compile(req.DSL, "validate")
+	result, err := s.compiler.Compile(req.DSL, "validate")
 	if err != nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"valid": false,
@@ -179,11 +188,10 @@ func (s *Server) validateRule(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	score := bridge.PlanComplexity(plan)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"valid":            true,
-		"complexity_score": score,
-		"plan_bytes":       len(plan),
+		"complexity_score": result.Complexity,
+		"plan_bytes":       len(result.Plan),
 	})
 }
 

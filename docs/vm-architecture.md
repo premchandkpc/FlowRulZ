@@ -160,10 +160,11 @@ Gate on ctx.outputs["fraud"].score > 70
 3. Compare value using operator (`==`, `!=`, `>`, `<`, `>=`, `<=`, `contains`)
 4. False → set ip to jump_offset (skip to Fallback or next op)
 
-### Map (`m:expr`)
-1. Parse and evaluate expression from const pool
-2. Insert/modify fields in `ctx.body` JSON
-3. Uses `serde_json::Value` in-place mutation
+### Map / WASM (`m:expr` / `w:plugin.func`)
+1. If expression starts with `w:` → call WASM plugin via `plugin::call_plugin()`
+2. Otherwise: parse and evaluate expression from const pool
+3. Insert/modify fields in `ctx.body` JSON
+4. Uses `serde_json::Value` in-place mutation for Map; plugin returns raw bytes
 
 ### Parallel (`p:a,b,c`)
 1. Fan-out: call each service with current `ctx.body`

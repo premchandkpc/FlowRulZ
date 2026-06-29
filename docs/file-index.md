@@ -144,6 +144,17 @@ Plan/ACK consumers listen on `_flowrulz_plans`/`_flowrulz_acks` respectively, re
 
 ---
 
+### `go/internal/plugins/loader.go`
+**Package:** `plugins`
+
+WASM plugin loader. `LoadDir(dir)` scans a directory for `.wasm` files, reads each file, and registers it via `bridge.RegisterPlugin()`. The filename without extension becomes the plugin name. Skips non-existent directories with a log message.
+
+Configured via `execnode.Config.PluginDir` or `FLOWRULZ_PLUGIN_DIR` env var. Registered plugins become available in DSL as `w:<name>.<func>()`.
+
+**Exports:** `LoadDir()`
+
+---
+
 ### `go/internal/registry/registry.go`
 **Package:** `registry`
 
@@ -433,7 +444,7 @@ Event timeline store. Records all execution events (created, instruction, servic
 
 ---
 
-## Rust (35 source files)
+## Rust (37 source files)
 
 ### `rust/src/lib.rs`
 **Package:** `flowrulz_core`
@@ -455,6 +466,7 @@ C FFI boundary. All functions use `#[no_mangle] pub extern "C"` with the `flowru
 - `flowrulz_version()` — return semver string
 - `flowrulz_plan_complexity(plan)` — count instructions for lane assignment
 - `flowrulz_intern(string)` / `flowrulz_intern_lookup(id)` — string interning
+- `flowrulz_register_plugin(name, wasm_bytes)` — register a WASM plugin module by name
 
 The service call caller registers the C function pointer via `caller_cb_t` signature.
 
@@ -625,7 +637,9 @@ Emits `CompileError` with span information for all DSL-level errors.
 ### `rust/src/executor/mod.rs`
 **Package:** `flowrulz_core::executor`
 
-The `VM` struct — main execution engine. `VM::run()` loops over `plan.instructions`, calling `dispatch()` on each. Dispatch matches `OpCode` to handler functions: `Next` → `exec_next`, `Gate` → `exec_jmp_if_false`, `Dag` → `exec_dag`, `Map` → `exec_map`, `Emit` → `exec_emit`, `Drop` → halt, `Jmp` → jump, `TypeGuard` → schema validation, etc.
+The `VM` struct — main execution engine. `VM::run()` loops over `plan.instructions`, calling `dispatch()` on each. Dispatch matches `OpCode` to handler functions: `Next` → `exec_next`, `Gate` → `exec_jmp_if_false`, `Dag` → `exec_dag`, `Map` → `exec_map` (delegates `w:` prefix to plugin runtime), `Emit` → `exec_emit`, `Drop` → halt, `Jmp` → jump, `TypeGuard` → schema validation, etc.
+
+Module declarations: declares `pub mod plugin;` for WASM plugin runtime.
 
 After each dispatch, emits a `Span` (opcode, service_id, duration, status) via `crate::tracing::emit_span()`.
 
@@ -668,9 +682,24 @@ After each dispatch, emits a `Span` (opcode, service_id, duration, status) via `
 ### `rust/src/executor/map.rs`
 **Package:** `flowrulz_core::executor`
 
-`exec_map()` — map/transform opcode. Evaluates `MapExpr` against `ctx.body`, producing a new JSON body. Handles field extraction (dot-path), key=value rewrites, constant assignments, and expression evaluation.
+`exec_map()` — map/transform opcode. If the expression starts with `w:`, delegates to `plugin::call_plugin()` for WASM plugin execution. Otherwise evaluates `MapExpr` against `ctx.body`, producing a new JSON body. Handles field extraction (dot-path), key=value rewrites, constant assignments, and expression evaluation.
 
 **Exports:** `exec_map()`
+
+---
+
+### `rust/src/executor/plugin.rs`
+**Package:** `flowrulz_core::executor`
+
+WASM plugin runtime. Maintains two global registries: `PLUGIN_BYTES` (name → raw WASM bytes) and `MODULE_CACHE` (name → compiled wasmtime `Engine`+`Module`). Plugins are lazily compiled on first `call()` invocation.
+
+`register(name, wasm_bytes)`: stores raw bytes for later compilation.
+`call(name, func_name, input)`: compiles (or loads from cache), instantiates, writes input at end of linear memory, calls the exported function with `(input_offset, input_len)` params, reads output from returned `(output_ptr << 32) | output_len` packed i64.
+`call_plugin(expr, body)`: parses `w:plugin.func()` expression, extracts plugin name and function name, delegates to `call()`.
+
+Calling convention: plugin exports `memory` + `process(ptr: i32, len: i32) → i64`. Fuel limit: 100k instructions.
+
+**Exports:** `register()`, `call()`, `call_plugin()`
 
 ---
 
@@ -847,9 +876,9 @@ Rust crate definition with dependencies: `bumpalo`, `serde`, `serde_json`, `cros
 
 | Layer | Files | Lines |
 |-------|-------|-------|
-| Go source (prod) | 21 | ~2,500 |
+| Go source (prod) | 22 | ~2,550 |
 | Go source (simulator) | 18 | ~2,200 |
-| Rust source | 35 | ~6,500 |
+| Rust source | 37 | ~6,400 |
 | C source | 1 | 14 |
 | Build/config | 3 | — |
 | Docs | 12 | — |

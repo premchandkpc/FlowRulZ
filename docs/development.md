@@ -76,7 +76,8 @@ rust/src/
 │   ├── parallel.rs     # Parallel fan-out
 │   ├── gate.rs         # Conditional branch
 │   ├── emit.rs         # Fire-and-forget
-│   ├── map.rs          # Field transformation
+│   ├── map.rs          # Field transformation + WASM plugin dispatch
+│   ├── plugin.rs       # WASM plugin runtime (wasmtime sandbox, registry, caching)
 │   ├── dag.rs          # DAG execution (parent merging, failure policies, merge strategies)
 │   ├── chunk.rs        # Chunk processing
 │   ├── helpers.rs      # JSON utilities
@@ -107,6 +108,7 @@ go/
     ├── transport/          # Kafka consumer/producer (Sarama-backed) + HTTP transport, MessageConsumer/MessageProducer interfaces
     ├── admin/              # HTTP API (rules CRUD, validate, promote, lanes)
     ├── flow/               # Flow orchestrator with state machine
+    ├── plugins/            # WASM plugin loader — scans .wasm files, registers via FFI
     ├── registry/           # ServiceRegistry — service name → healthy endpoints, LB, health checks
     ├── replyrouter/        # ReplyRouter — correlation ID → pending request channel, timeout/cleanup
     ├── scheduler/          # Priority queue (fast/normal/heavy), concurrency limits, backpressure
@@ -132,6 +134,41 @@ simulator/                  # Simulator for testing rules, services, and cluster
 ├── admin.go                # Admin HTTP handlers (registered on dashboard mux)
 └── client_test.go          # Client tests
 ```
+
+## Writing a WASM Plugin
+
+WASM plugins are sandboxed WebAssembly modules called from DSL via `w:plugin.func()`. Each plugin exports `memory` and one or more `process`-style functions.
+
+**Plugin calling convention:**
+- Function signature: `(input_ptr: i32, input_len: i32) → output_len_or_packed: i64`
+- Host writes input JSON at `input_ptr` in linear memory before calling
+- Function reads input, processes it, writes output to linear memory
+- Returns `(output_ptr << 32) | output_len` as i64
+- 100k fuel limit prevents infinite loops
+
+**Example plugin (WAT):**
+```wat
+(module
+  (memory (export "memory") 1)
+  (func (export "verify") (param $ptr i32) (param $len i32) (result i64)
+    ;; read input at $ptr, write result, return packed pointer+length
+    (i64.or
+      (i64.shl (i64.extend_i32_u (local.get $ptr)) (i64.const 32))
+      (i64.extend_i32_u (local.get $len))
+    )
+  )
+)
+```
+
+**Deployment:**
+1. Compile your WASM module to `.wasm`
+2. Place it in the directory pointed to by `FLOWRULZ_PLUGIN_DIR` (default: none)
+3. Filename without `.wasm` extension becomes the plugin name
+4. Reference in DSL as `w:<filename>.<funcname>`
+
+**Wiring in code:**
+- Rust: `plugin::register("name", &wasm_bytes)` / `plugin::call("name", "func", &input)`
+- Go: `bridge.RegisterPlugin("name", wasmBytes)` / `plugins.LoadDir("/path/to/dir")`
 
 ## Adding a New Opcode
 

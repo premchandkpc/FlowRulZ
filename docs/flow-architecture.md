@@ -608,6 +608,7 @@ pub struct ExecutionContext {
 | `rust/src/executor/dag.rs` | 4 |
 | `rust/src/executor/gate.rs` | 5 |
 | `rust/src/executor/map.rs` | 5 |
+| `rust/src/executor/plugin.rs` | 5 |
 | `rust/src/executor/expr.rs` | 5 |
 | `rust/src/dsl/compiler.rs` | 1, 5 |
 | `rust/src/bytecode/resolved_type.rs` | 5 |
@@ -621,6 +622,7 @@ pub struct ExecutionContext {
 | `go/internal/replyrouter/` | 2, 3 |
 | `go/internal/plandist/` | 1 |
 | `go/internal/observability/` | 2, 6 |
+| `go/internal/plugins/loader.go` | 5 |
 | `go/internal/reliability/dlq.go` | 2 |
 | `go/internal/reliability/ratelimit.go` | 2 |
 | `go/cmd/flowrulz/main.go` | 2, 8 |

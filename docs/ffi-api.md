@@ -122,6 +122,17 @@ size_t flowrulz_get_spans(unsigned char* out_ptr, size_t out_cap);
 
 Drains accumulated trace spans from the current thread's ring buffer. Span format: `{opcode: u8, service_id: u16, layer: u8, duration_ns: u64, status: u8}` repeated.
 
+### Plugin Registration
+
+```c
+int flowrulz_register_plugin(
+    const unsigned char* name_ptr, size_t name_len,
+    const unsigned char* wasm_ptr, size_t wasm_len
+);
+```
+
+Registers a WebAssembly plugin module by name. The WASM bytes are copied into the plugin registry. Modules are lazily compiled on first `call()` invocation.
+
 ### Complexity
 
 ```c

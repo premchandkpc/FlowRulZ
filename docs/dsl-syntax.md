@@ -24,6 +24,7 @@ A pipeline is a sequence of **operations** separated by spaces:
 | **Gate** | `g:<field><op><value>` | Conditional jump |
 | **Split** | `s:<field>` | Split array message by field |
 | **Map** | `m:<expr>` | Transform message fields |
+| **WASM** | `w:<plugin>.<func>` | Call WASM plugin function |
 | **Emit** | `e:<svc1>,<svc2>` | Fire-and-forget publish |
 | **Drop** | `d` | Halt processing (dead end) |
 | **Key** | `k:<field>` | Routing key field |
@@ -209,6 +210,28 @@ m:.payload=json(.raw_json)
 m:.hash=hash(md5, .email)
 ```
 
+### WASM Plugin Call
+
+```
+w:<plugin_name>.<function_name>
+```
+
+Calls a WASM plugin function with the current message body as input. The plugin is a compiled WebAssembly module registered at startup via `FLOWRULZ_PLUGIN_DIR`. The function receives the body bytes and returns transformed bytes.
+
+**Calling convention:**
+- Plugin exports `memory` and `process(ptr: i32, len: i32) → i64`
+- Host writes input at the end of linear memory, passes `(input_offset, input_len)`
+- Function returns `(output_ptr << 32) | output_len` packed in i64
+- Execution is sandboxed — 100k fuel limit prevents infinite loops
+
+**Examples:**
+```
+schema:{!msg:string} w:sig.verify n:svc
+schema:{!data:string} w:transform.enhance() e:notify
+```
+
+The lexer treats `w:` identically to `m:` — it emits a `Token::Map` with the full expression string. At runtime, `exec_map` detects the `w:` prefix and dispatches to the WASM plugin runtime instead of evaluating a JSON expression.
+
 ### Emit
 
 ```
@@ -366,7 +389,7 @@ schema:{!order_id:string,!amount:float,!user:string} t500 n:validate e:notify
 | Parallel, DAG | 20 |
 | Chunk | 25 |
 | Gate | 5 |
-| Map | 3 |
+| Map, WASM | 3 |
 | Emit | 8 |
 | Buffer | 15 |
 | All others | 1 |

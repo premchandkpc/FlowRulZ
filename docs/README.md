@@ -26,6 +26,7 @@ FlowRulZ/
 │       ├── transport/      # Kafka consumer/producer (Sarama) + HTTP transport
 │       ├── admin/          # HTTP API (rules CRUD, validate, promote, lanes)
 │       ├── flow/           # Flow orchestration
+│       ├── plugins/        # WASM plugin loader — .wasm files → FFI registration
 │       ├── registry/       # ServiceRegistry — service name → healthy endpoints, LB
 │       ├── replyrouter/    # ReplyRouter — correlation ID → pending request channel
 │       ├── scheduler/      # Priority queue (fast/normal/heavy), concurrency limits, backpressure
@@ -97,4 +98,5 @@ make bench
 | Plan Distribution | `PlanDistributor` publishes plans on `_flowrulz_plans`; followers ACK on `_flowrulz_acks`; quorum-based activation |
 | Rate Limiter | Token bucket per name; configurable rate/burst for ingress control |
 | Dead Letter Queue | Bounded queue with replay support; JSON export, per-entry retry count |
+| WASM Plugin SDK | Sandboxed WebAssembly plugins via wasmtime; `w:plugin.func()` DSL syntax; module caching, fuel limits, memory I/O convention |
 | Metrics | Counters, gauges, histograms; global shortcuts for exec/error tracking |

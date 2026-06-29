@@ -247,18 +247,6 @@ func (en *ExecutionNode) SetTerm(term uint64) {
 	en.PlanDist.SetTerm(term)
 }
 
-func (en *ExecutionNode) JoinCluster(id, address string) {
-	en.Membership.Add(id, address)
-}
-
-func (en *ExecutionNode) LeaveCluster(id string) {
-	en.Membership.Remove(id)
-}
-
-func (en *ExecutionNode) AliveCount() int {
-	return en.Membership.AliveCount()
-}
-
 func (en *ExecutionNode) CurrentTerm() uint64 {
 	return atomic.LoadUint64(&en.clusterTerm)
 }

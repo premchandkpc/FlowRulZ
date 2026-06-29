@@ -1,14 +1,5 @@
 use std::fmt;
 
-#[derive(Debug)]
-pub enum Error {
-    Lex(super::dsl::lexer::LexError),
-    Parse(super::dsl::parser::ParseError),
-    Compile(super::dsl::compiler::CompileError),
-    Exec(String),
-    Ffi(FfiError),
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FfiError {
     NullPointer = -1,
@@ -28,16 +19,8 @@ impl FfiError {
     }
 }
 
-impl fmt::Display for Error {
+impl fmt::Display for FfiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Error::Lex(e) => write!(f, "lex error: {}", e),
-            Error::Parse(e) => write!(f, "parse error: {}", e),
-            Error::Compile(e) => write!(f, "compile error: {}", e),
-            Error::Exec(e) => write!(f, "exec error: {}", e),
-            Error::Ffi(e) => write!(f, "ffi error: {:?}", e),
-        }
+        write!(f, "ffi error: {:?}", self)
     }
 }
-
-impl std::error::Error for Error {}

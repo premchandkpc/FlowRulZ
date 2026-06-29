@@ -143,9 +143,6 @@ func (se *SpanExporter) exportSpans(ctx context.Context) {
 		return
 	}
 
-	batchSize := 64
-	spans := make([]sdktrace.ReadOnlySpan, 0, batchSize)
-
 	for i := 0; i+se.spanSize <= len(data); i += se.spanSize {
 		raw := rawSpan{
 			Opcode:     data[i],
@@ -160,8 +157,6 @@ func (se *SpanExporter) exportSpans(ctx context.Context) {
 		se.exportSpan(ctx, &raw)
 
 	}
-
-	_ = spans
 }
 
 func (se *SpanExporter) exportSpan(ctx context.Context, raw *rawSpan) {

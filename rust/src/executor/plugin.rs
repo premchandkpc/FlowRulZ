@@ -253,7 +253,7 @@ mod tests {
         let wasm = pass_through_wasm();
         register("sig", &wasm);
 
-        let plan = crate::dsl::compiler::Compiler::new(&[])
+        let plan = crate::dsl::compiler::Compiler::new()
             .compile(
                 &crate::dsl::optimizer::Optimizer::new().optimize(
                     &crate::dsl::parser::parse(

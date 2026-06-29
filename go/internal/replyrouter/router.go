@@ -3,7 +3,6 @@ package replyrouter
 import (
 	"errors"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -28,7 +27,6 @@ type ReplyRouter struct {
 	cleanupStop  chan struct{}
 	cleanupTick  time.Duration
 	maxPending   int
-	evictedCount atomic.Uint64
 }
 
 type Option func(*ReplyRouter)
@@ -106,34 +104,10 @@ func (rr *ReplyRouter) Route(corrID string, response []byte) error {
 	return nil
 }
 
-func (rr *ReplyRouter) RouteOrStore(corrID string, response []byte) {
-	err := rr.Route(corrID, response)
-	if err == ErrPendingNotFound {
-		return
-	}
-}
-
-func (rr *ReplyRouter) Cancel(corrID string) {
-	rr.mu.Lock()
-	pr, ok := rr.pending[corrID]
-	if !ok {
-		rr.mu.Unlock()
-		return
-	}
-	delete(rr.pending, corrID)
-	rr.mu.Unlock()
-
-	close(pr.ReplyCh)
-}
-
 func (rr *ReplyRouter) PendingCount() int {
 	rr.mu.RLock()
 	defer rr.mu.RUnlock()
 	return len(rr.pending)
-}
-
-func (rr *ReplyRouter) EvictedCount() uint64 {
-	return rr.evictedCount.Load()
 }
 
 func (rr *ReplyRouter) StartCleanup() {
@@ -161,7 +135,6 @@ func (rr *ReplyRouter) cleanup() {
 	for corrID, pr := range rr.pending {
 		if now.After(pr.Deadline) {
 			delete(rr.pending, corrID)
-			rr.evictedCount.Add(1)
 			close(pr.ReplyCh)
 		}
 	}

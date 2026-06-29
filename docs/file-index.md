@@ -4,7 +4,7 @@ Every source file in the project, grouped by package, with its purpose and key e
 
 ---
 
-## Go (22 source files + 18 simulator files)
+## Go (21 source files + 18 simulator files)
 
 ### `go/cmd/flowrulz/main.go`
 **Package:** `main`
@@ -80,7 +80,7 @@ Callback hooks: `AfterDeploy` and `AfterPromote` are set by execnode to trigger 
 
 Persistence: atomic write via `os.WriteFile(path.tmp)` + `os.Rename(path.tmp, path)`.
 
-**Exports:** `Lane`, `LaneConfig`, `DefaultLanes`, `VersionedPlan`, `Rule`, `Engine`, `New()`, `Deploy()`, `AddVersion()`, `Promote()`, `Rollback()`, `Drain()`, `Remove()`, `Rules()`, `ExecuteAll()`, `ActivePlanBytes()`, `LaneForScore()`
+**Exports:** `Lane`, `LaneConfig`, `DefaultLanes`, `VersionedPlan`, `Rule`, `Engine`, `New()`, `Deploy()`, `AddVersion()`, `Promote()`, `Drain()`, `Remove()`, `Rules()`, `ExecuteAll()`, `ActivePlanBytes()`, `LaneForScore()`
 
 ---
 
@@ -125,7 +125,7 @@ Thread-safe metrics collection. `Counter` (atomic int64), `Gauge` (atomic int64)
 
 Histogram `Observe()`: linear scan of sorted bucket bounds, increments the first matching bucket or the overflow bucket. Not lock-protected (atomic counts are sufficient; total and bucket increments are not atomic together — acceptable skew for metrics).
 
-**Exports:** `Counter`, `Gauge`, `Histogram`, `MetricsCollector`, `MetricSnapshot`, `NewMetricsCollector()`, `GetCounter()`, `GetGauge()`, `GetHistogram()`, `RecordTiming()`, `RecordExec()`, `RecordError()`
+**Exports:** `Counter`, `Gauge`, `Histogram`, `MetricsCollector`, `MetricSnapshot`, `NewMetricsCollector()`, `GetCounter()`, `GetGauge()`, `RecordExec()`, `RecordError()`
 
 ---
 
@@ -162,7 +162,7 @@ Service registry mapping service names → healthy endpoints. Supports four load
 
 `Register()` defaults `Protocol` to HTTP and `NodeID` to local node ID. `Pick()` returns a single healthy endpoint per the configured strategy. `Snapshot()` deep-copies the entire registry for leader aggregation.
 
-**Exports:** `Protocol`, `LBStrategy`, `Endpoint`, `ServiceInfo`, `ServiceRegistry`, `New()`, `NewWithStrategy()`, `Register()`, `Unregister()`, `Lookup()`, `Pick()`, `PickWithStrategy()`, `MarkUnhealthy()`, `MarkHealthy()`, `ListServices()`, `ListEndpoints()`, `Snapshot()`, `SetLocalNodeID()`
+**Exports:** `Protocol`, `LBStrategy`, `Endpoint`, `ServiceInfo`, `ServiceRegistry`, `New()`, `Register()`, `Lookup()`, `Pick()`, `PickWithStrategy()`, `MarkUnhealthy()`, `MarkHealthy()`, `ListServices()`, `ListEndpoints()`, `Snapshot()`
 
 ---
 
@@ -219,7 +219,7 @@ Per-node reply router for request/reply pattern. `Send(corrID, timeout)` registe
 
 Cleanup goroutine runs every 1s, evicting expired entries (past `Deadline`) and closing their channels. Duplicate correlation IDs and capacity limits (default 10,000) are rejected with typed errors.
 
-**Exports:** `PendingRequest`, `ReplyRouter`, `New()`, `Send()`, `Route()`, `RouteOrStore()`, `Cancel()`, `PendingCount()`, `EvictedCount()`, `StartCleanup()`, `StopCleanup()`, `ErrPendingNotFound`, `ErrPendingExpired`, `ErrPendingLimit`, `ErrDuplicateCorrID`
+**Exports:** `PendingRequest`, `ReplyRouter`, `New()`, `Send()`, `Route()`, `PendingCount()`, `StartCleanup()`, `StopCleanup()`, `ErrPendingNotFound`, `ErrPendingExpired`, `ErrPendingLimit`, `ErrDuplicateCorrID`
 
 ---
 
@@ -287,14 +287,7 @@ Both implement `MessageConsumer`/`MessageProducer` interfaces, swappable with st
 
 ---
 
-### `go/internal/transport/http.go`
-**Package:** `transport`
 
-HTTP transport layer. Listens on a configurable address for POST `/event` requests. Decodes JSON body, delegates to a `MessageHandler`, returns the response. Optional Bearer token auth via `APIKey` config.
-
-**Exports:** `HTTPConfig`, `HTTPTransport`, `NewHTTPTransport()`, `Start()`, `Stop()`
-
----
 
 ### `simulator/simulator.go`
 **Package:** `simulator`
@@ -444,7 +437,7 @@ Event timeline store. Records all execution events (created, instruction, servic
 
 ---
 
-## Rust (37 source files)
+## Rust (34 source files)
 
 ### `rust/src/lib.rs`
 **Package:** `flowrulz_core`

@@ -21,10 +21,6 @@ impl Arena {
         buf
     }
 
-    pub fn alloc_str(&self, s: &str) -> &mut [u8] {
-        self.alloc_copy(s.as_bytes())
-    }
-
     pub fn reset(&mut self) {
         self.bump.reset();
     }

@@ -26,7 +26,7 @@ Services register themselves (`POST /register` with methods, version, protocol, 
 
 ```bash
 make all       # rust release + go binary
-make test      # all rust (119) + go tests (63+)
+make test      # all rust (126) + go tests (63+)
 make bench     # criterion benchmarks
 make vet       # go vet
 make clean     # cargo clean + remove binary
@@ -42,7 +42,11 @@ make clean     # cargo clean + remove binary
 - **Method syntax in rules**: `n:payment.authorize` — method name embedded in service string. `bridge.ParseServiceMethod("payment.authorize")` → `("payment", "authorize")`. Rust DSL lexer captures everything after `n:` (dot included). No Rust changes needed.
 - **Plan service resolution**: `bridge.InternLookup(svcID)` is **broken** for plan-local IDs — global intern table has pre-filled strings at IDs 0-6 (`"content-type"`, etc.). Use `bridge.PlanServices(plan)` → `map[uint16]string` in `executePlan`; pass `(svcName, method, body)` to `callService`.
 - **EventBus** (`go/pkg/transport/eventbus.go`) is the canonical pub/sub abstraction; `Message`, `Handler`, `Subscription` types are shared across `go/` and `simulator/`. **Kafka** (`go/internal/transport/`) is a legacy transport implementation — one consumer group with programmable execution
-- C FFI prefix: `flowrulz_` — all exported functions use `#[no_mangle] pub extern "C"`
+- C FFI prefix: `flowrulz_` — all exported functions use `#[no_mangle] pub unsafe extern "C"`
+- `Compiler::new()` is no-arg (was `new(&[])` — all callers passed empty slice)
+- `Error` enum removed — only `FfiError` remains (was never constructed in any path)
+- `ExecutionPlan::map_exprs` field removed — was always empty, vestigial from earlier design
+- Slab pool (`memory::slab`) removed — `flowrulz_msg_alloc`/`release` use `std::alloc` directly
 - Bridge: `sync.Map callerMap` + `atomic.Uint64 nextExecID` — no mutex in hot path
 - Span tracing: `thread_local!` ring buffer, lock-free atomic head/tail, drained via `flowrulz_get_spans`
 - **Reply Router** (`go/internal/replyrouter/`): Per-node pending request tracker by correlation_id, timeout-based cleanup, duplicate detection
@@ -168,14 +172,40 @@ All endpoints (except `/health`) require `Authorization: Bearer <FLOWRULZ_API_KE
 - Both `sim` (in-memory EventBus based simulator) and `flowrulz` (Kafka + Rust VM production node) binaries build and work independently
 - 23 Go packages (15 prod + 8 simulator), `go vet ./go/... ./simulator/...` clean
 
+### Phase 1–3: Rust cleanup (complete)
+- Deleted 3 dead files: `bytecode/mapexpr.rs`, `executor/context.rs`, `memory/slab.rs`
+- Deleted 6 dead functions: `execute_chunked_seq`, `execute_chunked_par`, `exec_chunked_call`, `format_now`, `merge_json_array`, `alloc_str`
+- Deleted `Error` enum (only `FfiError` remains, with own `Display` impl)
+- Removed unused Cargo deps: `bytes`, `rayon`, `thiserror`, `libc`, `crossbeam-queue`
+- Removed `CompileError::UnknownTarget` / `Compiler::targets` — `Compiler::new()` now no-arg
+- Removed `ExecutionPlan::map_exprs` and `MapExpr`/`MapKV` types
+- Removed `SLAB_POOL` — `flowrulz_msg_alloc`/`release` use `std::alloc` directly
+- Fixed 22 clippy warnings: all `extern "C"` → `pub unsafe extern "C"`
+- Fixed `now_iso()` date calc: replaced heuristic with `civil_from_days` algorithm
+- Consolidated `merge_json` → `dag::deep_merge` (single source of truth)
+- `extract_json_field` returns `&[u8]` (was `&mut [u8]`)
+- 126 Rust tests pass, `cargo check` clean
+
+### Phase 4–5: Go prod cleanup (complete)
+- Deleted orphaned `go/internal/transport/http.go` (`HTTPTransport` entirely unused)
+- Removed dead `Endpoint.nodeID` (unexported duplicate field)
+- Removed dead `dlqMessage` struct (was never referenced)
+- Removed `ErrRateLimited` var (never returned)
+- Removed `RecordTiming`/`GetHistogram` (global shortcuts, dead)
+- Removed `evictedCount` field + `Cancel`/`EvictedCount`/`RouteOrStore` methods from replyrouter
+- Removed `JoinCluster`/`LeaveCluster`/`AliveCount` from execnode (dead methods)
+- Removed `RemoteCompiler.Validate` method (test-only)
+- Removed `Rollback` alias from engine (was `Promote` wrapper, never called)
+- Fixed `Rules()` shallow copy (new Versions slice, no struct copy of WaitGroup)
+- `go vet` clean, all Go tests pass
+
 ### In Progress
 - (none)
 
 ### Next Steps
-1. Add chaos scenario types: Network Delay, Duplicate Messages, Slow Consumer, Retry Storm, Node Failure
-2. Build Scenario composition framework — combine multiple scenarios in sequence/parallel
-3. Add event-sourcing export for scenario runs (JSON log of every event)
-4. Add Planner diff visualization — compare `flowrulz simulate` runs side-by-side
+1. Phase 6: Simulator dead code & dedup (27 items per audit, `writeJSON`/`compileDSL` across admin.go/dashboard.go/simulator.go)
+2. Phase 7: Update `docs/` `.md` files for deleted files, changed APIs, removed exports
+3. Phase 8: Full verification — `make test`, `make vet`, `cargo check`, scenario smoke tests
 
 ## Admin API (Interactive Mode)
 

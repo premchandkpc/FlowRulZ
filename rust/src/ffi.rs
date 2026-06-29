@@ -3,7 +3,7 @@ use crate::dsl::{compiler::Compiler, lexer, optimizer, parser};
 use crate::error::FfiError;
 use crate::executor::plugin;
 use crate::executor::{StepResult, VM};
-use crate::memory::{arena::Arena, intern::InternTable, slab::SlabPool};
+use crate::memory::{arena::Arena, intern::InternTable};
 
 static INTERN_TABLE: once_cell::sync::Lazy<InternTable> = once_cell::sync::Lazy::new(|| {
     let table = InternTable::new();
@@ -18,13 +18,6 @@ static INTERN_TABLE: once_cell::sync::Lazy<InternTable> = once_cell::sync::Lazy:
     ]);
     table
 });
-
-static SLAB_POOL: once_cell::sync::Lazy<std::sync::Mutex<SlabPool>> =
-    once_cell::sync::Lazy::new(|| {
-        let pool = SlabPool::new();
-        pool.prefill(1024, 512, 64);
-        std::sync::Mutex::new(pool)
-    });
 
 fn write_error(ptr: *mut u8, cap: usize, len: *mut usize, msg: &str) {
     if ptr.is_null() || cap == 0 || len.is_null() {
@@ -51,7 +44,7 @@ fn read_str<'a>(ptr: *const u8, len: usize) -> Option<&'a str> {
 }
 
 #[no_mangle]
-pub extern "C" fn flowrulz_compile(
+pub unsafe extern "C" fn flowrulz_compile(
     dsl_ptr: *const u8,
     dsl_len: usize,
     rule_id_ptr: *const u8,
@@ -92,7 +85,7 @@ pub extern "C" fn flowrulz_compile(
     let opt = optimizer::Optimizer::new();
     let optimized = opt.optimize(&pipeline);
 
-    let compiler = Compiler::new(&[]);
+    let compiler = Compiler::new();
     let plan = match compiler.compile(&optimized, rule_id) {
         Ok(p) => p,
         Err(e) => {
@@ -132,7 +125,7 @@ pub extern "C" fn flowrulz_compile(
 }
 
 #[no_mangle]
-pub extern "C" fn flowrulz_execute(
+pub unsafe extern "C" fn flowrulz_execute(
     ctx_id: u64,
     plan_ptr: *const u8,
     plan_len: usize,
@@ -240,23 +233,24 @@ pub extern "C" fn flowrulz_execute(
 }
 
 #[no_mangle]
-pub extern "C" fn flowrulz_msg_alloc(_estimated_body_size: usize) -> *mut u8 {
-    let _arena = SLAB_POOL.lock().unwrap().acquire(_estimated_body_size);
-    let layout = std::alloc::Layout::new::<usize>();
-    unsafe { std::alloc::alloc(layout) }
+pub unsafe extern "C" fn flowrulz_msg_alloc(size: usize) -> *mut u8 {
+    if size == 0 {
+        return std::ptr::null_mut();
+    }
+    let layout = std::alloc::Layout::from_size_align(size, 1).unwrap();
+    std::alloc::alloc(layout)
 }
 
 #[no_mangle]
-pub extern "C" fn flowrulz_msg_release(_ptr: *mut u8) {
-    if !_ptr.is_null() {
-        unsafe {
-            let _ = std::boxed::Box::from_raw(_ptr);
-        }
+pub unsafe extern "C" fn flowrulz_msg_release(ptr: *mut u8) {
+    if !ptr.is_null() {
+        let layout = std::alloc::Layout::new::<usize>();
+        std::alloc::dealloc(ptr, layout);
     }
 }
 
 #[no_mangle]
-pub extern "C" fn flowrulz_intern(s_ptr: *const u8, s_len: usize) -> u16 {
+pub unsafe extern "C" fn flowrulz_intern(s_ptr: *const u8, s_len: usize) -> u16 {
     let s = match read_str(s_ptr, s_len) {
         Some(s) => s,
         None => return 0,
@@ -265,7 +259,7 @@ pub extern "C" fn flowrulz_intern(s_ptr: *const u8, s_len: usize) -> u16 {
 }
 
 #[no_mangle]
-pub extern "C" fn flowrulz_intern_lookup(id: u16, out_ptr: *mut u8, out_len: *mut usize) {
+pub unsafe extern "C" fn flowrulz_intern_lookup(id: u16, out_ptr: *mut u8, out_len: *mut usize) {
 	if out_ptr.is_null() || out_len.is_null() {
 		return;
 	}
@@ -279,12 +273,12 @@ pub extern "C" fn flowrulz_intern_lookup(id: u16, out_ptr: *mut u8, out_len: *mu
 }
 
 #[no_mangle]
-pub extern "C" fn flowrulz_span_size() -> usize {
+pub unsafe extern "C" fn flowrulz_span_size() -> usize {
     std::mem::size_of::<crate::tracing::Span>()
 }
 
 #[no_mangle]
-pub extern "C" fn flowrulz_get_spans(out_ptr: *mut u8, out_cap: usize) -> usize {
+pub unsafe extern "C" fn flowrulz_get_spans(out_ptr: *mut u8, out_cap: usize) -> usize {
     if out_ptr.is_null() || out_cap == 0 {
         return 0;
     }
@@ -295,7 +289,7 @@ pub extern "C" fn flowrulz_get_spans(out_ptr: *mut u8, out_cap: usize) -> usize 
 }
 
 #[no_mangle]
-pub extern "C" fn flowrulz_execute_step(
+pub unsafe extern "C" fn flowrulz_execute_step(
     ctx_id: u64,
     plan_ptr: *const u8,
     plan_len: usize,
@@ -430,7 +424,7 @@ pub extern "C" fn flowrulz_execute_step(
 }
 
 #[no_mangle]
-pub extern "C" fn flowrulz_register_plugin(
+pub unsafe extern "C" fn flowrulz_register_plugin(
     name_ptr: *const u8,
     name_len: usize,
     wasm_ptr: *const u8,
@@ -449,7 +443,7 @@ pub extern "C" fn flowrulz_register_plugin(
 }
 
 #[no_mangle]
-pub extern "C" fn flowrulz_plan_services(
+pub unsafe extern "C" fn flowrulz_plan_services(
     plan_ptr: *const u8,
     plan_len: usize,
     out_ptr: *mut u8,
@@ -478,7 +472,7 @@ pub extern "C" fn flowrulz_plan_services(
 }
 
 #[no_mangle]
-pub extern "C" fn flowrulz_plan_complexity(plan_ptr: *const u8, plan_len: usize) -> u32 {
+pub unsafe extern "C" fn flowrulz_plan_complexity(plan_ptr: *const u8, plan_len: usize) -> u32 {
     let plan_slice = match read_slice(plan_ptr, plan_len) {
         Some(s) => s,
         None => return 0,

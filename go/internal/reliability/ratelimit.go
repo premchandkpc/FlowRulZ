@@ -1,12 +1,9 @@
 package reliability
 
 import (
-	"errors"
 	"sync"
 	"time"
 )
-
-var ErrRateLimited = errors.New("rate limited")
 
 type TokenBucket struct {
 	mu         sync.Mutex

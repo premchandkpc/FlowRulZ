@@ -1,5 +1,4 @@
 pub mod chunk;
-pub mod context;
 pub mod dag;
 pub mod emit;
 pub mod expr;
@@ -287,7 +286,7 @@ mod tests {
         let pipeline = parser::parse(&tokens).unwrap();
         let opt = optimizer::Optimizer::new();
         let optimized = opt.optimize(&pipeline);
-        let compiler = Compiler::new(&[]);
+        let compiler = Compiler::new();
         compiler.compile(&optimized, "test").unwrap()
     }
 

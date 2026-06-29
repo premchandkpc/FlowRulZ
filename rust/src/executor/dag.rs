@@ -165,7 +165,7 @@ fn merge_last_wins<'a>(
     arena.alloc_copy(result.as_bytes())
 }
 
-fn deep_merge(a: &mut serde_json::Value, b: serde_json::Value) {
+pub(crate) fn deep_merge(a: &mut serde_json::Value, b: serde_json::Value) {
     match (a, b) {
         (serde_json::Value::Object(ref mut a_map), serde_json::Value::Object(b_map)) => {
             for (k, v) in b_map {

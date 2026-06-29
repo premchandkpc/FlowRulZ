@@ -44,30 +44,6 @@ func TestRouteNonExistent(t *testing.T) {
 	}
 }
 
-func TestCancel(t *testing.T) {
-	rr := New()
-
-	ch, err := rr.Send("corr-1", 5*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	rr.Cancel("corr-1")
-
-	select {
-	case _, ok := <-ch:
-		if ok {
-			t.Fatal("expected closed channel")
-		}
-	case <-time.After(time.Second):
-		t.Fatal("timeout waiting for channel close")
-	}
-
-	if rr.PendingCount() != 0 {
-		t.Fatalf("expected 0 pending after cancel, got %d", rr.PendingCount())
-	}
-}
-
 func TestDuplicateCorrelationID(t *testing.T) {
 	rr := New()
 
@@ -107,9 +83,6 @@ func TestExpiredCleanup(t *testing.T) {
 		t.Fatal("timeout waiting for channel close")
 	}
 
-	if rr.EvictedCount() == 0 {
-		t.Fatal("expected eviction count > 0")
-	}
 }
 
 func TestMaxPending(t *testing.T) {
@@ -157,7 +130,7 @@ func TestConcurrentAccess(t *testing.T) {
 		defer wg.Done()
 		for i := 0; i < n; i++ {
 			corrID := string(rune('a' + i%26))
-			rr.RouteOrStore(corrID, []byte("response"))
+			rr.Route(corrID, []byte("response"))
 		}
 	}()
 

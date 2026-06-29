@@ -89,11 +89,6 @@ func (d *DLQ) Send(entry *DeadLetterEntry) error {
 	return nil
 }
 
-type dlqMessage struct {
-	Type  string           `json:"type"`
-	Entry *DeadLetterEntry `json:"entry"`
-}
-
 func (d *DLQ) LoadFromTopic(ctx context.Context) {
 	d.mu.Lock()
 	topic := d.topic

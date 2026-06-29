@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -97,18 +98,20 @@ func TestCompileHandler(t *testing.T) {
 	}
 }
 
-func TestRemoteCompilerValidate(t *testing.T) {
+func TestHandleValidate(t *testing.T) {
 	h := NewCompileHandler()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/validate" {
-			h.HandleValidate(w, r)
-		}
+		h.HandleValidate(w, r)
 	}))
 	defer srv.Close()
 
-	c := NewRemote(srv.URL)
-	vr, err := c.Validate("n:echo")
+	resp, err := http.Post(srv.URL+"/validate", "application/json", bytes.NewReader([]byte(`{"dsl":"n:echo"}`)))
 	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var vr ValidateResult
+	if err := json.NewDecoder(resp.Body).Decode(&vr); err != nil {
 		t.Fatal(err)
 	}
 	if !vr.Valid {
@@ -122,18 +125,20 @@ func TestRemoteCompilerValidate(t *testing.T) {
 	}
 }
 
-func TestRemoteCompilerValidateInvalid(t *testing.T) {
+func TestHandleValidateInvalid(t *testing.T) {
 	h := NewCompileHandler()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/validate" {
-			h.HandleValidate(w, r)
-		}
+		h.HandleValidate(w, r)
 	}))
 	defer srv.Close()
 
-	c := NewRemote(srv.URL)
-	vr, err := c.Validate("")
+	resp, err := http.Post(srv.URL+"/validate", "application/json", bytes.NewReader([]byte(`{"dsl":""}`)))
 	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var vr ValidateResult
+	if err := json.NewDecoder(resp.Body).Decode(&vr); err != nil {
 		t.Fatal(err)
 	}
 	if vr.Valid {

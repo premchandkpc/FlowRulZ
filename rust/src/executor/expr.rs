@@ -311,24 +311,9 @@ fn call_builtin(name: &str, args: &[serde_json::Value]) -> Result<serde_json::Va
     }
 }
 
-fn merge_json(a: serde_json::Value, b: serde_json::Value) -> Result<serde_json::Value, String> {
-    match (a, b) {
-        (serde_json::Value::Object(mut a_map), serde_json::Value::Object(b_map)) => {
-            for (k, v) in b_map {
-                if let Some(existing) = a_map.remove(&k) {
-                    if existing.is_object() && v.is_object() {
-                        a_map.insert(k, merge_json(existing, v)?);
-                    } else {
-                        a_map.insert(k, v);
-                    }
-                } else {
-                    a_map.insert(k, v);
-                }
-            }
-            Ok(serde_json::Value::Object(a_map))
-        }
-        (_, b) => Ok(b),
-    }
+fn merge_json(mut a: serde_json::Value, b: serde_json::Value) -> Result<serde_json::Value, String> {
+    super::dag::deep_merge(&mut a, b);
+    Ok(a)
 }
 
 fn consistent_hash(s: &str) -> u64 {
@@ -350,13 +335,21 @@ fn now_iso() -> String {
     let mins = (time % 3600) / 60;
     let sec = time % 60;
 
-    let year = 1970 + (days / 365) as u32;
-    let month = 1 + ((days % 365) / 28) as u32;
-    let day = 1 + (days % 28) as u32;
+    // civil_from_days: days since 1970-01-01
+    let z = days as i64 + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
 
     format!(
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:09}Z",
-        year, month, day, hours as u32, mins as u32, sec as u32, nanos
+        y, m, d, hours as u32, mins as u32, sec as u32, nanos
     )
 }
 
@@ -409,10 +402,6 @@ pub fn eval_map_expression(expr_str: &str, body: &[u8]) -> Result<Vec<u8>, Strin
     let result = serde_json::to_string(&body_json)
         .map_err(|e| format!("serialize error: {}", e))?;
     Ok(result.into_bytes())
-}
-
-pub fn format_now() -> String {
-    now_iso()
 }
 
 #[cfg(test)]

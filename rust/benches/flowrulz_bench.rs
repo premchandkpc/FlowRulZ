@@ -9,7 +9,7 @@ fn compile_plan(dsl: &str) -> ExecutionPlan {
     let pipeline = parser::parse(&tokens).unwrap();
     let opt = optimizer::Optimizer::new();
     let optimized = opt.optimize(&pipeline);
-    let comp = compiler::Compiler::new(&[]);
+    let comp = compiler::Compiler::new();
     comp.compile(&optimized, "bench").unwrap()
 }
 
@@ -30,7 +30,7 @@ fn bench_compile(c: &mut Criterion) {
                 let pipeline = parser::parse(&tokens).unwrap();
                 let opt = optimizer::Optimizer::new();
                 let optimized = opt.optimize(&pipeline);
-                let comp = compiler::Compiler::new(&[]);
+                let comp = compiler::Compiler::new();
                 comp.compile(&optimized, "bench").unwrap()
             });
         });

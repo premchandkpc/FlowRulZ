@@ -105,32 +105,6 @@ type ValidateResult struct {
 	Error        string
 }
 
-func (c *RemoteCompiler) Validate(dsl string) (*ValidateResult, error) {
-	reqBody := compileRequest{DSL: dsl}
-	data, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("validate request marshal: %w", err)
-	}
-
-	resp, err := c.client.Post(c.addr+"/validate", "application/json", bytes.NewReader(data))
-	if err != nil {
-		return nil, fmt.Errorf("validate call: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("validate read: %w", err)
-	}
-
-	var vr ValidateResult
-	if err := json.Unmarshal(body, &vr); err != nil {
-		return nil, fmt.Errorf("validate response unmarshal: %w", err)
-	}
-
-	return &vr, nil
-}
-
 type CompileHandler struct {
 	LocalCompiler
 }

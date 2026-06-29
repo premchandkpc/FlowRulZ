@@ -243,10 +243,6 @@ func (e *Engine) Promote(id string, version uint64) error {
 	return fmt.Errorf("version %d not found for rule %s", version, id)
 }
 
-func (e *Engine) Rollback(id string, version uint64) error {
-	return e.Promote(id, version)
-}
-
 func (e *Engine) Drain(id string, version uint64) error {
 	e.mu.Lock()
 	r, ok := e.rules[id]
@@ -318,7 +314,9 @@ func (e *Engine) Rules() []Rule {
 	defer e.mu.RUnlock()
 	out := make([]Rule, 0, len(e.rules))
 	for _, r := range e.rules {
-		out = append(out, *r)
+		cp := *r
+		cp.Versions = append([]*VersionedPlan(nil), r.Versions...)
+		out = append(out, cp)
 	}
 	return out
 }

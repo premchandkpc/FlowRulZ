@@ -3,7 +3,6 @@ package observability
 import (
 	"sync"
 	"sync/atomic"
-	"time"
 )
 
 type Counter struct {
@@ -106,16 +105,6 @@ func (h *Histogram) Observe(v float64) {
 	h.counts[len(h.buckets)].Add(1)
 }
 
-func (h *Histogram) Snapshot() (total int64, buckets []struct{ Bound float64; Count int64 }) {
-	total = h.total.Load()
-	buckets = make([]struct{ Bound float64; Count int64 }, len(h.buckets)+1)
-	for i, b := range h.buckets {
-		buckets[i] = struct{ Bound float64; Count int64 }{Bound: b, Count: h.counts[i].Load()}
-	}
-	buckets[len(h.buckets)] = struct{ Bound float64; Count int64 }{Bound: 0, Count: h.counts[len(h.buckets)].Load()}
-	return
-}
-
 // -- Snapshot --
 
 type MetricSnapshot struct {
@@ -144,12 +133,6 @@ func (mc *MetricsCollector) Snapshot() MetricSnapshot {
 
 func GetCounter(name string) *Counter     { return defaultCollector.Counter(name) }
 func GetGauge(name string) *Gauge         { return defaultCollector.Gauge(name) }
-func GetHistogram(name string, buckets []float64) *Histogram { return defaultCollector.Histogram(name, buckets) }
-
-func RecordTiming(name string, d time.Duration, buckets []float64) {
-	h := GetHistogram(name, buckets)
-	h.Observe(d.Seconds())
-}
 
 func RecordExec(name string)  { GetCounter("exec." + name).Inc() }
 func RecordError(name string) { GetCounter("error." + name).Inc() }

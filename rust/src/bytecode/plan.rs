@@ -1,7 +1,6 @@
 use super::consts::ConstantPool;
 use super::dag_table::DAGTable;
 use super::instruction::Instruction;
-use super::mapexpr::MapExpr;
 use super::opcode::{ChunkMode, RetryStrategy};
 use super::resolved_type::Schema;
 use super::services::ServiceTable;
@@ -29,7 +28,6 @@ pub struct ExecutionPlan {
     pub const_pool: ConstantPool,
     pub services: ServiceTable,
     pub dag_tables: Vec<DAGTable>,
-    pub map_exprs: Vec<MapExpr>,
     pub retry_configs: Vec<RetryConfig>,
     pub chunk_configs: Vec<ChunkConfig>,
     pub schema: Option<Schema>,
@@ -46,7 +44,6 @@ impl ExecutionPlan {
             const_pool: ConstantPool::new(),
             services: ServiceTable::new(),
             dag_tables: Vec::new(),
-            map_exprs: Vec::new(),
             retry_configs: Vec::new(),
             chunk_configs: Vec::new(),
             schema: None,

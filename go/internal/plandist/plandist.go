@@ -53,7 +53,6 @@ type PlanDistributor struct {
 	planHandler    PlanHandler
 	ackHandler     AckHandler
 	pendingAcks    sync.Map
-	nextSerial     atomic.Uint64
 	clusterTerm    atomic.Uint64
 	quorumProvider QuorumProvider
 	started        bool

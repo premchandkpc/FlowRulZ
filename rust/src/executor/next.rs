@@ -1,10 +1,8 @@
-use std::time::Duration;
-
-use rand::Rng;
-
 use crate::bytecode::instruction::Instruction;
 use crate::bytecode::opcode::RetryStrategy;
 use crate::bytecode::plan::{ExecutionPlan, RetryConfig};
+use rand::Rng;
+use std::time::Duration;
 
 pub fn exec_next(
     body: &[u8],
@@ -77,15 +75,4 @@ fn find_retry_config(instr: &Instruction, plan: &ExecutionPlan) -> RetryConfig {
             fixed_ms: 0,
         }
     }
-}
-
-pub fn exec_chunked_call(
-    svc_id: u16,
-    body: &[u8],
-    _count: u8,
-    _mode: RetryStrategy,
-    timeout_ms: u64,
-    caller: &dyn Fn(u16, &[u8], u64) -> Result<Vec<u8>, String>,
-) -> Result<Vec<u8>, String> {
-    caller(svc_id, body, timeout_ms)
 }

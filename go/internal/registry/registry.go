@@ -47,8 +47,6 @@ type Endpoint struct {
 	Protocol Protocol `json:"protocol"`
 	Healthy  bool     `json:"healthy"`
 	Load     float64  `json:"load,omitempty"`
-
-	nodeID string
 }
 
 type ServiceInstance struct {

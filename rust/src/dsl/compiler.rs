@@ -41,15 +41,11 @@ impl fmt::Display for CompileError {
 
 impl std::error::Error for CompileError {}
 
-pub struct Compiler {
-    pub targets: Vec<String>,
-}
+pub struct Compiler;
 
 impl Compiler {
-    pub fn new(targets: &[String]) -> Self {
-        Compiler {
-            targets: targets.to_vec(),
-        }
+    pub fn new() -> Self {
+        Compiler
     }
 
     pub fn compile(
@@ -141,9 +137,7 @@ impl Compiler {
                     let field_id = plan.const_pool.add(field);
                     let value_id = plan.const_pool.add(value);
                     let gate_op = GateOp::from_str(op).unwrap_or(GateOp::Eq);
-                    let mut instr = Instruction::gate(field_id, gate_op as u8, value_id);
-                    instr.flags = gate_op as u8;
-                    instructions.push(instr);
+                    instructions.push(Instruction::gate(field_id, gate_op as u8, value_id));
                     instructions.push(Instruction::jump_offset(0));
                 }
                 ASTNode::Emit(targets) => {
@@ -648,7 +642,7 @@ mod tests {
         let pipeline = parser::parse(&tokens).unwrap();
         let opt = Optimizer::new();
         let optimized = opt.optimize(&pipeline);
-        let compiler = Compiler::new(&[]);
+        let compiler = Compiler::new();
         compiler.compile(&optimized, rule_id)
     }
 

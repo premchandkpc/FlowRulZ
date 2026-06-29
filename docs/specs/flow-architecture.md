@@ -46,6 +46,30 @@ Event<T> {
 
 Payload is opaque to the runtime. The VM never cares whether it came from JSON, Protobuf, Avro, MessagePack, or binary. Schema validation and field access happen against a **Schema Registry**, not against a serialization format.
 
+### Generic Core, Optional Schema (Design Tension)
+
+FlowRulZ is a **routing engine**, not a data contract enforcer. This creates a deliberate design tension:
+
+| | Schema-Specific | Generic (No Schema) |
+|--|----------------|---------------------|
+| **Compile-time safety** | ✅ Catches `g:amount>1000` on a `string` field before deploy | ❌ Fails at runtime on first bad message |
+| **Enum validation** | ✅ Rejects `status=INVALID` at TypeGuard | ❌ Silent bad data flows through |
+| **Friction** | ❌ Must declare schema per rule | ✅ Zero friction, send anything |
+| **Routing flexibility** | ❌ Schema couples producer to rule | ✅ Any producer, any shape |
+| **Error quality** | ✅ "field `amount` expected int, got string" | ❌ Service fails deep downstream with cryptic error |
+| **Protobuf/Avro support** | ❌ Schema in DSL is JSON-type-system only | ✅ Opaque bytes work for anything |
+
+**The right answer:** Generic wins at the routing layer. Schema wins at the boundary layer. Use schema only when you own both producer and rule, need type-sensitive Gate operators (`>`, `<`, `>=`, `<=`), or need boundary validation. Skip schema for internal routing, third-party payloads, or non-JSON formats.
+
+The `any` type tag provides an escape hatch within schemas: declare fields for documentation/routing without enforcing type:
+
+```dsl
+schema:{!order_id:string,!amount:int,metadata:any}
+  g:amount>10000 n:manual-review f:auto-approve
+```
+
+Here `amount` gets compile-time type checking; `metadata` passes through as opaque.
+
 ### ExecutionContext
 
 Every in-flight execution carries a context that services enrich:
@@ -108,7 +132,7 @@ resp, err := client.Request("payment", paymentReq, 5*time.Second)
 Client → FlowRulZ → Route to Payment Worker → Wait → Response → Client
 ```
 
-Mode: `Mode::Request`. FlowRulZ tracks reply_to + correlation_id.
+Mode: `Mode::Request`. FlowRulZ tracks reply_to + correlation_id. Replies are routed via the `_flowrulz_replies` Kafka topic, keyed by `hash(correlation_id)`, handled by `go/internal/replyrouter/`.
 
 ### 3. Rule Execution
 
@@ -251,6 +275,7 @@ Client                  Control Plane                Data Plane
 |------|------|-------------|
 | HTTP handler | `go/internal/admin/server.go` | Parses JSON, calls `engine.Deploy(id, dsl)` |
 | Engine | `go/internal/engine/engine.go` | `Deploy()`: compile, assign lane, persist |
+| Plan Distribution | `go/internal/plandist/plandist.go` | Leader publishes plan to `_flowrulz_plans`, waits for ACK quorum on `_flowrulz_acks` |
 | Bridge | `go/internal/bridge/bridge.go` | `Compile()`: C FFI call to `flowrulz_compile()` |
 | Rust FFI | `rust/src/ffi.rs` | `flowrulz_compile()`: lex → parse → optimize → compile |
 | DSL Compiler | `rust/src/dsl/compiler.rs` | Compiles AST → `ExecutionPlan`, type checking |
@@ -285,9 +310,12 @@ Kafka      Partition Worker         Engine              ExecutionRuntime        
 
 | File | What It Does |
 |------|-------------|
-| `go/internal/transport/` | Kafka consumer, invokes handler with event bytes |
-| `go/internal/execnode/` | ExecutionNode: engine + transport + admin lifecycle |
+| `go/internal/transport/` | Kafka consumer/producer + interfaces, invokes handler with event bytes |
+| `go/internal/execnode/` | ExecutionNode: engine + scheduler + transport + admin + lifecycle |
 | `go/internal/engine/` | `ExecuteAll()`: collect active plans, bridge execute |
+| `go/internal/scheduler/` | Priority queue lanes (fast/normal/heavy), concurrency limits, backpressure |
+| `go/internal/reliability/ratelimit.go` | Token bucket rate limiter per name, ingress throttling |
+| `go/internal/reliability/dlq.go` | Dead-letter queue with replay, bounded size |
 | `rust/src/ffi.rs` | `flowrulz_execute()`: deserialize plan, create VM with ExecutionContext |
 | `rust/src/executor/mod.rs` | VM dispatch loop, opcode handlers |
 | `rust/src/executor/runtime.rs` | ExecutionRuntime: Chunk/Buffer orchestration |
@@ -331,6 +359,7 @@ ServiceCaller returns ([]byte, error)
 | `rust/src/ffi.rs` | Rust | Closure calling `caller_cb` function pointer |
 | `go/internal/bridge/caller_bridge.c` | C | Static C function forwarding to `goServiceCaller` |
 | `go/internal/bridge/bridge.go` | Go | `//export goServiceCaller`: dispatches to `ServiceCaller` |
+| `go/internal/registry/` | Go | `ServiceRegistry`: service name → healthy endpoints, LB, health checks |
 
 ---
 
@@ -460,16 +489,22 @@ pub struct Span {
 | POST | `/rules/{id}/promote?version=N` | Yes | Promote version |
 | POST | `/rules/{id}/rollback` | Yes | Same as promote |
 | GET | `/lanes` | Yes | Lane configs |
+| GET | `/dlq` | Yes | List dead-letter queue entries |
+| POST | `/dlq/replay/{id}` | Yes | Replay single DLQ entry |
+| POST | `/dlq/replay` | Yes | Replay all DLQ entries |
+| DELETE | `/dlq` | Yes | Clear DLQ |
+| GET | `/metrics` | No | Metrics snapshot (counters, gauges, pending requests, DLQ size) |
 | GET | `/health` | No | Health check |
 
-All endpoints (except `/health`) require `Authorization: Bearer <FLOWRULZ_API_KEY>` when set.
+All endpoints (except `/health`, `/metrics`) require `Authorization: Bearer <FLOWRULZ_API_KEY>` when set.
 
 ### Files Involved
 
 | File | What It Does |
 |------|-------------|
-| `go/internal/admin/server.go` | Route handlers, `auth()` middleware |
-| `go/cmd/flowrulz/main.go` | Mounts admin handler under `/admin/` |
+| `go/internal/admin/server.go` | Route handlers, `auth()` middleware, DLQ endpoints |
+| `go/internal/execnode/execnode.go` | Mounts admin + metrics + health handlers |
+| `go/internal/reliability/dlq.go` | `DLQ`: Send, Replay, ReplayAll, Clear |
 
 ---
 
@@ -574,5 +609,12 @@ pub struct ExecutionContext {
 | `go/internal/admin/server.go` | 1, 7 |
 | `go/internal/engine/engine.go` | 1, 2, 8 |
 | `go/internal/bridge/bridge.go` | 1, 2, 3 |
-| `go/internal/execnode/` | 2 |
+| `go/internal/execnode/execnode.go` | 2 |
+| `go/internal/scheduler/` | 2 |
+| `go/internal/registry/` | 3 |
+| `go/internal/replyrouter/` | 2, 3 |
+| `go/internal/plandist/` | 1 |
+| `go/internal/observability/` | 2, 6 |
+| `go/internal/reliability/dlq.go` | 2 |
+| `go/internal/reliability/ratelimit.go` | 2 |
 | `go/cmd/flowrulz/main.go` | 2, 8 |

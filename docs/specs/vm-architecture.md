@@ -90,7 +90,16 @@ pub enum Mode {
 }
 ```
 
-The VM never parses the payload format — it works with bytes. Schema validation happens via `TypeGuard` against a Schema Registry, not against a serialization format.
+The VM never parses the payload format — it works with bytes. Schema validation happens via `TypeGuard` against the schema attached to the `ExecutionPlan`, not against a serialization format.
+
+### Generic Core, Optional Schema
+
+FlowRulZ is payload-agnostic by design. The VM treats all payloads as `Vec<u8>` — it never inspects or cares about serialization format (JSON, Protobuf, Avro, MessagePack, or raw binary). Schema is **opt-in**, not mandatory:
+
+- **Without `schema:{...}` in DSL:** the TypeGuard opcode never fires. Arbitrary bytes pass through untouched. Gate/Map operators parse the body as JSON on-demand but impose no shape contract.
+- **With `schema:{...}`:** the compiler emits a TypeGuard opcode that validates fields at runtime, and runs a pre-pass to type-check Gate/Map operators at compile time.
+
+**Use schema only at boundary layers** (ingress rules, first-hop validation). Internal routing rules that `g:`, `e:`, or `n:` without type-sensitive operators should skip schema entirely.
 
 ## ExecutionContext Semantics
 
@@ -131,14 +140,15 @@ Gate on ctx.outputs["fraud"].score > 70
 3. Uses `serde_json::Value` in-place mutation
 
 ### Parallel (`p:a,b,c`)
-1. Clone current body for each fan-out branch
-2. Sequential service calls for each branch
-3. Collect results into `Vec<Value>` under `ctx.body["_parallel"]`
+1. Fan-out: call each service with current `ctx.body`
+2. Collect responses into `Vec<Value>` array
+3. Deep-merge parallel results into existing body under `"_parallel"` key, preserving all other body fields
+4. Non-object bodies (raw strings, arrays) are wrapped in a new object with `"_parallel"`
 
 ### Collect (`c`)
-1. Walk `_parallel` array from parallel results
-2. Merge unique keys into body
-3. Remove `_parallel` after merge
+1. Read `"_parallel"` key from `ctx.body`
+2. Extract the array, set `ctx.body` to its value
+3. Remove `"_parallel"` key from body (error if missing — ensures `p:` always precedes `c`)
 
 ### Emit (`e:a,b,c`)
 1. Fire-and-forget: call each service but discard response
@@ -181,7 +191,9 @@ Gate on ctx.outputs["fraud"].score > 70
 1. Read schema from `ExecutionPlan.schema`
 2. Parse `ctx.body` as JSON
 3. Validate each field against its expected type (including Enum validation)
-4. On failure: return error with field name and expected vs actual type
+4. Fields typed `any` accept any value (null, string, number, object, array — all allowed)
+5. Required fields (`!name:type`) error if missing from body
+6. On failure: return error with field name and expected vs actual type
 
 ### Jmp/Label
 1. `Label` is a no-op (marker)
@@ -244,3 +256,13 @@ Runtime type validation via `TypeGuard` opcode:
 3. Types: String, Integer, Float, Boolean, Object, Array, Null, Any, Enum(Vec\<String\>)
 4. Required fields (`!name:type`) error if missing from body
 5. Enum fields validate value is in allowed set
+6. Fields typed `any` pass all compile-time Gate/Map checks silently (ordering, contains, equality) and accept any value at runtime
+
+The `any` type serves as an escape hatch — it lets you declare a field in the schema for documentation or routing purposes while deferring all type enforcement to the producer. Pair `any` with specific types on fields you actually Gate on:
+
+```
+schema:{!order_id:string,!amount:int,routing_data:any}
+  g:amount>10000 n:manual-review
+```
+
+Here `amount` gets compile-time type safety on the `>` operator; `routing_data` is documented in the schema but unconstrained.

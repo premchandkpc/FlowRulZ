@@ -102,7 +102,7 @@ go/
     │   └── bridge_test.go  # Integration tests
     ├── engine/             # Rule lifecycle, versioning, lane routing, persistence
     ├── execnode/           # ExecutionNode: process wrapping engine + transport + admin
-    ├── transport/          # Kafka consumer/producer
+    ├── transport/          # Kafka consumer/producer (internal topics: _flowrulz_members, _plans, _acks, _replies)
     ├── admin/              # HTTP API (rules CRUD, validate, promote, lanes)
     ├── flow/               # Flow orchestrator with state machine
     ├── registry/           # ServiceRegistry — service name → healthy endpoints, LB, health checks

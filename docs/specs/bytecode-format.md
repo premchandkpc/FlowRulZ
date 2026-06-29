@@ -212,7 +212,19 @@ pub enum ResolvedType {
 }
 ```
 
-**Compile-time use:** `Schema` is read by the compiler's pre-pass to type-check Gate operators (`type_check_gate()`) and Map expressions (`type_check_map()`) before final bytecode emission. Enum values are validated at runtime by the TypeGuard opcode.
+**Compile-time use:** `Schema` is read by the compiler's pre-pass to type-check Gate operators (`type_check_gate()`) and Map expressions (`type_check_map()`) before final bytecode emission.
+
+**`ResolvedType::Any` semantics at compile time:**
+- `Any` fields pass all type checks: ordering operators (`>`, `<`, `>=`, `<=`), `contains`, and equality (`==`, `!=`) are all allowed
+- No compile-time error is emitted for `Any` fields regardless of Gate operator
+- This defers type safety to runtime TypeGuard, which accepts any value for `Any` fields
+- Intended as an escape hatch for fields that need to be declared for routing/documentation but don't need type enforcement
+
+**`ResolvedType::Any` semantics at runtime:**
+- `TypeGuard` validates the field exists (if required) but accepts any JSON value type
+- `Schema::is_valid()` returns `true` for any `Any` field regardless of the actual value
+
+Enum values are validated at runtime by the TypeGuard opcode.
 
 ### RetryConfig / ChunkConfig
 

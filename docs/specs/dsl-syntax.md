@@ -290,13 +290,29 @@ Attaches a type schema to the pipeline. The compiler emits a `TypeGuard` opcode 
 
 Fields prefixed with `!` are required (error if missing). Non-required fields default to `Null` when absent.
 
+**Compile-time type inference:** When a schema is present, the compiler runs a pre-pass that type-checks all Gate and Map operations before emitting bytecode. See "Compile-time Type Checking" above for Gate rules. For Map expressions, `concat()` and `+` operators require all field arguments to be `string` type. Fields not declared in the schema are assumed dynamic (no compile-time check).
+
+**`any` escape hatch:** Fields typed as `any` pass all compile-time checks silently — ordering, contains, and equality operators are all allowed. Type errors are deferred to runtime TypeGuard, which validates only that the field exists (if required) but accepts any value. This is the recommended pattern for fields you route on but don't need type safety for:
+
+```
+schema:{!order_id:string,!amount:int,metadata:any}
+  g:amount>10000 n:manual-review f:auto-approve
+```
+
+Here `amount` gets compile-time type checking on the `>` operator; `metadata` passes through as opaque.
+
+### When To Use Schema
+
+Schema is **optional** — the runtime handles opaque `Vec<u8>` payloads without it:
+
+- **Use schema when:** you own both the producer and the DSL rule; you have Gate operators on typed fields (`>`, `<`, `>=`, `<=`); you need enum validation; it's a boundary/ingress rule (first hop in the pipeline)
+- **Skip schema when:** you're routing third-party payloads; the shape varies per event; you're doing pure routing (`g:`, `e:`, `n:`) with no type-sensitive operators; payload is non-JSON (Protobuf, Avro, binary)
+
 **Examples:**
 ```
 schema:{name:string,!age:int,!amount:float} n:validate
 schema:{id:string} n:process
 ```
-
-**Compile-time type inference:** When a schema is present, the compiler runs a pre-pass that type-checks all Gate and Map operations before emitting bytecode. See "Compile-time Type Checking" above for Gate rules. For Map expressions, `concat()` and `+` operators require all field arguments to be `string` type. Fields not declared in the schema are assumed dynamic (no compile-time check).
 
 ### Labels and Jumps
 

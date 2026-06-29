@@ -130,6 +130,8 @@ impl<'a> VM<'a> {
     }
 
     fn op_collect(&mut self) -> Result<(), String> {
+        let result = parallel::exec_collect(&self.ctx.body, self.plan, &self.arena)?;
+        self.ctx.body = result.to_vec();
         self.ctx.hop_count += 1;
         Ok(())
     }
@@ -216,7 +218,7 @@ impl<'a> VM<'a> {
 mod tests {
     use super::*;
     use crate::bytecode::plan::ExecutionPlan;
-    use crate::bytecode::event::Event;
+
     use crate::dsl::{compiler::Compiler, lexer, optimizer, parser};
 
     fn compile_dsl(dsl: &str) -> ExecutionPlan {

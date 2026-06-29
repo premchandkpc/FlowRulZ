@@ -40,7 +40,9 @@ FlowRulZ/
 │   │   ├── memory-management.md  # Slab pool, arena, interning, message lifecycle
 │   │   ├── ffi-api.md            # C FFI surface for Go bridge
 │   │   ├── kafka-semantics.md    # Consumer groups, offset commit, DLQ
-│   │   └── cluster-model.md      # Single-leader cluster, membership, plan distribution, service registry
+│   │   ├── cluster-model.md      # Single-leader cluster, membership, plan distribution, service registry
+│   │   ├── flows.md              # Every data path: membership → deployment → execution → DLQ → metrics
+│   │   └── file-index.md         # Every source file: package, purpose, key exports
 │   ├── development.md
 │   └── README.md
 ├── CLAUDE.md
@@ -82,9 +84,9 @@ make bench
 | Single-leader cluster | Lowest-ID alive node is leader; no Raft/Paxos — Kafka provides durability |
 | Seed-based membership | Nodes discover via seed peers; heartbeat on `_flowrulz_members` compacted topic |
 | Service Registry | Nodes register services in heartbeat; leader aggregates → publishes combined view |
-| Reply Router | Per-node pending request tracker by correlation_id; timeout/cleanup goroutine |
+| Reply Router | Per-node pending request tracker by correlation_id; timeout/cleanup goroutine; routed via `_flowrulz_replies` |
 | Scheduler | Lane-based priority queues; Fast (50 concurrent, 5k), Normal (20, 2k), Heavy (5, 500) |
-| Plan Distribution | `PlanDistributor` publishes plans/activations; followers ACK; quorum-based activation |
+| Plan Distribution | `PlanDistributor` publishes plans on `_flowrulz_plans`; followers ACK on `_flowrulz_acks`; quorum-based activation |
 | Rate Limiter | Token bucket per name; configurable rate/burst for ingress control |
 | Dead Letter Queue | Bounded queue with replay support; JSON export, per-entry retry count |
 | Metrics | Counters, gauges, histograms; global shortcuts for exec/error tracking |

@@ -4,7 +4,7 @@ Add to the FFI surface: ABI version handshake, capability negotiation, panic iso
 
 **Files affected:**
 - `rust/src/ffi.rs`
-- `go/internal/bridge/bridge.go`
-- `go/internal/bridge/bridge_test.go`
+- `go/bridge/bridge.go`
+- `go/bridge/bridge_test.go`
 
 **Verification:** ABI version check rejects mismatched libraries. Batch execute processes N messages in a single FFI call. Streaming returns partial results without full buffering.

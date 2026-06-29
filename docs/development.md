@@ -31,10 +31,10 @@ make test
 cd rust && cargo test
 
 # Go only
-CGO_ENABLED=1 go test -count=1 ./go/...
+CGO_ENABLED=1 go test -count=1 ./go/... ./simulator/...
 
 # Go lint
-CGO_ENABLED=1 go vet ./go/...
+CGO_ENABLED=1 go vet ./go/... ./simulator/...
 ```
 
 ## Bench
@@ -92,14 +92,14 @@ rust/src/
     └── intern.rs       # String interning
 
 go/
+├── bridge/                 # cgo bindings to Rust FFI
+│   ├── bridge.go           # Go wrappers + sync.Map caller dispatch
+│   ├── caller_bridge.c     # C helper for function pointer callback
+│   └── bridge_test.go      # Integration tests
 ├── cmd/flowrulz/           # Entry point (uses execnode package)
 ├── flow/                   # Client SDK (Publish, Request, Execute, Stream)
 │   └── client.go
 └── internal/
-    ├── bridge/             # cgo bindings to Rust FFI
-    │   ├── bridge.go       # Go wrappers + sync.Map caller dispatch
-    │   ├── caller_bridge.c # C helper for function pointer callback
-    │   └── bridge_test.go  # Integration tests
     ├── engine/             # Rule lifecycle, versioning, lane routing, persistence
     ├── execnode/           # ExecutionNode: process wrapping engine + transport + admin
     ├── transport/          # Kafka consumer/producer (internal topics: _flowrulz_members, _plans, _acks, _replies)
@@ -111,6 +111,24 @@ go/
     ├── plandist/           # PlanDistributor — plan/ack topics, versioned ACK quorum, activation
     ├── observability/      # MetricsCollector — counters, gauges, histograms, global shortcuts
     └── reliability/        # DLQ, rate limiter, circuit breaker
+
+simulator/                  # Simulator for testing rules, services, and cluster behavior
+├── cmd/simulator/          # CLI entry point (--scenario, --interactive, --dashboard)
+├── config/                 # SimConfig, ChaosConfig
+├── dashboard/              # HTTP dashboard + admin API (live metrics, send/rules/services)
+├── dispatcher/             # Hash-based message routing to nodes
+├── execution/              # ExecutionContext, Plan, queues (ReadyQueue, WaitingQueue)
+├── loadgen/                # Traffic generation by scenario
+├── metrics/                # Metrics collector (throughput, latency, error rates)
+├── network/                # Simulated network (latency, drop, slow, duplicate)
+├── scheduler/              # Per-node worker pool, PlanCache, executeContext/executeBridge
+├── scenarios/              # Built-in scenarios (ramp-up, black-friday, payment-outage, spike-test, chaos-monkey)
+├── services/               # MockService with configurable latency/failure, ServiceRegistry
+├── timeline/               # Event timeline store
+├── simulator.go            # Simulator struct — orchestrates all components
+├── client.go               # Client — Send, RegisterService, AddRule
+├── admin.go                # Admin HTTP handlers (registered on dashboard mux)
+└── client_test.go          # Client tests
 ```
 
 ## Adding a New Opcode

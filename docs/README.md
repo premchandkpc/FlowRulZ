@@ -16,10 +16,10 @@ FlowRulZ/
 │   ├── benches/        # Criterion benchmarks
 │   └── Cargo.toml
 ├── go/            # Go data plane + SDK
-│   ├── cmd/flowrulz/   # Entry point (ExecutionNode)
-│   ├── flow/           # Client SDK (Publish, Request, Execute, Stream)
+│   ├── bridge/          # cgo bindings to Rust FFI (sync.Map caller dispatch)
+│   ├── cmd/flowrulz/    # Entry point (ExecutionNode)
+│   ├── flow/            # Client SDK (Publish, Request, Execute, Stream)
 │   └── internal/
-│       ├── bridge/         # cgo bindings to Rust FFI (sync.Map caller dispatch)
 │       ├── engine/         # Rule lifecycle, versioning, lane routing, persistence
 │       ├── execnode/       # ExecutionNode process (engine + transport + admin lifecycle)
 │       ├── transport/      # Kafka consumer/producer
@@ -31,6 +31,13 @@ FlowRulZ/
 │       ├── plandist/       # PlanDistributor — plan/ack topics, versioned ACK quorum, activation
 │       ├── observability/  # MetricsCollector — counters, gauges, histograms
 │       └── reliability/    # DLQ, rate limiter, circuit breaker
+├── simulator/      # Simulator for testing rules, services, and cluster behavior
+│   ├── cmd/simulator/ # CLI entry point (--scenario, --interactive)
+│   ├── config/        # SimConfig, ChaosConfig
+│   ├── dashboard/     # HTTP dashboard + admin API
+│   ├── client.go      # Programmatic Client (Send, AddRule, RegisterService)
+│   ├── admin.go       # Admin HTTP handlers
+│   └── ...            # scheduler, dispatcher, services, loadgen, network, etc.
 ├── docs/
 │   ├── specs/
 │   │   ├── flow-architecture.md  # Distributed Event Runtime — architecture, Event model, ExecutionContext, flows

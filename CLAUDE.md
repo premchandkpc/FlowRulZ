@@ -141,9 +141,36 @@ All endpoints (except `/health`) require `Authorization: Bearer <FLOWRULZ_API_KE
 - `PlanCache.List()` method added.
 - `Scheduler.Stop()` made idempotent (stopped bool guard).
 - All 4 client tests pass: Send with bridge rule, rule not found, AddRule across nodes, RegisterService.
-- 17 Go packages, `go vet ./go/...` clean.
+- Admin API endpoints for interactive mode: `POST /api/admin/send`, `GET|POST /api/admin/rules`, `GET|POST /api/admin/services`. Registered on dashboard mux via `RegisterAdminHandlers()`.
+- `Dashboard.AddHandler()` hook for injecting extra HTTP routes.
+- `--interactive` flag on simulator CLI: no auto-stop, runs until Ctrl+C, admin API available on dashboard port.
+- 22 Go packages (14 prod + 8 simulator), `go vet ./go/... ./simulator/...` clean.
 
 ### Next Steps
 1. Let user write sender/receiver code using `Client.Send()` + `Client.RegisterService()` + `Client.AddRule()`.
 2. Wire rule deployment through admin API + plan distribution for end-to-end test.
 3. Full test suite after each change.
+
+## Admin API (Interactive Mode)
+
+Start the simulator in interactive mode:
+```bash
+make sim
+./simulator --interactive --dashboard-addr :8081
+```
+
+Then use curl to interact:
+```bash
+# Add a rule
+curl -X POST localhost:8081/api/admin/rules \
+  -d '{"id":"my-rule","dsl":"n:validate n:echo"}'
+
+# Register a service
+curl -X POST localhost:8081/api/admin/services \
+  -d '{"name":"echo","base_latency_ms":5}'
+
+# Send a message
+curl -X POST localhost:8081/api/admin/send \
+  -d '{"rule":"my-rule","body":"{\"hello\":\"world\"}"}'
+# → {"body":"...","duration":"..."}
+```

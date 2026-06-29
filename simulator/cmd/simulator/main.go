@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/premchandkpc/FlowRulZ/simulator"
 	"github.com/premchandkpc/FlowRulZ/simulator/config"
@@ -27,6 +30,7 @@ func main() {
 	slow := flag.Bool("slow", false, "enable slow network")
 	scenariosFlag := flag.Bool("scenarios", false, "list available scenarios")
 	verbose := flag.Bool("verbose", false, "verbose output")
+	interactive := flag.Bool("interactive", false, "interactive mode with admin API (no auto-stop)")
 
 	flag.Parse()
 
@@ -38,7 +42,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	if *scenario != "" && scenarios.ByName(*scenario) == nil {
+	if !*interactive && *scenario != "" && scenarios.ByName(*scenario) == nil {
 		fmt.Fprintf(os.Stderr, "unknown scenario: %s\n", *scenario)
 		fmt.Fprintf(os.Stderr, "use --scenarios to list available\n")
 		os.Exit(1)
@@ -63,6 +67,24 @@ func main() {
 			SlowFactor:   3.0,
 			DuplicatePct: 1.0,
 		}
+	}
+
+	if *interactive {
+		sim := simulator.New(cfg)
+		sim.RegisterAdminHandlers()
+
+		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer cancel()
+
+		sim.Dispatcher.StartAll()
+		if cfg.Dashboard {
+			sim.Dashboard.Start()
+		}
+		log.Printf("simulator: interactive mode on %s — API at /api/admin/{send,rules,services}", cfg.DashboardAddr)
+		<-ctx.Done()
+		log.Printf("shutting down...")
+		sim.Stop()
+		return
 	}
 
 	sim := simulator.New(cfg)

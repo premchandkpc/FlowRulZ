@@ -18,6 +18,7 @@ type Dashboard struct {
 	nodes    []*scheduler.Scheduler
 	timeline *timeline.Store
 	metrics  *metrics.Collector
+	extra    map[string]http.HandlerFunc
 	server   *http.Server
 }
 
@@ -27,7 +28,12 @@ func New(addr string, nodes []*scheduler.Scheduler, tl *timeline.Store, mc *metr
 		nodes:    nodes,
 		timeline: tl,
 		metrics:  mc,
+		extra:    make(map[string]http.HandlerFunc),
 	}
+}
+
+func (d *Dashboard) AddHandler(pattern string, handler http.HandlerFunc) {
+	d.extra[pattern] = handler
 }
 
 func (d *Dashboard) Start() {
@@ -37,6 +43,9 @@ func (d *Dashboard) Start() {
 	mux.HandleFunc("/api/events", d.handleEvents)
 	mux.HandleFunc("/api/executions/", d.handleExecution)
 	mux.HandleFunc("/api/stats", d.handleStats)
+	for pattern, handler := range d.extra {
+		mux.HandleFunc(pattern, handler)
+	}
 	mux.HandleFunc("/", d.handleIndex)
 
 	d.server = &http.Server{Addr: d.addr, Handler: mux}

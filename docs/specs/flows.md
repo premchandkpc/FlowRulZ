@@ -160,7 +160,7 @@ Client                              Admin Server
 ```
 
 **Files:** `go/internal/admin/server.go`, `go/internal/engine/engine.go`,
-`go/internal/bridge/bridge.go`, `rust/src/dsl/compiler.rs`, `rust/src/ffi.rs`
+`go/bridge/bridge.go`, `rust/src/dsl/compiler.rs`, `rust/src/ffi.rs`
 
 ---
 
@@ -224,7 +224,7 @@ laneWorker loop
 
 **Files:** `go/internal/transport/consumer.go`, `go/internal/execnode/execnode.go`,
 `go/internal/scheduler/scheduler.go`, `go/internal/engine/engine.go`,
-`go/internal/bridge/bridge.go`, `go/internal/reliability/ratelimit.go`
+`go/bridge/bridge.go`, `go/internal/reliability/ratelimit.go`
 
 ---
 
@@ -395,7 +395,7 @@ Result replaces ctx.body
 ```
 
 **Files:** `rust/src/executor/next.rs`, `rust/src/ffi.rs`,
-`go/internal/bridge/caller_bridge.c`, `go/internal/bridge/bridge.go`,
+`go/bridge/caller_bridge.c`, `go/bridge/bridge.go`,
 `go/internal/registry/registry.go`
 
 ---
@@ -668,7 +668,7 @@ Global shortcuts:
 ```
 
 **Files:** `rust/src/tracing/mod.rs`, `rust/src/ffi.rs`,
-`go/internal/bridge/bridge.go`, `go/internal/observability/metrics.go`
+`go/bridge/bridge.go`, `go/internal/observability/metrics.go`
 
 ---
 

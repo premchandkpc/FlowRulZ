@@ -276,7 +276,7 @@ Client                  Control Plane                Data Plane
 | HTTP handler | `go/internal/admin/server.go` | Parses JSON, calls `engine.Deploy(id, dsl)` |
 | Engine | `go/internal/engine/engine.go` | `Deploy()`: compile, assign lane, persist |
 | Plan Distribution | `go/internal/plandist/plandist.go` | Leader publishes plan to `_flowrulz_plans`, waits for ACK quorum on `_flowrulz_acks` |
-| Bridge | `go/internal/bridge/bridge.go` | `Compile()`: C FFI call to `flowrulz_compile()` |
+| Bridge | `go/bridge/bridge.go` | `Compile()`: C FFI call to `flowrulz_compile()` |
 | Rust FFI | `rust/src/ffi.rs` | `flowrulz_compile()`: lex → parse → optimize → compile |
 | DSL Compiler | `rust/src/dsl/compiler.rs` | Compiles AST → `ExecutionPlan`, type checking |
 | Persistence | `go/internal/engine/engine.go` | `saveRules()`: atomic `.tmp` → `os.Rename` |
@@ -362,8 +362,8 @@ ServiceCaller returns ([]byte, error)
 |------|-------|------|
 | `rust/src/executor/next.rs` | Rust | `exec_next()`: service call with retry logic |
 | `rust/src/ffi.rs` | Rust | Closure calling `caller_cb` function pointer |
-| `go/internal/bridge/caller_bridge.c` | C | Static C function forwarding to `goServiceCaller` |
-| `go/internal/bridge/bridge.go` | Go | `//export goServiceCaller`: dispatches to `ServiceCaller` |
+| `go/bridge/caller_bridge.c` | C | Static C function forwarding to `goServiceCaller` |
+| `go/bridge/bridge.go` | Go | `//export goServiceCaller`: dispatches to `ServiceCaller` |
 | `go/internal/registry/` | Go | `ServiceRegistry`: service name → healthy endpoints, LB, health checks |
 
 ---
@@ -477,7 +477,7 @@ pub struct Span {
 | `rust/src/tracing/mod.rs` | `Span` struct, `emit_span()` |
 | `rust/src/tracing/ring_buffer.rs` | Lock-free ring buffer |
 | `rust/src/ffi.rs` | `flowrulz_get_spans()` drains buffer |
-| `go/internal/bridge/bridge.go` | `GetSpans()` calls `C.flowrulz_get_spans` |
+| `go/bridge/bridge.go` | `GetSpans()` calls `C.flowrulz_get_spans` |
 
 ---
 
@@ -613,7 +613,7 @@ pub struct ExecutionContext {
 | `rust/src/tracing/` | 6 |
 | `go/internal/admin/server.go` | 1, 7 |
 | `go/internal/engine/engine.go` | 1, 2, 8 |
-| `go/internal/bridge/bridge.go` | 1, 2, 3 |
+| `go/bridge/bridge.go` | 1, 2, 3 |
 | `go/internal/execnode/execnode.go` | 2 |
 | `go/internal/scheduler/` | 2 |
 | `go/internal/registry/` | 3 |

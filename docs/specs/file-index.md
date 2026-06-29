@@ -4,7 +4,7 @@ Every source file in the project, grouped by package, with its purpose and key e
 
 ---
 
-## Go (19 source files)
+## Go (21 source files + 18 simulator files)
 
 ### `go/cmd/flowrulz/main.go`
 **Package:** `main`
@@ -43,7 +43,7 @@ HTTP admin server. Serves rule CRUD, validation, promote/rollback, lane listing,
 
 ---
 
-### `go/internal/bridge/bridge.go`
+### `go/bridge/bridge.go`
 **Package:** `bridge`
 
 CGo FFI bridge to the Rust shared library. Functions map 1:1 to `extern "C"` calls:
@@ -62,7 +62,7 @@ The Go-side service caller bridge uses `sync.Map` (callerMap) + `atomic.Uint64` 
 
 ---
 
-### `go/internal/bridge/caller_bridge.c`
+### `go/bridge/caller_bridge.c`
 **Language:** C
 
 Static C function bridging the Rust `caller_cb_t` function pointer to the Go-exported `goServiceCaller`. Provides `getCallerBridgePtr()` which returns a function pointer the Rust FFI layer registers as the service call callback.
@@ -271,6 +271,154 @@ Both implement `MessageConsumer`/`MessageProducer` interfaces, swappable with st
 HTTP transport layer. Listens on a configurable address for POST `/event` requests. Decodes JSON body, delegates to a `MessageHandler`, returns the response. Optional Bearer token auth via `APIKey` config.
 
 **Exports:** `HTTPConfig`, `HTTPTransport`, `NewHTTPTransport()`, `Start()`, `Stop()`
+
+---
+
+### `simulator/simulator.go`
+**Package:** `simulator`
+
+Top-level orchestrator. Creates ServiceRegistry, Timeline, Metrics, Network, Nodes (Scheduler instances), Dispatcher, LoadGen, Dashboard. `New()` compiles default plans via bridge.Compile, assigns compiled bytecode to per-node plan copies. `Run()` starts all components, runs for configured duration, prints results. `Stop()` tears down orderly.
+
+**Exports:** `Simulator`, `New()`, `Run()`, `Stop()`, `Client()`
+
+---
+
+### `simulator/client.go`
+**Package:** `simulator`
+
+Client for programmatic interaction. `Send(ruleID, body)` dispatches a message via the Dispatcher and blocks until the execution completes, returning the output body and duration. `RegisterService(svc)` adds a mock service. `AddRule(id, dsl)` compiles a DSL rule and registers on all nodes. `Plans()`/`Services()` list registered items.
+
+**Exports:** `Client`, `SendResult`, `Send()`, `RegisterService()`, `AddRule()`, `Plans()`, `Services()`
+
+---
+
+### `simulator/admin.go`
+**Package:** `simulator`
+
+Admin HTTP handlers for interactive mode. Registered on the dashboard mux via `RegisterAdminHandlers()`. Provides `POST /api/admin/send` (dispatch message to rule), `GET/POST /api/admin/rules` (list/add rules), `GET/POST /api/admin/services` (list/add services).
+
+**Exports:** `RegisterAdminHandlers()`
+
+---
+
+### `simulator/config/config.go`
+**Package:** `config`
+
+Configuration structs for the simulator. `SimConfig` holds Nodes count, Workers per node, Scenario name, Duration, Rate, Speed multiplier, Dashboard address, Chaos settings. `ChaosConfig` configures packet drop, slow network, duplication.
+
+**Exports:** `SimConfig`, `ChaosConfig`
+
+---
+
+### `simulator/dashboard/dashboard.go`
+**Package:** `dashboard`
+
+HTTP dashboard + admin API server. Serves real-time metrics, event timeline, node status, and execution detail. Uses `ServeMux` with JSON API endpoints. Admin endpoints can be injected via `AddHandler()`. Serves an HTML/JS SPA at `/`.
+
+**Exports:** `Dashboard`, `New()`, `Start()`, `Stop()`, `AddHandler()`
+
+---
+
+### `simulator/dispatcher/dispatcher.go`
+**Package:** `dispatcher`
+
+Hash-based message dispatcher. Maps execution context ID to a node via FNV-32a hash, enqueues on the target node's Scheduler. `DispatchByKey()` allows routing by explicit key.
+
+**Exports:** `Dispatcher`, `New()`, `Dispatch()`, `DispatchByKey()`, `StartAll()`, `StopAll()`
+
+---
+
+### `simulator/execution/context.go`
+**Package:** `execution`
+
+`ExecutionContext` — state object flowing through the simulator. Holds Plan, IP (instruction pointer), State (Created/Ready/Running/WaitingForService/Completed/Failed), Variables map, IncomingBody, Output, WaitingService, ResultCh for client delivery. `Transition()` records state changes, `MarkDone()`/`MarkFailed()` set final state.
+
+**Exports:** `State`, `Result`, `ExecutionContext`, `StateChange`, `NewContext()`, `Transition()`, `MarkDone()`, `MarkFailed()`, `AddEvent()`
+
+---
+
+### `simulator/execution/plan.go`
+**Package:** `execution`
+
+Plan and Instruction types for the simulator's instruction-based execution path. Defines OpCodes: OpNop, OpCallService, OpValidate, OpBranch, OpPublish, OpReturn. Also holds `PlanBytes` (compiled bytecode for real VM) and `ServiceNames` map. Provides built-in flows: OrderFlow, OrderFlowAlt, PaymentFlow, RefundFlow.
+
+**Exports:** `OpCode`, `Instruction`, `Plan`, `NewPlan()`, builtin plan vars
+
+---
+
+### `simulator/execution/queue.go`
+**Package:** `execution`
+
+ReadyQueue (FIFO with mutex, signaled via channel) and WaitingQueue (map of correlation ID → ExecutionContext). Used by Scheduler for execution management and suspension.
+
+**Exports:** `ReadyQueue`, `WaitingQueue`, `NewReadyQueue()`, `NewWaitingQueue()`
+
+---
+
+### `simulator/loadgen/loadgen.go`
+**Package:** `loadgen`
+
+Traffic generator. `Config` holds RequestsPerSec, Duration, Pattern. `Generator` dispatches messages at the configured rate using ticker-based pacing. Supports pattern-based message selection (0=random, 1=sequential, 2=weighted by service).
+
+**Exports:** `Config`, `Generator`, `DefaultConfig()`, `New()`, `Start()`, `Stop()`
+
+---
+
+### `simulator/metrics/metrics.go`
+**Package:** `metrics`
+
+Metrics collector. Tracks completed/failed/dropped counts, throughput, latency percentiles (P50/P95/P99), and per-service latency/error rates. `Snapshot()` returns all current values for dashboard display.
+
+**Exports:** `Collector`, `Snapshot`, `NodeStats`, `ServiceStats`, `NewCollector()`, `RecordCompleted()`, `RecordFailed()`, `RecordDropped()`, `RecordServiceCall()`, `Snapshot()`
+
+---
+
+### `simulator/network/network.go`
+**Package:** `network`
+
+Simulated network layer. `CallService()` applies configurable latency (min/max jitter), optional chaos (packet drop, slow network, duplication). ChaosConfig controls drop probability, slow factor, duplicate percentage.
+
+**Exports:** `Config`, `ChaosConfig`, `Network`, `New()`, `SetChaos()`, `CallService()`
+
+---
+
+### `simulator/scheduler/scheduler.go`
+**Package:** `scheduler`
+
+Per-node execution scheduler. Uses worker pool (goroutines) pulling from a ReadyQueue. Two execution paths:
+- **Instruction-based**: loops over `Plan.Instructions`, dispatches OpCodes (CallService, Validate, Branch, Publish, Return)
+- **Bridge-based** (PlanBytes != nil): cooperative loop calling `bridge.ExecuteStep()`, handles StepPending (service call via Network) and StepDone (captures output, records metrics)
+
+`PlanCache` maps rule IDs to Plans. `sendResult()` delivers completion/failure to `ctx.ResultCh` for client integration.
+
+**Exports:** `Result`, `Scheduler`, `PlanCache`, `New()`, `NewPlanCache()`, `Start()`, `Stop()`, `Enqueue()`, `Snapshot()`
+
+---
+
+### `simulator/scenarios/scenarios.go`
+**Package:** `scenarios`
+
+Built-in test scenarios. Each scenario defines a network config and loadgen config. Available: ramp-up (gradual load increase), black-friday (high rate spike), payment-outage (payment 100% failure), spike-test (intermittent bursts), chaos-monkey (random failures + slow network).
+
+**Exports:** `Scenario`, `All`, `ByName()`, `DefaultPlans()`
+
+---
+
+### `simulator/services/service.go`
+**Package:** `services`
+
+Mock service with configurable behavior. `MockService` has BaseLatency, LatencyJitter, FailureRate, MaxConcurrent. `Call()` applies latency then returns `{"status":"ok"}` or fails based on failure rate. `ServiceRegistry` maps names to services. `DefaultServices()` pre-populates 9 common services (validate, inventory, fraud, payment, email, loyalty, invoice, shipping, notification).
+
+**Exports:** `MockService`, `CallRecord`, `CallResult`, `ServiceRegistry`, `NewRegistry()`, `Register()`, `Get()`, `Names()`, `DefaultServices()`
+
+---
+
+### `simulator/timeline/timeline.go`
+**Package:** `timeline`
+
+Event timeline store. Records all execution events (created, instruction, service call, response, completion, failure) with timestamps. Supports `Recent(n)`, `ForExec(id)`, and aggregate `Stats()`.
+
+**Exports:** `Event`, `Store`, `EventType` constants, `NewStore()`, `Record()`, `Recent()`, `ForExec()`, `Stats()`
 
 ---
 
@@ -688,7 +836,8 @@ Rust crate definition with dependencies: `bumpalo`, `serde`, `serde_json`, `cros
 
 | Layer | Files | Lines |
 |-------|-------|-------|
-| Go source | 19 | ~2,200 |
+| Go source (prod) | 21 | ~2,500 |
+| Go source (simulator) | 18 | ~2,200 |
 | Rust source | 35 | ~6,500 |
 | C source | 1 | 14 |
 | Build/config | 3 | — |

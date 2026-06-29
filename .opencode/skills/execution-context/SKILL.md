@@ -6,7 +6,7 @@
 - `rust/src/executor/context.rs` — `ExecutionContext` struct with message_id, correlation_id, trace_id, partition, offset, headers, retry_count, tenant, deadline_ms
 - `rust/src/executor/mod.rs` — `ctx` field on `VM`, initialized in `new()`
 - `rust/src/ffi.rs` — `flowrulz_execute` now accepts optional context parameters (msg_id, corr_id, trace_id ptr+len, partition u32, offset i64)
-- `go/internal/bridge/bridge.go` — `ExecContext` Go type, `Execute` accepts ctx parameter, passes all fields through FFI
+- `go/bridge/bridge.go` — `ExecContext` Go type, `Execute` accepts ctx parameter, passes all fields through FFI
 
 **Still needed:**
 - Thread context through individual op handlers (Next, Parallel, Gate, Map, Emit, Dag)

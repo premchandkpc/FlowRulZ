@@ -31,7 +31,7 @@ spec:
     spec:
       containers:
         - name: kafka
-          image: confluentinc/cp-kafka:latest
+          image: confluentinc/cp-kafka:7.6.0
           ports:
             - containerPort: 9092
           env:

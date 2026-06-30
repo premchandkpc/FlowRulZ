@@ -32,7 +32,7 @@ spec:
         - name: registry-credentials
       initContainers:
         - name: wait-for-kafka
-          image: confluentinc/cp-kafka:latest
+          image: confluentinc/cp-kafka:7.6.0
           command:
             - sh
             - -c

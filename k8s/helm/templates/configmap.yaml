@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flowrulz-config
+  namespace: {{ include "flowrulz.namespace" . }}
+data:
+  FLOWRULZ_PERSIST_PATH: {{ .Values.flowrulz.config.FLOWRULZ_PERSIST_PATH | quote }}
+  FLOWRULZ_TOPIC: {{ .Values.flowrulz.config.FLOWRULZ_TOPIC | quote }}
+  FLOWRULZ_GRPC_ADDR: {{ .Values.flowrulz.config.FLOWRULZ_GRPC_ADDR | quote }}
+  FLOWRULZ_HTTP_ADDR: {{ .Values.flowrulz.config.FLOWRULZ_HTTP_ADDR | quote }}

@@ -1,0 +1,91 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: flowrulz
+  namespace: flowrulz
+  labels:
+    app: flowrulz
+spec:
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+    - port: 9090
+      targetPort: 9090
+      name: grpc
+  clusterIP: None
+  selector:
+    app: flowrulz
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: flowrulz
+  namespace: flowrulz
+spec:
+  serviceName: flowrulz
+  replicas: 3
+  selector:
+    matchLabels:
+      app: flowrulz
+  template:
+    metadata:
+      labels:
+        app: flowrulz
+    spec:
+      containers:
+        - name: flowrulz
+          image: flowrulz:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 9090
+              name: grpc
+          envFrom:
+            - configMapRef:
+                name: flowrulz-config
+          env:
+            - name: FLOWRULZ_NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: FLOWRULZ_SEEDS
+              value: "flowrulz-0.flowrulz:9090,flowrulz-1.flowrulz:9090,flowrulz-2.flowrulz:9090"
+            - name: FLOWRULZ_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flowrulz-api-key
+                  key: key
+                  optional: true
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi

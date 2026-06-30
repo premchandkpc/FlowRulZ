@@ -1,0 +1,79 @@
+# FlowRulZ Helm chart values
+# Override via `--set` or a custom values file.
+
+# --- Global ---
+global:
+  namespace: flowrulz
+  imageRegistry: ""
+
+# --- FlowRulZ production nodes ---
+flowrulz:
+  image:
+    repository: flowrulz
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 3
+  ports:
+    http: 8080
+    grpc: 9090
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+  persistence:
+    size: 1Gi
+
+  # ConfigMap overrides (defaults from configmap.yaml template)
+  config:
+    FLOWRULZ_PERSIST_PATH: /data/rules.json
+    FLOWRULZ_TOPIC: flowrulz-input
+    FLOWRULZ_GRPC_ADDR: ":9090"
+    FLOWRULZ_HTTP_ADDR: ":8080"
+
+  apiKey: changeme-in-production
+
+  # Node-specific env overrides (merged into each pod)
+  extraEnv: {}
+
+# --- Simulator ---
+sim:
+  enabled: true
+  image:
+    repository: flowrulz
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  port: 8081
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  args:
+    - --interactive
+    - --dashboard-addr=:8081
+    - --nodes=3
+
+# --- Ingress ---
+ingress:
+  enabled: true
+  className: nginx
+  flowrulz:
+    host: flowrulz.local
+    paths:
+      - path: /api
+        pathType: Prefix
+      - path: /health
+        pathType: Exact
+  sim:
+    host: sim.flowrulz.local
+    paths:
+      - path: /
+        pathType: Prefix
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /

@@ -1,7 +1,0 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: flowrulz-config
-  namespace: flowrulz
-data:
-  FLOWRULZ_PERSIST_PATH: /data/rules.json

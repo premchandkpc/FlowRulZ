@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: flowrulz
+  namespace: {{ include "flowrulz.namespace" . }}
+spec:
+  serviceName: flowrulz
+  replicas: {{ .Values.flowrulz.replicas }}
+  selector:
+    matchLabels:
+      app: flowrulz
+  template:
+    metadata:
+      labels:
+        app: flowrulz
+    spec:
+      containers:
+        - name: flowrulz
+          image: {{ include "flowrulz.image" . }}
+          imagePullPolicy: {{ .Values.flowrulz.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.flowrulz.ports.http }}
+              name: http
+            - containerPort: {{ .Values.flowrulz.ports.grpc }}
+              name: grpc
+          envFrom:
+            - configMapRef:
+                name: flowrulz-config
+          env:
+            - name: FLOWRULZ_NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: FLOWRULZ_SEEDS
+              value: {{ range $i, $_ := until (int $.Values.flowrulz.replicas) }}{{ if $i }},{{ end }}flowrulz-{{ $i }}.flowrulz:{{ $.Values.flowrulz.ports.grpc }}{{ end }}
+            - name: FLOWRULZ_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flowrulz-api-key
+                  key: key
+                  optional: true
+            {{- range $k, $v := .Values.flowrulz.extraEnv }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.flowrulz.ports.http }}
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.flowrulz.ports.http }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: {{ .Values.flowrulz.resources.requests.cpu }}
+              memory: {{ .Values.flowrulz.resources.requests.memory }}
+            limits:
+              cpu: {{ .Values.flowrulz.resources.limits.cpu }}
+              memory: {{ .Values.flowrulz.resources.limits.memory }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: {{ .Values.flowrulz.persistence.size }}

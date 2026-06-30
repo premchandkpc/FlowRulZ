@@ -1,0 +1,16 @@
+{{- if .Values.sim.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: sim
+  namespace: {{ include "flowrulz.namespace" . }}
+  labels:
+    app: sim
+spec:
+  ports:
+    - port: {{ .Values.sim.port }}
+      targetPort: {{ .Values.sim.port }}
+      name: http
+  selector:
+    app: sim
+{{- end }}

@@ -1,0 +1,32 @@
+{{- if .Values.sim.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sim
+  namespace: {{ include "flowrulz.namespace" . }}
+spec:
+  replicas: {{ .Values.sim.replicas }}
+  selector:
+    matchLabels:
+      app: sim
+  template:
+    metadata:
+      labels:
+        app: sim
+    spec:
+      containers:
+        - name: sim
+          image: {{ include "sim.image" . }}
+          imagePullPolicy: {{ .Values.sim.image.pullPolicy }}
+          args: {{ toYaml .Values.sim.args | nindent 12 }}
+          ports:
+            - containerPort: {{ .Values.sim.port }}
+              name: dashboard
+          resources:
+            requests:
+              cpu: {{ .Values.sim.resources.requests.cpu }}
+              memory: {{ .Values.sim.resources.requests.memory }}
+            limits:
+              cpu: {{ .Values.sim.resources.limits.cpu }}
+              memory: {{ .Values.sim.resources.limits.memory }}
+{{- end }}

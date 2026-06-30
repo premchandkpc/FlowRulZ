@@ -1,0 +1,11 @@
+apiVersion: v2
+name: flowrulz
+description: FlowRulZ — Distributed Rule Broker
+type: application
+version: 0.1.0
+appVersion: 0.1.0
+keywords:
+  - rule-engine
+  - event-bus
+  - distributed
+home: https://github.com/premchandkpc/FlowRulZ

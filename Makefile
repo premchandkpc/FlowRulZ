@@ -5,9 +5,21 @@ BIN      := flowrulz
 SIM_BIN  := sim
 CGO      := CGO_ENABLED=1
 
-.PHONY: all rust go sim test test-local bench clean vet run-flowrulz run-sim
+.PHONY: all rust go sim test test-local bench clean vet run-flowrulz run-sim \
+        docker docker-sim kind-up kind-load kind-deploy helm-install helm-uninstall k8s-deploy k8s-delete \
+        full file deploy
 
 all: rust go
+
+# Run all functionalities sequentially (clean → build → test → vet → bench)
+full: clean rust go sim test vet bench
+	@echo "=== All done ==="
+
+file: full
+
+# Full deploy pipeline: build → test → docker → kind cluster → deploy
+deploy: full docker kind-up
+	kubectl apply -k k8s/base
 
 rust:
 	cd $(RUST_DIR) && cargo build --release
@@ -54,3 +66,32 @@ clean:
 	cd $(RUST_DIR) && cargo clean
 	rm -f $(BIN) $(SIM_BIN) simulator/simulator
 	rm -rf rust/target
+
+# === Docker ===
+docker:
+	docker build --target flowrulz -t flowrulz:latest .
+
+docker-sim:
+	docker build --target sim -t flowrulz-sim:latest .
+
+# === kind (local K8s) ===
+kind-up:
+	kind create cluster --name flowrulz --config k8s/kind-config.yaml 2>/dev/null || true
+	kind load docker-image flowrulz:latest --name flowrulz
+
+kind-deploy: docker kind-up
+	kubectl apply -k k8s/base
+
+# === Helm ===
+helm-install: docker
+	helm upgrade --install flowrulz k8s/helm --namespace flowrulz --create-namespace
+
+helm-uninstall:
+	helm uninstall flowrulz --namespace flowrulz
+
+# === kubectl (kustomize) ===
+k8s-deploy: docker
+	kubectl apply -k k8s/base
+
+k8s-delete:
+	kubectl delete -k k8s/base

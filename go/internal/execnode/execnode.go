@@ -93,18 +93,20 @@ type ExecutionNode struct {
 }
 
 type Config struct {
-	PersistPath   string
-	ExecStateDir  string
-	HTTPAddr      string
-	GRPCAddr      string
-	CompilerAddr  string
-	PluginDir     string
-	Topic         string
-	NodeID        string
-	Seeds         []string
-	KafkaBrokers  []string
-	KafkaGroupID  string
-	APIKey        string
+	PersistPath    string
+	ExecStateDir   string
+	HTTPAddr       string
+	GRPCAddr       string
+	CompilerAddr   string
+	PluginDir      string
+	Topic          string
+	NodeID         string
+	Seeds          []string
+	KafkaBrokers   []string
+	KafkaGroupID   string
+	KafkaAcks      string
+	KafkaIdempotent bool
+	APIKey         string
 }
 
 func NewConfig() *Config {
@@ -150,8 +152,10 @@ func New(cfg *Config) *ExecutionNode {
 	en.RateLimiter = reliability.NewRateLimiter()
 
 	kafkaCfg := transport.KafkaConfig{
-		Brokers: cfg.KafkaBrokers,
-		GroupID: cfg.KafkaGroupID,
+		Brokers:    cfg.KafkaBrokers,
+		GroupID:    cfg.KafkaGroupID,
+		Acks:       transport.AcksLevelFromString(cfg.KafkaAcks),
+		Idempotent: cfg.KafkaIdempotent,
 	}
 
 	dlqProducer := en.mkProducer(reliability.DefaultDLQTopic, kafkaCfg)
@@ -720,8 +724,10 @@ func (en *ExecutionNode) Start() {
 	}
 
 	kafkaCfg := transport.KafkaConfig{
-		Brokers: en.config.KafkaBrokers,
-		GroupID: en.config.KafkaGroupID,
+		Brokers:    en.config.KafkaBrokers,
+		GroupID:    en.config.KafkaGroupID,
+		Acks:       transport.AcksLevelFromString(en.config.KafkaAcks),
+		Idempotent: en.config.KafkaIdempotent,
 	}
 	inputConsumer := en.mkConsumer(en.config.Topic, handler, kafkaCfg)
 	membersConsumer := en.mkConsumer(DefaultMembersTopic, en.handleMembershipMessage, kafkaCfg)

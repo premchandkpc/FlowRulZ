@@ -10,22 +10,44 @@ import (
 	"github.com/IBM/sarama"
 )
 
+type AcksLevel int
+
+const (
+	AcksNone AcksLevel = 0
+	AcksOne  AcksLevel = 1
+	AcksAll  AcksLevel = -1
+)
+
+func AcksLevelFromString(s string) AcksLevel {
+	switch s {
+	case "0":
+		return AcksNone
+	case "all", "-1":
+		return AcksAll
+	default:
+		return AcksOne
+	}
+}
+
 type KafkaConfig struct {
 	Brokers    []string
 	GroupID    string
 	ConsumerCh chan []byte
+	Acks       AcksLevel
+	Idempotent bool
 }
 
 type KafkaConsumer struct {
-	topic     string
-	handler   MessageHandler
-	cfg       KafkaConfig
-	client    sarama.ConsumerGroup
-	msgCh     chan []byte
-	stopCh    chan struct{}
-	started   bool
-	mu        sync.Mutex
-	wg        sync.WaitGroup
+	topic       string
+	handler     MessageHandler
+	cfg         KafkaConfig
+	client      sarama.ConsumerGroup
+	msgCh       chan []byte
+	stopCh      chan struct{}
+	started     bool
+	mu          sync.Mutex
+	wg          sync.WaitGroup
+	manualCommit bool
 }
 
 func NewKafkaConsumer(topic string, handler MessageHandler, cfg KafkaConfig) *KafkaConsumer {
@@ -34,11 +56,12 @@ func NewKafkaConsumer(topic string, handler MessageHandler, cfg KafkaConfig) *Ka
 		ch = make(chan []byte, 1000)
 	}
 	return &KafkaConsumer{
-		topic:  topic,
-		handler: handler,
-		cfg:    cfg,
-		msgCh:  ch,
-		stopCh: make(chan struct{}),
+		topic:       topic,
+		handler:     handler,
+		cfg:         cfg,
+		msgCh:       ch,
+		stopCh:      make(chan struct{}),
+		manualCommit: len(cfg.Brokers) > 0,
 	}
 }
 
@@ -53,7 +76,8 @@ func (kc *KafkaConsumer) Start(ctx context.Context) {
 	kc.started = true
 	kc.mu.Unlock()
 
-	log.Printf("kafka consumer: topic=%s brokers=%v group=%s", kc.topic, kc.cfg.Brokers, kc.cfg.GroupID)
+	log.Printf("kafka consumer: topic=%s brokers=%v group=%s manual_commit=%t",
+		kc.topic, kc.cfg.Brokers, kc.cfg.GroupID, kc.manualCommit)
 
 	if len(kc.cfg.Brokers) == 0 {
 		kc.runChannel(ctx)
@@ -66,6 +90,10 @@ func (kc *KafkaConsumer) Start(ctx context.Context) {
 	config.Consumer.Offsets.Initial = sarama.OffsetNewest
 	config.Consumer.Return.Errors = true
 	config.Consumer.MaxProcessingTime = 500 * time.Millisecond
+
+	if kc.manualCommit {
+		config.Consumer.Offsets.AutoCommit.Enable = false
+	}
 
 	client, err := sarama.NewConsumerGroup(kc.cfg.Brokers, kc.cfg.GroupID, config)
 	if err != nil {
@@ -138,13 +166,23 @@ func (kc *KafkaConsumer) Inject(msg []byte) {
 func (kc *KafkaConsumer) Setup(sarama.ConsumerGroupSession) error   { return nil }
 func (kc *KafkaConsumer) Cleanup(sarama.ConsumerGroupSession) error { return nil }
 
+type offsetTracker struct {
+	offset int64
+	marked bool
+}
+
 func (kc *KafkaConsumer) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	for msg := range claim.Messages() {
 		_, err := kc.handler(context.Background(), msg.Value)
 		if err != nil {
 			log.Printf("kafka consumer %s: handler error: %v", kc.topic, err)
 		}
-		sess.MarkMessage(msg, "")
+		if kc.manualCommit {
+			sess.MarkMessage(msg, "")
+			sess.Commit()
+		} else {
+			sess.MarkMessage(msg, "")
+		}
 	}
 	return nil
 }
@@ -189,6 +227,17 @@ func (kp *KafkaProducer) Send(ctx context.Context, key, value []byte) error {
 	return nil
 }
 
+func kafkaAcksToSarama(acks AcksLevel) sarama.RequiredAcks {
+	switch acks {
+	case AcksNone:
+		return sarama.NoResponse
+	case AcksAll:
+		return sarama.WaitForAll
+	default:
+		return sarama.WaitForLocal
+	}
+}
+
 func (kp *KafkaProducer) initProducer() error {
 	if len(kp.cfg.Brokers) == 0 {
 		log.Printf("kafka producer %s: no brokers configured, using log-only mode", kp.topic)
@@ -198,7 +247,16 @@ func (kp *KafkaProducer) initProducer() error {
 	config.Version = sarama.MinVersion
 	config.Producer.Return.Successes = true
 	config.Producer.Return.Errors = true
-	config.Producer.RequiredAcks = sarama.WaitForLocal
+	config.Producer.RequiredAcks = kafkaAcksToSarama(kp.cfg.Acks)
+
+	if kp.cfg.Idempotent {
+		config.Producer.Idempotent = true
+		config.Net.MaxOpenRequests = 1
+		if kp.cfg.Acks != AcksAll {
+			log.Printf("kafka producer %s: idempotent requires acks=all, overriding", kp.topic)
+			config.Producer.RequiredAcks = sarama.WaitForAll
+		}
+	}
 
 	producer, err := sarama.NewSyncProducer(kp.cfg.Brokers, config)
 	if err != nil {

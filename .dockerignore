@@ -1,0 +1,10 @@
+.git/
+.gitignore
+.DS_Store
+.idea/
+.opencode/
+rust/target/
+docs/
+*.md
+flowrulz
+sim

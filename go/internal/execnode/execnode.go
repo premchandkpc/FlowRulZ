@@ -22,6 +22,7 @@ import (
 
 	"github.com/premchandkpc/FlowRulZ/go/bridge"
 	"github.com/premchandkpc/FlowRulZ/go/internal/admin"
+	"github.com/premchandkpc/FlowRulZ/go/internal/cluster"
 	"github.com/premchandkpc/FlowRulZ/go/internal/compiler"
 	"github.com/premchandkpc/FlowRulZ/go/internal/engine"
 	"github.com/premchandkpc/FlowRulZ/go/internal/execstate"
@@ -90,6 +91,7 @@ type ExecutionNode struct {
 
 	GRPCBus     *grpctransport.GRPCBus
 	OtelExporter *observability.SpanExporter
+	ClusterNode  *cluster.ClusterNode
 }
 
 type Config struct {
@@ -112,6 +114,7 @@ type Config struct {
 func NewConfig() *Config {
 	return &Config{
 		HTTPAddr:      ":8080",
+		GRPCAddr:      ":9090",
 		Topic:         "flowrulz-input",
 		NodeID:        "node-1",
 		KafkaBrokers:  []string{},
@@ -150,6 +153,14 @@ func New(cfg *Config) *ExecutionNode {
 	)
 	en.Dedup = reliability.NewDedupTracker(10000, 5*time.Minute)
 	en.RateLimiter = reliability.NewRateLimiter()
+
+	if len(cfg.KafkaBrokers) == 0 {
+		grpcAddr := cfg.GRPCAddr
+		if grpcAddr == "" {
+			grpcAddr = fmt.Sprintf(":%d", 9090)
+		}
+		en.ClusterNode = cluster.NewClusterNode(nodeID, grpcAddr)
+	}
 
 	kafkaCfg := transport.KafkaConfig{
 		Brokers:    cfg.KafkaBrokers,
@@ -286,12 +297,18 @@ func (en *ExecutionNode) mkProducer(topic string, kc transport.KafkaConfig) tran
 		en.mu.Unlock()
 		return p
 	}
+	if en.ClusterNode != nil {
+		return cluster.NewClusterProducer(topic, en.ClusterNode)
+	}
 	return transport.NewProducer(topic)
 }
 
 func (en *ExecutionNode) mkConsumer(topic string, handler transport.MessageHandler, kc transport.KafkaConfig) transport.MessageConsumer {
 	if len(kc.Brokers) > 0 {
 		return transport.NewKafkaConsumer(topic, handler, kc)
+	}
+	if en.ClusterNode != nil {
+		return cluster.NewClusterConsumer(topic, handler, en.ClusterNode)
 	}
 	return transport.NewConsumer(topic, handler)
 }
@@ -723,6 +740,21 @@ func (en *ExecutionNode) Start() {
 		return results[0], nil
 	}
 
+	if en.ClusterNode != nil {
+		if err := en.ClusterNode.Start(); err != nil {
+			log.Printf("cluster: start error: %v", err)
+		}
+		for _, seedAddr := range en.config.Seeds {
+			if seedAddr == en.config.GRPCAddr {
+				continue
+			}
+			seedID := fmt.Sprintf("seed-%s", seedAddr)
+			if err := en.ClusterNode.AddPeer(seedID, seedAddr); err != nil {
+				log.Printf("cluster: connect to seed %s: %v", seedAddr, err)
+			}
+		}
+	}
+
 	kafkaCfg := transport.KafkaConfig{
 		Brokers:    en.config.KafkaBrokers,
 		GroupID:    en.config.KafkaGroupID,
@@ -820,6 +852,10 @@ func (en *ExecutionNode) Shutdown() {
 		if err := en.HTTP.Shutdown(shutdownCtx); err != nil {
 			log.Printf("http shutdown error: %v", err)
 		}
+	}
+
+	if en.ClusterNode != nil {
+		en.ClusterNode.Stop()
 	}
 
 	if en.GRPCBus != nil {

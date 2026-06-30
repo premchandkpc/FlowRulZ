@@ -23,7 +23,8 @@ FlowRulZ/
 │   └── internal/
 │       ├── engine/         # Rule lifecycle, versioning, lane routing, persistence
 │       ├── execnode/       # ExecutionNode process (engine + transport + admin lifecycle)
-│       ├── transport/      # Kafka/HTTP transport implementations (internal) (Sarama) + HTTP transport
+│       ├── cluster/        # Cluster Bus — gRPC p2p overlay (Publish/Subscribe, peer mgmt)
+│       ├── transport/      # Legacy Kafka transport (Sarama) + in-memory stubs
 │       ├── admin/          # HTTP API (rules CRUD, validate, promote, lanes)
 │       ├── flow/           # Flow orchestration
 │       ├── plugins/        # WASM plugin loader — .wasm files → FFI registration
@@ -90,10 +91,10 @@ make bench
 | Enum types | Field validation against allowed value set; `enum[val1|val2|...]` syntax |
 | File-based persistence | Rules saved/loaded as JSON; atomic write via `.tmp` + `os.Rename` |
 | 4 communication models | Publish (async), Request (sync), Execute (rule), Stream (subscription) — single SDK |
-| Single-leader cluster | Lowest-ID alive node is leader; no Raft/Paxos — Kafka provides durability |
-| Seed-based membership | Nodes discover via seed peers; heartbeat on `_flowrulz_members` compacted topic |
+| Single-leader cluster | Lowest-ID alive node is leader; no Raft/Paxos — Cluster Bus provides transport |
+| Seed-based membership | Nodes discover via seed peers; heartbeat on `_flowrulz_members` via Cluster Bus |
 | Service Registry | Services self-register via POST /register with methods/version/protocol/zone/weight; heartbeat expiry (30s TTL) marks unhealthy; LookupInstance(name, method) selects method-aware endpoints |
-| Reply Router | Per-node pending request tracker by correlation_id; timeout/cleanup goroutine; routed via `_flowrulz_replies` |
+| Reply Router | Per-node pending request tracker by correlation_id; timeout/cleanup goroutine; routed via Cluster Bus |
 | Scheduler | Lane-based priority queues; Fast (50 concurrent, 5k), Normal (20, 2k), Heavy (5, 500) |
 | Plan Distribution | `PlanDistributor` publishes plans on `_flowrulz_plans`; followers ACK on `_flowrulz_acks`; quorum-based activation |
 | Rate Limiter | Token bucket per name; configurable rate/burst for ingress control |

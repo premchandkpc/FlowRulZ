@@ -274,14 +274,28 @@ Core transport interfaces. `MessageHandler` func type and `MessageConsumer`/`Mes
 
 ---
 
+### `go/internal/cluster/node.go`
+**Package:** `cluster`
+
+gRPC-based peer-to-peer cluster overlay. `ClusterNode` manages Publish/Subscribe, peer membership (AddPeer/RemovePeer), and topic handler registration. Publish sends messages to all peers subscribed to the topic. Subscribe/Unsubscribe manage topic handler lifecycle.
+
+**Exports:** `SubscribeHandler`, `Peer`, `ClusterNode`, `NewClusterNode()`, `Start()`, `Stop()`, `Publish()`, `Subscribe()`, `Unsubscribe()`, `AddPeer()`, `RemovePeer()`, `Peers()`
+
+---
+
+### `go/internal/cluster/transport.go`
+**Package:** `cluster`
+
+Transport adapters implementing `transport.MessageProducer`/`transport.MessageConsumer` for the Cluster Bus. `ClusterProducer` wraps `ClusterNode.Publish()`. `ClusterConsumer` subscribes a `transport.MessageHandler` to a cluster topic with lifecycle management.
+
+**Exports:** `ClusterProducer`, `NewClusterProducer()`, `ClusterConsumer`, `NewClusterConsumer()`
+
+---
+
 ### `go/internal/transport/kafka.go`
 **Package:** `transport`
 
-Real Sarama-backed Kafka transport. `KafkaConsumer` wraps `sarama.ConsumerGroup` with round-robin partition strategy — implements `sarama.ConsumerGroupHandler` (`Setup`/`Cleanup`/`ConsumeClaim`), dispatches messages to a `MessageHandler`, marks them consumed. Falls back to in-memory channel mode when no brokers configured.
-
-`KafkaProducer` wraps `sarama.SyncProducer` with `WaitForLocal` ack level — `Send()` returns partition/offset on success. Lazy-init: producer created on first `Send()` call. Log-only mode (no-op) when no brokers configured.
-
-Both implement `MessageConsumer`/`MessageProducer` interfaces, swappable with stub implementations for testing.
+Legacy Kafka transport (Sarama-backed). Only active when `FLOWRULZ_KAFKA_BROKERS` is explicitly set. Default transport is Cluster Bus.
 
 **Exports:** `KafkaConfig`, `KafkaConsumer`, `KafkaProducer`, `NewKafkaConsumer()`, `NewKafkaProducer()`, `Topic()`, `Start()`, `Stop()`, `Inject()`, `Send()`, `Close()`
 
@@ -845,7 +859,7 @@ Rust crate definition with dependencies: `bumpalo`, `serde`, `serde_json`, `boxc
 
 | Layer | Files | Lines |
 |-------|-------|-------|
-| Go source (prod) | 21 | ~2,500 |
+| Go source (prod) | 22 | ~2,600 |
 | Go source (simulator) | 18 | ~2,100 |
 | Rust source | 34 | ~6,100 |
 | C source | 1 | 14 |

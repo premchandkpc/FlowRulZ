@@ -10,15 +10,20 @@ spec:
     - port: 8080
       targetPort: 8080
       name: http
+    - port: 9090
+      targetPort: 9090
+      name: grpc
+  clusterIP: None
   selector:
     app: flowrulz
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: flowrulz
   namespace: flowrulz
 spec:
+  serviceName: flowrulz
   replicas: 3
   selector:
     matchLabels:
@@ -30,13 +35,6 @@ spec:
     spec:
       imagePullSecrets:
         - name: registry-credentials
-      initContainers:
-        - name: wait-for-kafka
-          image: confluentinc/cp-kafka:7.6.0
-          command:
-            - sh
-            - -c
-            - until kafka-topics --bootstrap-server kafka:9092 --list >/dev/null 2>&1; do echo "waiting for kafka"; sleep 2; done
       containers:
         - name: flowrulz
           image: flowrulz:latest
@@ -44,20 +42,22 @@ spec:
           ports:
             - containerPort: 8080
               name: http
+            - containerPort: 9090
+              name: grpc
           envFrom:
             - configMapRef:
                 name: flowrulz-config
           env:
-            - name: FLOWRULZ_KAFKA_BROKERS
-              value: kafka:9092
-            - name: FLOWRULZ_KAFKA_GROUP_ID
-              value: flowrulz
             - name: FLOWRULZ_NODE_ID
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            - name: FLOWRULZ_GRPC_ADDR
+              value: ":9090"
             - name: FLOWRULZ_HTTP_ADDR
               value: ":8080"
+            - name: FLOWRULZ_SEEDS
+              value: "flowrulz-0.flowrulz:9090,flowrulz-1.flowrulz:9090,flowrulz-2.flowrulz:9090"
             - name: FLOWRULZ_API_KEY
               valueFrom:
                 secretKeyRef:

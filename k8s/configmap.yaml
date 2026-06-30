@@ -4,5 +4,4 @@ metadata:
   name: flowrulz-config
   namespace: flowrulz
 data:
-  FLOWRULZ_KAFKA_ACKS: "1"
   FLOWRULZ_PERSIST_PATH: /data/rules.json

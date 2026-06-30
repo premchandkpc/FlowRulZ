@@ -14,9 +14,12 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+type TopicHandler func(ctx context.Context, msg *BusMessage)
+
 type GRPCBus struct {
 	addr        string
 	subscribers map[string]map[string]chan *BusMessage
+	handlers    map[string]TopicHandler
 	mu          sync.RWMutex
 	server      *grpc.Server
 	lis         net.Listener
@@ -30,8 +33,21 @@ func NewGRPCBus(addr string) *GRPCBus {
 	return &GRPCBus{
 		addr:        addr,
 		subscribers: make(map[string]map[string]chan *BusMessage),
+		handlers:    make(map[string]TopicHandler),
 		stopCh:      make(chan struct{}),
 	}
+}
+
+func (b *GRPCBus) AddTopicHandler(topic string, handler TopicHandler) {
+	b.mu.Lock()
+	b.handlers[topic] = handler
+	b.mu.Unlock()
+}
+
+func (b *GRPCBus) RemoveTopicHandler(topic string) {
+	b.mu.Lock()
+	delete(b.handlers, topic)
+	b.mu.Unlock()
 }
 
 func (b *GRPCBus) Start() error {
@@ -63,7 +79,12 @@ func (b *GRPCBus) Start() error {
 func (b *GRPCBus) Publish(_ context.Context, req *PublishRequest) (*PublishResponse, error) {
 	b.mu.RLock()
 	subs, ok := b.subscribers[req.Topic]
+	handler := b.handlers[req.Topic]
 	b.mu.RUnlock()
+
+	if handler != nil {
+		handler(context.Background(), req.Msg)
+	}
 
 	if !ok {
 		return &PublishResponse{}, nil
@@ -76,6 +97,25 @@ func (b *GRPCBus) Publish(_ context.Context, req *PublishRequest) (*PublishRespo
 		}
 	}
 	return &PublishResponse{}, nil
+}
+
+func (b *GRPCBus) deliverToTopic(topic string, msg *BusMessage) {
+	b.mu.RLock()
+	subs, ok := b.subscribers[topic]
+	handler := b.handlers[topic]
+	b.mu.RUnlock()
+
+	if handler != nil {
+		handler(context.Background(), msg)
+	}
+	if ok {
+		for _, ch := range subs {
+			select {
+			case ch <- msg:
+			default:
+			}
+		}
+	}
 }
 
 func (b *GRPCBus) Request(_ context.Context, req *RequestRequest) (*RequestResponse, error) {
@@ -122,22 +162,28 @@ func (b *GRPCBus) Request(_ context.Context, req *RequestRequest) (*RequestRespo
 }
 
 func (b *GRPCBus) Reply(ctx context.Context, req *ReplyRequest) (*ReplyResponse, error) {
-	replyTopic := fmt.Sprintf("__reply_%s", req.CorrelationId)
+	b.deliverToTopic(fmt.Sprintf("__reply_%s", req.CorrelationId), req.Msg)
+	return &ReplyResponse{}, nil
+}
+
+func (b *GRPCBus) Broadcast(_ context.Context, req *BroadcastRequest) (*BroadcastResponse, error) {
 	b.mu.RLock()
-	subs, ok := b.subscribers[replyTopic]
-	b.mu.RUnlock()
+	defer b.mu.RUnlock()
 
-	if !ok {
-		return &ReplyResponse{}, nil
-	}
-
-	for _, ch := range subs {
-		select {
-		case ch <- req.Msg:
-		default:
+	for topic, subs := range b.subscribers {
+		if topic == req.Topic {
+			if h, ok := b.handlers[topic]; ok {
+				h(context.Background(), req.Msg)
+			}
+			for _, ch := range subs {
+				select {
+				case ch <- req.Msg:
+				default:
+				}
+			}
 		}
 	}
-	return &ReplyResponse{}, nil
+	return &BroadcastResponse{}, nil
 }
 
 func (b *GRPCBus) Subscribe(req *SubscribeRequest, stream EventBus_SubscribeServer) error {
@@ -169,23 +215,6 @@ func (b *GRPCBus) Subscribe(req *SubscribeRequest, stream EventBus_SubscribeServ
 			return nil
 		}
 	}
-}
-
-func (b *GRPCBus) Broadcast(_ context.Context, req *BroadcastRequest) (*BroadcastResponse, error) {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
-	for topic, subs := range b.subscribers {
-		if topic == req.Topic {
-			for _, ch := range subs {
-				select {
-				case ch <- req.Msg:
-				default:
-				}
-			}
-		}
-	}
-	return &BroadcastResponse{}, nil
 }
 
 func (b *GRPCBus) Stop() {
@@ -285,6 +314,18 @@ func (c *GRPCClient) Close() {
 	if c.conn != nil {
 		c.conn.Close()
 	}
+}
+
+func (c *GRPCClient) PublishRaw(ctx context.Context, topic, key string, body []byte) (*PublishResponse, error) {
+	return c.client.Publish(ctx, &PublishRequest{
+		Topic: topic,
+		Msg: &BusMessage{
+			Id:           fmt.Sprintf("raw-%d", time.Now().UnixNano()),
+			Topic:        topic,
+			Body:         body,
+			PartitionKey: key,
+		},
+	})
 }
 
 func (c *GRPCClient) Publish(topic string, msg *transport.Message) error {

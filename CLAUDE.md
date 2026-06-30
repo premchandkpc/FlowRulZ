@@ -26,7 +26,7 @@ Services register themselves (`POST /register` with methods, version, protocol, 
 
 ```bash
 make all       # rust release + go binary
-make test      # all rust (126) + go tests (63+)
+make test      # all rust (140) + go tests (20+ suites)
 make bench     # criterion benchmarks
 make vet       # go vet
 make clean     # cargo clean + remove binary
@@ -36,12 +36,13 @@ make clean     # cargo clean + remove binary
 
 - **Control Plane** (Go): Rule registry, DSL compiler, scheduling, leader election. Simple single-leader — no Raft. No WAL/storage beyond rules JSON file.
 - **Data Plane** (Go + Rust): Partition workers, ExecutionRuntime, service callers, span collection. Multiple nodes scale horizontally.
-- **Execution Node** (`go/internal/execnode/`): process wrapping Engine + Bridge + Runtime + Registry + PlanDistributor + transport consumers + admin HTTP. Leader/follower role via `SetLeader()`/`IsLeader()`. Leader distributes plans via `Engine.AfterDeploy`/`AfterPromote` hooks that call `PlanDist.PublishPlan()` + ACK quorum + `ActivatePlan()`.
+- **Execution Node** (`go/internal/execnode/`): process wrapping Engine + Bridge + Runtime + Registry + PlanDistributor + cluster transport + admin HTTP. Leader/follower role via `SetLeader()`/`IsLeader()`. Leader distributes plans via `Engine.AfterDeploy`/`AfterPromote` hooks that call `PlanDist.PublishPlan()` + ACK quorum + `ActivatePlan()`.
+- **Cluster Bus** (`go/internal/cluster/`): gRPC-based peer-to-peer overlay — no Kafka, no ZK, no external deps. `ClusterNode` manages Publish/Subscribe, peer membership, topic handlers. `ClusterProducer`/`ClusterConsumer` adapters implement `transport.MessageProducer`/`transport.MessageConsumer`. Default transport; Kafka (`go/internal/transport/kafka.go`) remains as legacy fallback when `FLOWRULZ_KAFKA_BROKERS` is explicitly set.
 - **Service Registry** (`go/internal/registry/`): Rich registry — services self-register with `ServiceInstance` (ID, name, version, methods, capabilities, endpoint, zone, weight, tags, metadata, heartbeat). Two registration paths: legacy `Register(name, endpoint)` and rich `RegisterInstance(inst)`. Heartbeat expiry (default 30s) marks unhealthy. LB strategies: random, round-robin, least-loaded, local-prefer. `LookupInstance(name, method)` selects method-aware healthy instance.
 - **Registration API**: `POST /register` (service announces name, version, methods, address, port, protocol, zone, weight) and `POST /heartbeat` (keeps instance alive). `GET /services` lists all registered services with full instance details.
 - **Method syntax in rules**: `n:payment.authorize` — method name embedded in service string. `bridge.ParseServiceMethod("payment.authorize")` → `("payment", "authorize")`. Rust DSL lexer captures everything after `n:` (dot included). No Rust changes needed.
 - **Plan service resolution**: `bridge.InternLookup(svcID)` is **broken** for plan-local IDs — global intern table has pre-filled strings at IDs 0-6 (`"content-type"`, etc.). Use `bridge.PlanServices(plan)` → `map[uint16]string` in `executePlan`; pass `(svcName, method, body)` to `callService`.
-- **EventBus** (`go/pkg/transport/eventbus.go`) is the canonical pub/sub abstraction; `Message`, `Handler`, `Subscription` types are shared across `go/` and `simulator/`. **Kafka** (`go/internal/transport/`) is a legacy transport implementation — one consumer group with programmable execution
+- **EventBus** (`go/pkg/transport/eventbus.go`) is the canonical pub/sub abstraction; `Message`, `Handler`, `Subscription` types are shared across `go/` and `simulator/`. Cluster Bus implements the same patterns over gRPC.
 - C FFI prefix: `flowrulz_` — all exported functions use `#[no_mangle] pub unsafe extern "C"`
 - `Compiler::new()` is no-arg (was `new(&[])` — all callers passed empty slice)
 - `Error` enum removed — only `FfiError` remains (was never constructed in any path)
@@ -51,10 +52,10 @@ make clean     # cargo clean + remove binary
 - Span tracing: `thread_local!` ring buffer, lock-free atomic head/tail, drained via `flowrulz_get_spans`
 - **Reply Router** (`go/internal/replyrouter/`): Per-node pending request tracker by correlation_id, timeout-based cleanup, duplicate detection
 - **Scheduler** (`go/internal/scheduler/`): Lane-based priority queues (fast/normal/heavy), semaphore-based concurrency limits, reject-on-full backpressure
-- **Plan Distribution** (`go/internal/plandist/`): Leader publishes plans to `_flowrulz_plans`, followers ACK on `_flowrulz_acks`, quorum-based activation with `WaitForAcks`. Real Kafka (Sarama) when brokers configured; log-only stubs when empty. Wired in execnode via `handlePlanMessage`/`handleAckMessage` — plan/ack consumers listen on `_flowrulz_plans`/`_flowrulz_acks`, call `Engine.AddVersion()` for "plan" type and `Engine.Promote()` for "activate". Term-based rejection prevents stale plans.
+- **Plan Distribution** (`go/internal/plandist/`): Leader publishes plans to `_flowrulz_plans`, followers ACK on `_flowrulz_acks`, quorum-based activation with `WaitForAcks`. Transport-agnostic — uses `MessageProducer`/`MessageConsumer` interfaces backed by Cluster Bus or Kafka. Wired in execnode via `handlePlanMessage`/`handleAckMessage`. Term-based rejection prevents stale plans.
 - **Metrics** (`go/internal/observability/`): Counter, Gauge, Histogram with thread-safe per-name dedup and global shortcuts
 - **Circuit Breaker** (`go/internal/reliability/circuitbreaker.go`): Three-state (Closed/Open/HalfOpen) per-svcID breaker wired in `execnode` svcCaller (threshold=5, recovery=30s)
-- **DLQ** (`go/internal/reliability/dlq.go`): Bounded dead-letter queue, Kafka-backed via `WithDLQProducer()`, per-entry replay, bulk ReplayAll, JSON export
+- **DLQ** (`go/internal/reliability/dlq.go`): Bounded dead-letter queue, in-memory cache with optional Kafka producer, per-entry replay, bulk ReplayAll, JSON export
 - **Rate Limiter** (`go/internal/reliability/ratelimit.go`): Token bucket per name, configurable rate/burst, isolation across services
 - **Dedup** (`go/internal/reliability/dedup.go`): Bounded in-memory dedup tracker with TTL eviction, wired in execnode handler via MessageID
 
@@ -64,6 +65,9 @@ make clean     # cargo clean + remove binary
 |---|---|---|
 | EventBus (interface) | `go/pkg/transport/eventbus.go` | Canonical `EventBus` interface — `Publish`, `Subscribe`, `Request`, `Reply`, `Broadcast` |
 | EventBus (impl) | `simulator/eventbus/` | In-memory pub/sub with Go channels: Publish, Subscribe, Request/Reply, Broadcast, Delay, Drop, Duplicate |
+| Cluster Bus | `go/internal/cluster/` | `ClusterNode` — gRPC p2p overlay, Publish/Subscribe, peer management, topic handlers |
+| Transport (legacy) | `go/internal/transport/` | Kafka/Sarama producer/consumer (optional, when `FLOWRULZ_KAFKA_BROKERS` set) |
+| Transport (gRPC) | `go/internal/transport/grpc/` | `GRPCBus` — low-level gRPC transport used by Cluster Bus |
 | Event | `rust/src/bytecode/event.rs` | `Event` + `Mode` — universal message type |
 | Execution | `rust/src/bytecode/execution.rs` | `ExecutionContext` — body + variables + outputs |
 | DSL | `rust/src/dsl/` | Lexer → Parser → Optimizer → Compiler |
@@ -73,13 +77,13 @@ make clean     # cargo clean + remove binary
 | FFI | `rust/src/ffi.rs` | `flowrulz_compile`, `flowrulz_execute`, `flowrulz_get_spans`, etc. |
 | Bridge | `go/bridge/` | CGo bindings + C caller bridge |
 | Engine | `go/internal/engine/` | `VersionedPlan`, lane routing, persistence, `ExecuteAll`, `AddVersion`, `LaneForScore` |
-| ExecNode | `go/internal/execnode/` | Data plane process: engine + transport + admin + lifecycle |
+| ExecNode | `go/internal/execnode/` | Data plane process: engine + cluster + transport + admin + lifecycle |
 | Admin | `go/internal/admin/` | HTTP API with API key auth, rule CRUD, validate, lanes |
 | SDK | `go/flow/` | Client SDK — `Publish`, `Request`, `Execute`, `Stream` |
 | Simulator | `simulator/` | Simulator for testing rules, services, and cluster behavior |
-| Registry | `go/internal/registry/` | `ServiceRegistry` — service name → healthy endpoints, LB, health checks. Rich model: `ServiceInstance` with methods, version, capabilities, zone, weight, tags |
+| Registry | `go/internal/registry/` | `ServiceRegistry` — service name → healthy endpoints, LB, health checks |
 | ReplyRouter | `go/internal/replyrouter/` | `ReplyRouter` — correlation ID → pending request channel, timeout/cleanup |
-| Scheduler | `go/internal/scheduler/` | Priority queue per lane (fast/normal/heavy), semaphore-based concurrency limits, reject-on-full backpressure |
+| Scheduler | `go/internal/scheduler/` | Priority queue per lane (fast/normal/heavy), semaphore-based concurrency limits |
 | PlanDist | `go/internal/plandist/` | `PlanDistributor` — plan/ack topics, versioned ACK quorum, activation |
 | Metrics | `go/internal/observability/` | `MetricsCollector` — counters, gauges, histograms, global shortcuts |
 | DLQ | `go/internal/reliability/dlq.go` | Dead-letter queue with replay, bounded size, JSON export |
@@ -88,15 +92,16 @@ make clean     # cargo clean + remove binary
 ## Cluster Model
 
 - **Single-leader cluster** — no Raft, no Paxos. Leader = lowest-ID alive node.
-- **Membership**: Seed-based discovery; heartbeat via `_flowrulz_members` internal Kafka topic (compacted).
-- **Leader election**: Sort alive nodes by ID ascending — lowest is leader. On leader failure, next-lowest promotes itself.
-- **Plan distribution**: Leader publishes ExecutionPlan to `_flowrulz_plans` → followers ACK on `_flowrulz_acks` → leader activates.
-- **Partition ownership**: Kafka consumer group protocol per lane. Leader tracks partition → node mapping.
+- **Transport**: gRPC-based Cluster Bus (peer-to-peer overlay). No Kafka, no ZK, no external dependencies.
+- **Membership**: Seed-based discovery via `FLOWRULZ_SEEDS` env var (comma-separated `node:port`). Each node connects to peers, broadcasts heartbeat via cluster bus topic `_flowrulz_members`.
+- **Leader election**: Sort alive nodes by ID ascending — lowest is leader. On leader failure, next-lowest promotes itself. Heartbeat via cluster bus every 3s.
+- **Plan distribution**: Leader publishes ExecutionPlan to `_flowrulz_plans` cluster bus topic → followers ACK on `_flowrulz_acks` → leader activates.
+- **Partition ownership**: Round-robin partition assignment per lane. Leader tracks partition → node mapping.
 - **Service Registry**: Nodes register services in heartbeat. Leader aggregates → publishes combined registry.
-- **Reply Router**: Per-node component tracking pending request/reply by correlation_id. Replies hash to origin node's partition.
+- **Reply Router**: Per-node component tracking pending request/reply by correlation_id. Replies route via cluster bus topic to origin node.
 - **Node lifecycle**: Join (announce → catch-up → consume), Drain (rebalance → drain execs → leave), Crash (rejoin with same ID → catch-up).
 - **Scheduler**: Lane-based priority queues; Fast (50 concurrent, 5k queue), Normal (20, 2k), Heavy (5, 500). RejectOnFull for heavy lane.
-- **Plan Distribution**: `PlanDistributor` publishes `PlanMessage{type, rule_id, version, plan, dsl}` to `_flowrulz_plans`. Followers send `AckMessage{node_id, rule_id, version, status}` to `_flowrulz_acks`. `WaitForAcks(ruleID, version, quorum, timeout)` implements ACK-quorum activation. Wired in execnode via `handlePlanMessage`/`handleAckMessage` — plan/ack consumers listen on `_flowrulz_plans`/`_flowrulz_acks`, call `Engine.AddVersion()` for "plan" type and `Engine.Promote()` for "activate". Term-based rejection prevents stale plans.
+- **Plan Distribution**: `PlanDistributor` publishes `PlanMessage{type, rule_id, version, plan, dsl}` to `_flowrulz_plans`. Followers send `AckMessage{node_id, rule_id, version, status}` to `_flowrulz_acks`. `WaitForAcks(ruleID, version, quorum, timeout)` implements ACK-quorum activation. Term-based rejection prevents stale plans.
 
 ## Conventions
 
@@ -148,14 +153,14 @@ All endpoints (except `/health`) require `Authorization: Bearer <FLOWRULZ_API_KE
 
 | Issue | Status | File(s) |
 |-------|--------|---------|
-| P0 DLQ persistence | In-memory cache + Kafka producer (`_flowrulz_dlq`) when `WithDLQProducer()` configured | `go/internal/reliability/dlq.go` |
+| P0 DLQ persistence | In-memory cache + optional Kafka producer (`_flowrulz_dlq`) when `WithDLQProducer()` configured | `go/internal/reliability/dlq.go` |
 | P0 Circuit breaker | Wired per-svcID in svcCaller (threshold=5, recovery=30s). Three-state FSM tested (6 tests). Stub caller never trips — real HTTP/gRPC caller needed | `reliability/circuitbreaker.go`, `execnode/execnode.go` |
 | P1 Leader epoch | `PlanMessage.Term` field (uint64), `PlanDistributor.SetTerm()`/`CurrentTerm()`. Term-based rejection in execnode `handlePlanMessage` (rejects plans with older term) | `go/internal/plandist/plandist.go`, `go/internal/execnode/execnode.go` |
 | P1 Workflow state | File-based checkpointing (`NewOrchestratorWithCheckpointDir`). Per-flow JSON files, atomic write, restore on start | `go/internal/flow/flow.go` |
 | P1 Message dedup | Bounded in-memory `DedupTracker` (10k, 5min TTL). Wired by MessageID in handler. Cleanup goroutine every 30s | `reliability/dedup.go`, `execnode/execnode.go` |
-| P2 Leader election | Auto-elected via heartbeat on `_flowrulz_members` — lowest-ID alive node wins. `startHeartbeat()` goroutine sends `HeartbeatMessage` every 3s. `runLeaderElection()` promotes/step-down on every heartbeat receipt. Transport is stubbed (log-only) — real Kafka heartbeat not verified | `execnode/execnode.go`, `membership/membership.go` |
-| P2 AckQuorum | `WaitForAcks` with quorum=0 or -1 always returns immediately. Real quorum requires membership counting via `_flowrulz_members` topic | `plandist/plandist.go` |
-| P2 Plan distribution | `AfterDeploy`/`AfterPromote` callbacks wired in execnode. `distributePlan()` calls `PublishPlan()` + `WaitForAcks()` + `ActivatePlan()`. Works with stubs — needs real transport + membership for ACK quorum | `execnode/execnode.go`, `engine/engine.go` |
+| P2 Leader election | Auto-elected via heartbeat on `_flowrulz_members` topic — lowest-ID alive node wins. Uses Cluster Bus transport (resolved). Quorum counting via membership tracking still pending | `execnode/execnode.go`, `membership/membership.go` |
+| P2 AckQuorum | `WaitForAcks` with quorum=0 or -1 always returns immediately. Real quorum requires membership counting | `plandist/plandist.go` |
+| P2 Plan distribution | `AfterDeploy`/`AfterPromote` callbacks wired in execnode. Uses Cluster Bus transport (resolved). Distributes + Waits + Activates | `execnode/execnode.go`, `engine/engine.go` |
 
 ## Progress
 ### Done
@@ -169,9 +174,8 @@ All endpoints (except `/health`) require `Authorization: Bearer <FLOWRULZ_API_KE
 - Event type distribution in sidebar
 - `fmt()` JS helper properly converts Go nanosecond durations to human-readable ms/µs/s
 - `handleExecutions` endpoint groups timeline events by execution, extracts service list and status
-- Both `sim` (in-memory EventBus based simulator) and `flowrulz` (Kafka + Rust VM production node) binaries build and work independently
-- 23 Go packages (15 prod + 8 simulator), `go vet ./go/... ./simulator/...` clean
-- Go source (prod): 21 files ~2,500 lines; Rust source: 34 files ~6,100 lines
+- Both `sim` (in-memory EventBus based simulator) and `flowrulz` (Cluster Bus + Rust VM production node) binaries build and work independently
+- 140 Rust tests + 20 Go test suites pass; `go vet` clean
 
 ### Phase 1–3: Rust cleanup (complete)
 - Deleted 3 dead files: `bytecode/mapexpr.rs`, `executor/context.rs`, `memory/slab.rs`
@@ -185,35 +189,65 @@ All endpoints (except `/health`) require `Authorization: Bearer <FLOWRULZ_API_KE
 - Fixed `now_iso()` date calc: replaced heuristic with `civil_from_days` algorithm
 - Consolidated `merge_json` → `dag::deep_merge` (single source of truth)
 - `extract_json_field` returns `&[u8]` (was `&mut [u8]`)
-- 126 Rust tests pass, `cargo check` clean
+- 140 Rust tests pass, `cargo check` clean
 
 ### Phase 4–5: Go prod cleanup (complete)
-- Deleted orphaned `go/internal/transport/http.go` (`HTTPTransport` entirely unused)
-- Removed dead `Endpoint.nodeID` (unexported duplicate field)
-- Removed dead `dlqMessage` struct (was never referenced)
-- Removed `ErrRateLimited` var (never returned)
-- Removed `RecordTiming`/`GetHistogram` (global shortcuts, dead)
-- Removed `evictedCount` field + `Cancel`/`EvictedCount`/`RouteOrStore` methods from replyrouter
-- Removed `JoinCluster`/`LeaveCluster`/`AliveCount` from execnode (dead methods)
-- Removed `RemoteCompiler.Validate` method (test-only)
-- Removed `Rollback` alias from engine (was `Promote` wrapper, never called)
-- Fixed `Rules()` shallow copy (new Versions slice, no struct copy of WaitGroup)
+- Deleted orphaned `go/internal/transport/http.go`
+- Removed dead `Endpoint.nodeID`, `dlqMessage`, `ErrRateLimited`, `RecordTiming`/`GetHistogram`
+- Removed dead replyrouter methods: `Cancel`/`EvictedCount`/`RouteOrStore`
+- Removed dead execnode methods: `JoinCluster`/`LeaveCluster`/`AliveCount`
+- Removed `RemoteCompiler.Validate`, `Rollback` alias
+- Fixed `Rules()` shallow copy
 - `go vet` clean, all Go tests pass
 
 ### Phase 6: Simulator cleanup (complete)
-- Removed dead methods: `RunForever`, `AddEvent`, `SubscribeChannel`, `Drop`, `Duplicate`, `Drain`, `Pending`, `DispatchByKey`, `StopBus`, `Stats`, `Dropped`, `Duplicated`, `RecordDropped`, `MarshalJSON`, `TotalSent`, `TotalFailed`, `Clear`, `MarshalJSON`, `Default()`
-- Removed dead fields: `bufferSize`, `subscription.ch`, `WaitingEntry.Service/QueuedAt`, `Plan.Tags`, `MockService.Retryable/ErrorCode`, `CallRecord.Start/Latency/Error/Retryable`, `callLog`, `Network.reordered`, `Config.ReorderRate`, `Result` type
-- Removed dead variables: `OrderFlowAltPayment`, `DefaultConfig`
-- Removed `go vet` warnings (unused imports `sort`, `log`)
+- Removed multiple dead methods, fields, variables across simulator
 - All simulator + Go tests pass
 
+### Phase 7: Kafka removal → Cluster Bus (complete)
+- Designed and implemented **Cluster Bus** (`go/internal/cluster/`): gRPC peer-to-peer overlay
+  - `ClusterNode`: Publish/Subscribe, peer management, topic handlers
+  - `ClusterProducer`/`ClusterConsumer`: adapters implementing `transport.MessageProducer`/`transport.MessageConsumer`
+- Wired into execnode: default transport when no Kafka brokers configured
+- Updated `main.go` with `FLOWRULZ_GRPC_ADDR` and `FLOWRULZ_SEEDS` env vars
+- Removed Kafka/ZK from docker-compose.yml (3-node cluster bus setup)
+- Removed `k8s/kafka.yaml`, `k8s/zookeeper.yaml`
+- Updated `k8s/flowrulz.yaml` to StatefulSet with gRPC port + cluster seeds
+- Cleaned `k8s/configmap.yaml` of Kafka env vars
+- Removed `kafka-transport` skill
+- Build clean, `go vet` clean, all 140 Rust + all Go tests pass
+
 ### Done
-All 4 cleanup phases complete — Rust, Go prod, Go simulator, Docs updated.
+All 4 cleanup phases + Cluster Bus replacement complete.
 
 ### Next Steps
-1. Set up Docker Compose for Kafka dev environment (single-node Kafka + ZK)
-2. Wire `FLOWRULZ_KAFKA_BROKERS` env var into `flowrulz` binary for real cluster mode
-3. Update `docs/` for Kafka integration status
+1. Cluster Bus: real peer-to-peer gossip, quorum-based ACK counting
+2. Cluster Bus: partition rebalancing on node join/leave
+3. E2E tests with 3-node docker-compose cluster
+4. Update `docs/` for Cluster Bus architecture
+
+## Env Vars
+
+| Var | Default | Description |
+|---|---|---|
+| `FLOWRULZ_HTTP_ADDR` | `:8080` | HTTP admin API address |
+| `FLOWRULZ_GRPC_ADDR` | `:9090` | gRPC Cluster Bus address |
+| `FLOWRULZ_NODE_ID` | `node-1` | Unique node identifier |
+| `FLOWRULZ_SEEDS` | `` | Comma-separated `host:port` of seed nodes for cluster discovery |
+| `FLOWRULZ_PERSIST_PATH` | `` | Path to rules JSON file |
+| `FLOWRULZ_TOPIC` | `flowrulz-input` | Input topic name |
+| `FLOWRULZ_API_KEY` | `` | Admin API auth key (optional) |
+| `FLOWRULZ_KAFKA_BROKERS` | `` | Kafka brokers (legacy; empty = use Cluster Bus) |
+| `FLOWRULZ_KAFKA_GROUP_ID` | `flowrulz` | Kafka consumer group (legacy) |
+| `FLOWRULZ_KAFKA_ACKS` | `` | Kafka acks level (legacy) |
+
+## Docker Compose
+
+```bash
+docker compose up --build
+```
+
+3-node cluster with Cluster Bus (no Kafka, no ZK). Nodes auto-discover via `FLOWRULZ_SEEDS`. Exposes HTTP on 8080-8082, gRPC on 9090-9092.
 
 ## Admin API (Interactive Mode)
 

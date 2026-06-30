@@ -1,88 +1,57 @@
 x-flowrulz-env: &flowrulz-env
-  FLOWRULZ_KAFKA_BROKERS: kafka:9092
-  FLOWRULZ_KAFKA_GROUP_ID: flowrulz
-  FLOWRULZ_KAFKA_ACKS: "1"
   FLOWRULZ_PERSIST_PATH: /data/rules.json
+  FLOWRULZ_SEEDS: node-1:9090,node-2:9091,node-3:9092
 
 services:
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.6.0
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-    healthcheck:
-      test: echo srvr | nc -w 2 localhost 2181 || exit 1
-      interval: 10s
-      retries: 10
-    volumes:
-      - zk-data:/var/lib/zookeeper/data
-
-  kafka:
-    image: confluentinc/cp-kafka:7.6.0
-    depends_on:
-      zookeeper:
-        condition: service_healthy
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-    healthcheck:
-      test: kafka-topics --bootstrap-server localhost:9092 --list || exit 1
-      interval: 10s
-      retries: 20
-      start_period: 30s
-    volumes:
-      - kafka-data:/var/lib/kafka/data
-
   flowrulz-node-1:
     build: .
-    depends_on:
-      kafka:
-        condition: service_healthy
+    hostname: node-1
     environment:
       <<: *flowrulz-env
       FLOWRULZ_NODE_ID: node-1
       FLOWRULZ_HTTP_ADDR: ":8080"
+      FLOWRULZ_GRPC_ADDR: ":9090"
     ports:
       - "8080:8080"
+      - "9090:9090"
     volumes:
       - node1-data:/data
 
   flowrulz-node-2:
     build: .
+    hostname: node-2
     depends_on:
-      kafka:
-        condition: service_healthy
+      flowrulz-node-1:
+        condition: service_started
     environment:
       <<: *flowrulz-env
       FLOWRULZ_NODE_ID: node-2
       FLOWRULZ_HTTP_ADDR: ":8081"
+      FLOWRULZ_GRPC_ADDR: ":9091"
     ports:
       - "8081:8081"
+      - "9091:9091"
     volumes:
       - node2-data:/data
 
   flowrulz-node-3:
     build: .
+    hostname: node-3
     depends_on:
-      kafka:
-        condition: service_healthy
+      flowrulz-node-1:
+        condition: service_started
     environment:
       <<: *flowrulz-env
       FLOWRULZ_NODE_ID: node-3
       FLOWRULZ_HTTP_ADDR: ":8082"
+      FLOWRULZ_GRPC_ADDR: ":9092"
     ports:
       - "8082:8082"
+      - "9092:9092"
     volumes:
       - node3-data:/data
 
 volumes:
-  zk-data:
-  kafka-data:
   node1-data:
   node2-data:
   node3-data:

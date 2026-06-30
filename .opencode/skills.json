@@ -37,10 +37,6 @@
       "description": "Plugin interface for service calls: Builtin, WASM, Remote (HTTP/gRPC)"
     },
     {
-      "name": "kafka-transport",
-      "description": "Full Kafka semantics: consumer groups, offset commit, batch poll, backpressure, poison messages, DLQ, rebalance"
-    },
-    {
       "name": "dsl-extensions",
       "description": "Add loop, window, aggregate, filter, merge, join, cache, state, timer, delay, await, race, try/catch DSL tokens"
     },

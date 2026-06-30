@@ -45,6 +45,7 @@ int flowrulz_execute_step(
     unsigned char* err_ptr, size_t err_cap, size_t* err_len,
     uint16_t* pending_svc_id,
     unsigned char* pending_body_ptr, size_t pending_body_cap, size_t* pending_body_len,
+    uint64_t* pending_timeout_ms,
     unsigned char* ctx_out_ptr, size_t ctx_out_cap, size_t* ctx_out_len
 );
 
@@ -307,12 +308,13 @@ const (
 )
 
 type StepOutput struct {
-	Result     StepResult
-	Output     []byte
-	Error      string
-	PendingSvc uint16
+	Result      StepResult
+	Output      []byte
+	Error       string
+	PendingSvc  uint16
 	PendingBody []byte
-	CtxBytes   []byte
+	TimeoutMs   uint64
+	CtxBytes    []byte
 }
 
 func ExecuteStep(plan, ctxBytes, respBytes []byte, caller ServiceCaller) (*StepOutput, error) {
@@ -329,6 +331,7 @@ func ExecuteStep(plan, ctxBytes, respBytes []byte, caller ServiceCaller) (*StepO
 	var pendingSvcID C.uint16_t
 	pendingBodyBuf := make([]byte, 256*1024)
 	var pendingBodyLen C.size_t
+	var pendingTimeoutMs C.uint64_t
 	ctxOutBuf := make([]byte, 256*1024)
 	var ctxOutLen C.size_t
 
@@ -343,6 +346,7 @@ func ExecuteStep(plan, ctxBytes, respBytes []byte, caller ServiceCaller) (*StepO
 		(*C.uchar)(unsafe.Pointer(&errBuf[0])), C.size_t(cap(errBuf)), &errLen,
 		&pendingSvcID,
 		(*C.uchar)(unsafe.Pointer(&pendingBodyBuf[0])), C.size_t(cap(pendingBodyBuf)), &pendingBodyLen,
+		&pendingTimeoutMs,
 		(*C.uchar)(unsafe.Pointer(&ctxOutBuf[0])), C.size_t(cap(ctxOutBuf)), &ctxOutLen,
 	)
 
@@ -351,6 +355,7 @@ func ExecuteStep(plan, ctxBytes, respBytes []byte, caller ServiceCaller) (*StepO
 		Output:      copyBytes(outBuf, int(outLen)),
 		PendingSvc:  uint16(pendingSvcID),
 		PendingBody: copyBytes(pendingBodyBuf, int(pendingBodyLen)),
+		TimeoutMs:   uint64(pendingTimeoutMs),
 		CtxBytes:    copyBytes(ctxOutBuf, int(ctxOutLen)),
 	}
 

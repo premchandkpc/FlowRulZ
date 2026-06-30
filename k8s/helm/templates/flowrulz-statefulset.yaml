@@ -33,6 +33,8 @@ spec:
                   fieldPath: metadata.name
             - name: FLOWRULZ_SEEDS
               value: {{ range $i, $_ := until (int $.Values.flowrulz.replicas) }}{{ if $i }},{{ end }}flowrulz-{{ $i }}.flowrulz:{{ $.Values.flowrulz.ports.grpc }}{{ end }}
+            - name: FLOWRULZ_EXEC_STATE_DIR
+              value: /data/execstate
             - name: FLOWRULZ_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -47,11 +49,11 @@ spec:
             httpGet:
               path: /health
               port: {{ .Values.flowrulz.ports.http }}
-            initialDelaySeconds: 10
-            periodSeconds: 30
+            initialDelaySeconds: 15
+            periodSeconds: 20
           readinessProbe:
             httpGet:
-              path: /health
+              path: /readyz
               port: {{ .Values.flowrulz.ports.http }}
             initialDelaySeconds: 5
             periodSeconds: 10

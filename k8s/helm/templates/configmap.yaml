@@ -8,3 +8,4 @@ data:
   FLOWRULZ_TOPIC: {{ .Values.flowrulz.config.FLOWRULZ_TOPIC | quote }}
   FLOWRULZ_GRPC_ADDR: {{ .Values.flowrulz.config.FLOWRULZ_GRPC_ADDR | quote }}
   FLOWRULZ_HTTP_ADDR: {{ .Values.flowrulz.config.FLOWRULZ_HTTP_ADDR | quote }}
+  FLOWRULZ_EXEC_STATE_DIR: {{ .Values.flowrulz.config.FLOWRULZ_EXEC_STATE_DIR | quote }}

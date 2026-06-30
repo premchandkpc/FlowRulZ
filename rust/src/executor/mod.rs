@@ -21,7 +21,7 @@ use crate::bytecode::plan::ExecutionPlan;
 pub enum StepResult {
     Done,
     Continue,
-    Pending { svc_id: u16, body: Vec<u8> },
+    Pending { svc_id: u16, body: Vec<u8>, timeout_ms: u64 },
     Delay(u64),
 }
 
@@ -77,7 +77,8 @@ impl<'a> VM<'a> {
             OpCode::Next | OpCode::Async | OpCode::Emit | OpCode::SvcCall => {
                 let svc_id = instr.a;
                 let body = self.ctx.body.clone();
-                Ok(StepResult::Pending { svc_id, body })
+                let timeout_ms = instr.timeout_ms();
+                Ok(StepResult::Pending { svc_id, body, timeout_ms })
             }
             OpCode::Delay => {
                 let ms = instr.delay_ms();

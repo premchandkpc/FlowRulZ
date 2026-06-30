@@ -32,8 +32,20 @@ flowrulz:
     FLOWRULZ_TOPIC: flowrulz-input
     FLOWRULZ_GRPC_ADDR: ":9090"
     FLOWRULZ_HTTP_ADDR: ":8080"
+    FLOWRULZ_EXEC_STATE_DIR: /data/execstate
 
   apiKey: changeme-in-production
+
+  hpa:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    cpuAverageUtilization: 70
+    memoryAverageUtilization: 80
+
+  pdb:
+    enabled: true
+    minAvailable: 2
 
   # Node-specific env overrides (merged into each pod)
   extraEnv: {}

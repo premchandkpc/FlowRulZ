@@ -88,6 +88,8 @@ type ExecutionNode struct {
 	membersProducer transport.MessageProducer
 
 	StateStore *execstate.FileStore
+	Execs      *ExecRegistry
+	TermStore  *TermStore
 
 	GRPCBus     *grpctransport.GRPCBus
 	OtelExporter *observability.SpanExporter
@@ -170,7 +172,15 @@ func New(cfg *Config) *ExecutionNode {
 	}
 
 	dlqProducer := en.mkProducer(reliability.DefaultDLQTopic, kafkaCfg)
-	en.DLQ = reliability.NewDLQ(10000, reliability.WithDLQProducer(dlqProducer))
+	dlqDir := cfg.ExecStateDir
+	if dlqDir == "" {
+		dlqDir = filepath.Join(os.TempDir(), "flowrulz-dlq")
+	}
+	os.MkdirAll(dlqDir, 0755)
+	en.DLQ = reliability.NewDLQ(10000,
+		reliability.WithDLQProducer(dlqProducer),
+		reliability.WithDLQDir(dlqDir),
+	)
 
 	planProducer := en.mkProducer(plandist.DefaultPlanTopic, kafkaCfg)
 	ackProducer := en.mkProducer(plandist.DefaultAckTopic, kafkaCfg)
@@ -216,11 +226,17 @@ func New(cfg *Config) *ExecutionNode {
 		log.Printf("execstate: init warning: %v", err)
 	}
 	en.StateStore = store
+	en.Execs = NewExecRegistry()
+	en.TermStore = NewTermStore(execDir)
+	if term, _ := en.TermStore.Load(); term > 0 {
+		en.SetTerm(term)
+		log.Printf("term: restored term %d from disk", term)
+	}
 
-	en.Saga = reliability.NewSagaTracker(func(svc, method string, body []byte) error {
-		_, err := en.callService(svc, method, body)
+	en.Saga = reliability.NewSagaTrackerWithDir(func(svc, method string, body []byte) error {
+		_, err := en.callService(svc, method, body, 0)
 		return err
-	})
+	}, execDir)
 
 	en.Registry.SetHeartbeatTimeout(30 * time.Second)
 
@@ -267,7 +283,12 @@ func (en *ExecutionNode) CurrentTerm() uint64 {
 }
 
 func (en *ExecutionNode) httpCall(endpoint string, body []byte, cb *reliability.CircuitBreaker) ([]byte, error) {
-	resp, err := en.httpClient.Post(endpoint, "application/octet-stream", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), "POST", endpoint, bytes.NewReader(body))
+	if err != nil {
+		cb.Failure()
+		return nil, fmt.Errorf("http call: request: %w", err)
+	}
+	resp, err := en.httpClient.Do(req)
 	if err != nil {
 		cb.Failure()
 		return nil, fmt.Errorf("http call: %w", err)
@@ -381,6 +402,17 @@ func (en *ExecutionNode) handleMembershipMessage(ctx context.Context, msg []byte
 		return nil, nil
 	}
 
+	// Term-based fencing: if a non-leader heartbeat carries a higher term,
+	// a new leader has been elected — step down if we're the current leader.
+	if hb.Term > en.PlanDist.CurrentTerm() {
+		if en.IsLeader() {
+			log.Printf("fencing: stepping down from term %d due to higher term %d from %s",
+				en.PlanDist.CurrentTerm(), hb.Term, hb.NodeID)
+			en.SetLeader(false)
+		}
+		en.SetTerm(hb.Term)
+	}
+
 	en.Membership.Heartbeat(hb.NodeID, hb.Address)
 	en.runLeaderElection()
 	return nil, nil
@@ -398,9 +430,15 @@ func (en *ExecutionNode) runLeaderElection() {
 	if shouldBeLeader && !isCurrentlyLeader {
 		en.SetLeader(true)
 		en.SetTerm(en.PlanDist.CurrentTerm() + 1)
+		if en.TermStore != nil {
+			en.TermStore.Save(en.PlanDist.CurrentTerm(), en.nodeID)
+		}
 		log.Printf("leader election: node %s promoted to leader (term %d)", en.nodeID, en.PlanDist.CurrentTerm())
 	} else if !shouldBeLeader && isCurrentlyLeader {
 		en.SetLeader(false)
+		if en.TermStore != nil {
+			en.TermStore.Save(en.PlanDist.CurrentTerm(), leaderID)
+		}
 		log.Printf("leader election: node %s stepped down (new leader: %s)", en.nodeID, leaderID)
 	}
 }
@@ -442,8 +480,15 @@ func (en *ExecutionNode) handleAckMessage(ctx context.Context, msg []byte) ([]by
 	return nil, nil
 }
 
-func (en *ExecutionNode) callService(svcName, method string, body []byte) ([]byte, error) {
+func (en *ExecutionNode) callService(svcName, method string, body []byte, timeoutMs uint64) ([]byte, error) {
 	observability.RecordExec("svc_call")
+
+	svcTimeout := 10 * time.Second
+	if timeoutMs > 0 {
+		svcTimeout = time.Duration(timeoutMs) * time.Millisecond
+	}
+	svcCtx, svcCancel := context.WithTimeout(context.Background(), svcTimeout)
+	defer svcCancel()
 
 	v, _ := en.circuitBreakers.Load(svcName)
 	cb, ok := v.(*reliability.CircuitBreaker)
@@ -461,7 +506,12 @@ func (en *ExecutionNode) callService(svcName, method string, body []byte) ([]byt
 	inst, _ := en.Registry.LookupInstance(svcName, method)
 	if inst != nil {
 		endpoint := fmt.Sprintf("%s://%s:%d", inst.Endpoint.Protocol, inst.Endpoint.Address, inst.Endpoint.Port)
-		resp, err := en.httpClient.Post(endpoint, "application/octet-stream", bytes.NewReader(body))
+		req, err := http.NewRequestWithContext(svcCtx, "POST", endpoint, bytes.NewReader(body))
+		if err != nil {
+			cb.Failure()
+			return nil, fmt.Errorf("service %s: request: %w", svcName, err)
+		}
+		resp, err := en.httpClient.Do(req)
 		if err != nil {
 			cb.Failure()
 			en.Registry.MarkUnhealthy(svcName, inst.Endpoint.NodeID)
@@ -499,7 +549,7 @@ func (en *ExecutionNode) callService(svcName, method string, body []byte) ([]byt
 	return body, nil
 }
 
-func (en *ExecutionNode) executePlan(plan []byte, body []byte) ([]byte, error) {
+func (en *ExecutionNode) executePlan(ctx context.Context, plan []byte, body []byte) ([]byte, error) {
 	names := make(map[uint16]string)
 	if entries, err := bridge.PlanServices(plan); err == nil {
 		for _, e := range entries {
@@ -510,6 +560,14 @@ func (en *ExecutionNode) executePlan(plan []byte, body []byte) ([]byte, error) {
 	execID := uuid.New().String()
 	now := time.Now().UTC()
 
+	execCtx, cancel := context.WithCancel(ctx)
+	en.Execs.Register(execID, cancel, "")
+
+	defer func() {
+		en.Execs.Unregister(execID)
+		cancel()
+	}()
+
 	st := &execstate.State{
 		ID:        execID,
 		PlanBytes: plan,
@@ -518,26 +576,33 @@ func (en *ExecutionNode) executePlan(plan []byte, body []byte) ([]byte, error) {
 		UpdatedAt: now,
 	}
 	if en.StateStore != nil {
-		en.StateStore.Create(context.Background(), st)
+		en.StateStore.Create(execCtx, st)
 	}
 
-	out, err := en.runSteps(execID, plan, names, nil, nil, st)
+	out, err := en.runSteps(execCtx, execID, plan, names, nil, nil, st)
 	if en.StateStore != nil {
 		if err != nil {
 			st.Status = execstate.StatusFailed
 			st.Error = err.Error()
-			en.StateStore.Save(context.Background(), st)
+			en.StateStore.Save(execCtx, st)
 		} else {
-			en.StateStore.Delete(context.Background(), execID)
+			en.StateStore.Delete(execCtx, execID)
 		}
 	}
 	return out, err
 }
 
-func (en *ExecutionNode) runSteps(execID string, plan []byte, names map[uint16]string, startCtx, startResp []byte, st *execstate.State) ([]byte, error) {
+func (en *ExecutionNode) runSteps(ctx context.Context, execID string, plan []byte, names map[uint16]string, startCtx, startResp []byte, st *execstate.State) ([]byte, error) {
 	ctxBytes, respBytes := startCtx, startResp
 
 	for step := 0; step < 1000; step++ {
+		select {
+		case <-ctx.Done():
+			en.tryCompensate(execID)
+			return nil, fmt.Errorf("execution cancelled at step %d: %w", step, ctx.Err())
+		default:
+		}
+
 		out, err := bridge.ExecuteStep(plan, ctxBytes, respBytes, nil)
 		if err != nil {
 			en.tryCompensate(execID)
@@ -580,7 +645,7 @@ func (en *ExecutionNode) runSteps(execID string, plan []byte, names map[uint16]s
 				})
 			}
 
-			resp, err := en.callService(svcName, method, out.PendingBody)
+			resp, err := en.callService(svcName, method, out.PendingBody, out.TimeoutMs)
 			if err != nil {
 				en.tryCompensate(execID)
 				return nil, fmt.Errorf("service %s: %w", svcName, err)
@@ -651,7 +716,7 @@ func (en *ExecutionNode) recoverExecution(st *execstate.State) {
 			rawName = fmt.Sprintf("svc-%d", st.PendingSvc)
 		}
 		svcName, method := bridge.ParseServiceMethod(rawName)
-		resp, err := en.callService(svcName, method, st.PendingBody)
+		resp, err := en.callService(svcName, method, st.PendingBody, 0)
 		if err != nil {
 			log.Printf("recovery: exec %s service %s retry failed: %v", st.ID, svcName, err)
 			st.Status = execstate.StatusFailed
@@ -666,7 +731,7 @@ func (en *ExecutionNode) recoverExecution(st *execstate.State) {
 		en.StateStore.Save(context.Background(), st)
 	}
 
-	out, err := en.runSteps(st.ID, st.PlanBytes, names, st.CtxBytes, startResp, st)
+	out, err := en.runSteps(context.Background(), st.ID, st.PlanBytes, names, st.CtxBytes, startResp, st)
 	if err != nil {
 		log.Printf("recovery: exec %s failed: %v", st.ID, err)
 		st.Status = execstate.StatusFailed
@@ -679,7 +744,7 @@ func (en *ExecutionNode) recoverExecution(st *execstate.State) {
 	en.StateStore.Delete(context.Background(), st.ID)
 }
 
-func (en *ExecutionNode) executeAll(body []byte) ([][]byte, error) {
+func (en *ExecutionNode) executeAll(ctx context.Context, body []byte) ([][]byte, error) {
 	plans := en.Engine.ActivePlanBytes()
 	if len(plans) == 0 {
 		return nil, nil
@@ -687,7 +752,7 @@ func (en *ExecutionNode) executeAll(body []byte) ([][]byte, error) {
 
 	var results [][]byte
 	for _, plan := range plans {
-		res, err := en.executePlan(plan, body)
+		res, err := en.executePlan(ctx, plan, body)
 		if err != nil {
 			return results, err
 		}
@@ -723,7 +788,10 @@ func (en *ExecutionNode) Start() {
 		}
 		en.Dedup.Mark(msgIDStr)
 
-		results, err := en.executeAll(msg)
+		execCtx, execCancel := context.WithTimeout(ctx, 30*time.Second)
+		defer execCancel()
+
+		results, err := en.executeAll(execCtx, msg)
 		if err != nil {
 			observability.RecordError("exec")
 			en.DLQ.Send(&reliability.DeadLetterEntry{
@@ -801,13 +869,41 @@ func (en *ExecutionNode) Start() {
 	mux.HandleFunc("/heartbeat", en.Registry.HeartbeatHTTPHandler)
 	mux.HandleFunc("/services", en.Registry.ListServicesHTTPHandler)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"status":"ok"}`))
+		status := map[string]interface{}{
+			"status":    "ok",
+			"node_id":   en.nodeID,
+			"is_leader": en.IsLeader(),
+			"term":      en.CurrentTerm(),
+		}
+		json.NewEncoder(w).Encode(status)
+	})
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if en.IsLeader() && en.PlanDist.CurrentTerm() == 0 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]string{"status": "not ready", "reason": "leader not initialized"})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
 	})
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		snap := en.Metrics.Snapshot()
 		snap.Gauges["pending_requests"] = int64(en.ReplyRouter.PendingCount())
 		snap.Gauges["dlq_size"] = int64(en.DLQ.Len())
+		snap.Gauges["inflight_execs"] = int64(en.Execs.Len())
 		json.NewEncoder(w).Encode(snap)
+	})
+	mux.HandleFunc("DELETE /executions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if en.Execs.Cancel(id) {
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(map[string]string{"status": "cancelling", "id": id})
+		} else {
+			http.Error(w, "execution not found", http.StatusNotFound)
+		}
+	})
+	mux.HandleFunc("GET /executions", func(w http.ResponseWriter, r *http.Request) {
+		execs := en.Execs.List()
+		json.NewEncoder(w).Encode(execs)
 	})
 
 	en.HTTP = &http.Server{Addr: en.httpAddr, Handler: mux}
@@ -830,6 +926,9 @@ func (en *ExecutionNode) Start() {
 func (en *ExecutionNode) Shutdown() {
 	en.mu.Lock()
 	defer en.mu.Unlock()
+
+	log.Printf("shutdown: cancelling %d in-flight executions", en.Execs.Len())
+	en.Execs.CancelAll()
 
 	for _, c := range en.consumers {
 		c.Stop()

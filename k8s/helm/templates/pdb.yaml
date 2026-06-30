@@ -1,0 +1,12 @@
+{{- if .Values.flowrulz.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: flowrulz
+  namespace: {{ include "flowrulz.namespace" . }}
+spec:
+  minAvailable: {{ .Values.flowrulz.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      app: flowrulz
+{{- end }}

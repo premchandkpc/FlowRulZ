@@ -308,6 +308,7 @@ pub unsafe extern "C" fn flowrulz_execute_step(
     pending_body_ptr: *mut u8,
     pending_body_cap: usize,
     pending_body_len: *mut usize,
+    pending_timeout_ms: *mut u64,
     ctx_out_ptr: *mut u8,
     ctx_out_cap: usize,
     ctx_out_len: *mut usize,
@@ -394,7 +395,7 @@ pub unsafe extern "C" fn flowrulz_execute_step(
                 }
                 2
             }
-            StepResult::Pending { svc_id, body } => {
+            StepResult::Pending { svc_id, body, timeout_ms } => {
                 if !pending_svc_id.is_null() {
                     unsafe { *pending_svc_id = svc_id; }
                 }
@@ -404,6 +405,9 @@ pub unsafe extern "C" fn flowrulz_execute_step(
                         std::ptr::copy_nonoverlapping(body.as_ptr(), pending_body_ptr, n);
                         *pending_body_len = n;
                     }
+                }
+                if !pending_timeout_ms.is_null() {
+                    unsafe { *pending_timeout_ms = timeout_ms; }
                 }
                 let ctx_bytes = bincode::serialize(&vm.ctx).unwrap_or_default();
                 if !ctx_out_ptr.is_null() && ctx_out_cap > 0 {

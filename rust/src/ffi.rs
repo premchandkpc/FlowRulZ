@@ -415,6 +415,26 @@ pub unsafe extern "C" fn flowrulz_execute_step(
                 }
                 1
             }
+            StepResult::Delay(ms) => {
+                if !pending_svc_id.is_null() {
+                    unsafe { *pending_svc_id = ms as u16; }
+                }
+                if !pending_body_ptr.is_null() && !pending_body_len.is_null() && pending_body_cap >= 8 {
+                    unsafe {
+                        std::ptr::write(pending_body_ptr as *mut u64, ms);
+                        *pending_body_len = 8;
+                    }
+                }
+                let ctx_bytes = bincode::serialize(&vm.ctx).unwrap_or_default();
+                if !ctx_out_ptr.is_null() && ctx_out_cap > 0 {
+                    let n = ctx_bytes.len().min(ctx_out_cap);
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(ctx_bytes.as_ptr(), ctx_out_ptr, n);
+                        *ctx_out_len = n;
+                    }
+                }
+                3
+            }
         },
         Err(e) => {
             write_error(err_ptr, err_cap, err_len, &format!("step: {}", e));

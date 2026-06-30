@@ -22,6 +22,7 @@ pub enum StepResult {
     Done,
     Continue,
     Pending { svc_id: u16, body: Vec<u8> },
+    Delay(u64),
 }
 
 pub struct VM<'a> {
@@ -78,6 +79,11 @@ impl<'a> VM<'a> {
                 let body = self.ctx.body.clone();
                 Ok(StepResult::Pending { svc_id, body })
             }
+            OpCode::Delay => {
+                let ms = instr.delay_ms();
+                self.ctx.ip += 1;
+                Ok(StepResult::Delay(ms))
+            }
             _ => {
                 self.ctx.ip += 1;
                 self.dispatch(instr)?;
@@ -115,6 +121,7 @@ impl<'a> VM<'a> {
             OpCode::SvcArg | OpCode::RetryData | OpCode::JumpOffset => Ok(()),
             OpCode::TypeGuard => self.op_type_guard(instr),
             OpCode::SvcCall => self.op_svc_call(instr, &*caller),
+            OpCode::Delay => Ok(()),
         };
 
         let duration_ns = start.elapsed().as_nanos() as u64;

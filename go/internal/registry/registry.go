@@ -86,7 +86,7 @@ func New() *ServiceRegistry {
 		services:   make(map[string][]*Endpoint),
 		instances:  make(map[string][]*ServiceInstance),
 		roundRobin: make(map[string]*uint64),
-		defStrategy: LBStrategyRandom,
+		defStrategy: LBStrategyLeastLoaded,
 		hbTimeout:  30 * time.Second,
 	}
 }
@@ -331,7 +331,7 @@ func (r *ServiceRegistry) LookupInstance(name, method string) (*ServiceInstance,
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("registry: no healthy instance of %q for method %q", name, method)
 	}
-	return candidates[rand.Intn(len(candidates))], nil
+	return r.pickInstance(candidates), nil
 }
 
 func (r *ServiceRegistry) Pick(name string) (*Endpoint, error) {
@@ -389,6 +389,40 @@ func (r *ServiceRegistry) PickWithStrategy(name string, strategy LBStrategy) (*E
 
 	default:
 		return healthy[rand.Intn(len(healthy))], nil
+	}
+}
+
+func (r *ServiceRegistry) pickInstance(candidates []*ServiceInstance) *ServiceInstance {
+	switch r.defStrategy {
+	case LBStrategyLeastLoaded:
+		selected := candidates[0]
+		for _, inst := range candidates[1:] {
+			if inst.Endpoint.Load < selected.Endpoint.Load {
+				selected = inst
+			}
+		}
+		return selected
+	case LBStrategyRoundRobin:
+		r.mu.Lock()
+		counter, ok := r.roundRobin[candidates[0].Name]
+		if !ok {
+			var zero uint64
+			counter = &zero
+			r.roundRobin[candidates[0].Name] = counter
+		}
+		idx := atomic.AddUint64(counter, 1) % uint64(len(candidates))
+		r.mu.Unlock()
+		return candidates[idx]
+	case LBStrategyLocalPrefer:
+		local := localNodeID()
+		for _, inst := range candidates {
+			if inst.Endpoint.NodeID == local {
+				return inst
+			}
+		}
+		return candidates[rand.Intn(len(candidates))]
+	default:
+		return candidates[rand.Intn(len(candidates))]
 	}
 }
 

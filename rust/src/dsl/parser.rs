@@ -35,6 +35,7 @@ pub enum ASTNode {
     Schema(String),
     Label(String),
     Jmp(String),
+    Delay(u64),
 }
 
 impl fmt::Display for ASTNode {
@@ -70,6 +71,7 @@ impl fmt::Display for ASTNode {
             ASTNode::Schema(body) => write!(f, "schema:{}", body),
             ASTNode::Label(l) => write!(f, "{}:", l),
             ASTNode::Jmp(l) => write!(f, "j:{}", l),
+            ASTNode::Delay(ms) => write!(f, "delay:{}", ms),
         }
     }
 }
@@ -318,6 +320,7 @@ fn token_to_ast(token: &Token) -> Result<ASTNode, ParseError> {
         Token::Schema(body) => Ok(ASTNode::Schema(body.clone())),
         Token::Label(l) => Ok(ASTNode::Label(l.clone())),
         Token::Jmp(l) => Ok(ASTNode::Jmp(l.clone())),
+        Token::Delay(ms) => Ok(ASTNode::Delay(*ms)),
     }
 }
 
@@ -450,6 +453,14 @@ mod tests {
         assert_eq!(p.nodes[1], ASTNode::Next("svc".to_string()));
         assert_eq!(p.nodes[2], ASTNode::Jmp("end".to_string()));
         assert_eq!(p.nodes[3], ASTNode::Label("end".to_string()));
+    }
+
+    #[test]
+    fn test_delay() {
+        let p = parse_str("delay:5000 n:svc").unwrap();
+        assert_eq!(p.nodes.len(), 2);
+        assert_eq!(p.nodes[0], ASTNode::Delay(5000));
+        assert_eq!(p.nodes[1], ASTNode::Next("svc".to_string()));
     }
 
     #[test]

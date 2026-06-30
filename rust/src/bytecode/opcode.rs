@@ -27,6 +27,7 @@ pub enum OpCode {
     JumpOffset = 21,
     TypeGuard = 22,
     SvcCall = 23,
+    Delay = 24,
 }
 
 impl OpCode {
@@ -56,6 +57,7 @@ impl OpCode {
             21 => Some(OpCode::JumpOffset),
             22 => Some(OpCode::TypeGuard),
             23 => Some(OpCode::SvcCall),
+            24 => Some(OpCode::Delay),
             _ => None,
         }
     }

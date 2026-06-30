@@ -106,6 +106,16 @@ impl Instruction {
         Instruction::new(OpCode::TypeGuard, 0, u16::from(strict), 0, 0)
     }
 
+    pub fn delay(ms: u64) -> Self {
+        let hi = (ms >> 16) as u16;
+        let lo = (ms & 0xFFFF) as u16;
+        Instruction::new(OpCode::Delay, 0, 0, hi, lo)
+    }
+
+    pub fn delay_ms(&self) -> u64 {
+        ((self.b as u64) << 16) | (self.c as u64)
+    }
+
     pub fn has_retry(&self) -> bool {
         (self.flags & 0x01) != 0
     }

@@ -193,6 +193,56 @@ func TestNilTask(t *testing.T) {
 	}
 }
 
+func TestTimerWheel(t *testing.T) {
+	tw := DefaultTimerWheel()
+	tw.Start()
+	defer tw.Stop()
+
+	fired := make(chan struct{}, 3)
+	tw.Add(20*time.Millisecond, func() { fired <- struct{}{} })
+	tw.Add(40*time.Millisecond, func() { fired <- struct{}{} })
+	tw.Add(30*time.Millisecond, func() { fired <- struct{}{} })
+
+	for i := 0; i < 3; i++ {
+		select {
+		case <-fired:
+		case <-time.After(200 * time.Millisecond):
+			t.Fatal("timeout waiting for timer")
+		}
+	}
+}
+
+func TestTimerWheelCancel(t *testing.T) {
+	tw := DefaultTimerWheel()
+	tw.Start()
+	defer tw.Stop()
+
+	var fired atomic.Int32
+	timer := tw.Add(20*time.Millisecond, func() { fired.Add(1) })
+	tw.Cancel(timer.ID)
+
+	time.Sleep(100 * time.Millisecond)
+	if fired.Load() != 0 {
+		t.Fatal("canceled timer fired")
+	}
+}
+
+func TestTimerWheelOrder(t *testing.T) {
+	tw := DefaultTimerWheel()
+	tw.Start()
+	defer tw.Stop()
+
+	var order []int
+	done := make(chan struct{})
+	tw.Add(50*time.Millisecond, func() { order = append(order, 2); close(done) })
+	tw.Add(20*time.Millisecond, func() { order = append(order, 1) })
+
+	<-done
+	if len(order) != 2 || order[0] != 1 || order[1] != 2 {
+		t.Fatalf("expected [1 2], got %v", order)
+	}
+}
+
 func TestContextCancellation(t *testing.T) {
 	s := New(nil)
 	ctx, cancel := context.WithCancel(context.Background())

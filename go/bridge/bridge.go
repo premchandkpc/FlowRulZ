@@ -58,6 +58,7 @@ caller_cb_t getCallerBridgePtr(void);
 import "C"
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -299,9 +300,10 @@ func PlanServices(plan []byte) ([]ServiceEntry, error) {
 type StepResult int
 
 const (
-	StepDone    StepResult = 0
-	StepPending StepResult = 1
+	StepDone     StepResult = 0
+	StepPending  StepResult = 1
 	StepContinue StepResult = 2
+	StepDelay    StepResult = 3
 )
 
 type StepOutput struct {
@@ -402,6 +404,13 @@ func RegisterPlugin(name string, wasmBytes []byte) error {
 		return fmt.Errorf("register plugin '%s': ffi error %d", name, rc)
 	}
 	return nil
+}
+
+func (o *StepOutput) DelayMs() uint64 {
+	if len(o.PendingBody) < 8 {
+		return 0
+	}
+	return binary.LittleEndian.Uint64(o.PendingBody[:8])
 }
 
 func PlanComplexity(plan []byte) uint32 {

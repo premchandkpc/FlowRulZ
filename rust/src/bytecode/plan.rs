@@ -1,9 +1,6 @@
-use super::consts::ConstantPool;
-use super::dag_table::DAGTable;
-use super::instruction::Instruction;
-use super::opcode::{ChunkMode, RetryStrategy};
-use super::resolved_type::Schema;
-use super::services::ServiceTable;
+use super::{
+    ChunkMode, ConstantPool, DAGTable, Instruction, RetryStrategy, Schema, ServiceTable,
+};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RetryConfig {

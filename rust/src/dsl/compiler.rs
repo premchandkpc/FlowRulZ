@@ -208,6 +208,9 @@ impl Compiler {
                     // Schema already parsed in pre-pass; just emit type guard
                     instructions.push(Instruction::type_guard(1));
                 }
+                ASTNode::Delay(ms) => {
+                    instructions.push(Instruction::delay(*ms));
+                }
                 ASTNode::Pipe => {}
             }
         }

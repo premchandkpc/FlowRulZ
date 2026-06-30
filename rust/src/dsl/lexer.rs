@@ -33,6 +33,7 @@ pub enum Token {
     Schema(String),
     Label(String),
     Jmp(String),
+    Delay(u64),
 }
 
 impl fmt::Display for Token {
@@ -70,6 +71,7 @@ impl fmt::Display for Token {
             Token::Schema(body) => write!(f, "schema:{}", body),
             Token::Label(l) => write!(f, "{}:", l),
             Token::Jmp(l) => write!(f, "j:{}", l),
+            Token::Delay(ms) => write!(f, "delay:{}", ms),
         }
     }
 }
@@ -92,6 +94,7 @@ pub enum LexError {
     InvalidKey(String),
     InvalidMap(String),
     InvalidEmit(String),
+    InvalidDelay(String),
 }
 
 impl fmt::Display for LexError {
@@ -113,6 +116,7 @@ impl fmt::Display for LexError {
             LexError::InvalidKey(t) => write!(f, "invalid key: {}", t),
             LexError::InvalidMap(t) => write!(f, "invalid map: {}", t),
             LexError::InvalidEmit(t) => write!(f, "invalid emit: {}", t),
+            LexError::InvalidDelay(t) => write!(f, "invalid delay: {}", t),
         }
     }
 }
@@ -219,6 +223,11 @@ fn classify(word: &str) -> Result<Token, LexError> {
             return Err(LexError::InvalidDag(word.to_string()));
         }
         return Ok(Token::Dag(body));
+    }
+    if word.starts_with("delay:") {
+        let rest = &word[6..];
+        let ms: u64 = rest.parse().map_err(|_| LexError::InvalidDelay(word.to_string()))?;
+        return Ok(Token::Delay(ms));
     }
     if word.starts_with("schema:") {
         let body = word[7..].to_string();
@@ -589,6 +598,18 @@ mod tests {
     fn test_jmp() {
         let tokens = lex("j:mylabel").unwrap();
         assert_eq!(tokens, vec![Token::Jmp("mylabel".to_string())]);
+    }
+
+    #[test]
+    fn test_delay() {
+        let tokens = lex("delay:5000").unwrap();
+        assert_eq!(tokens, vec![Token::Delay(5000)]);
+    }
+
+    #[test]
+    fn test_delay_invalid() {
+        assert!(lex("delay:").is_err());
+        assert!(lex("delay:abc").is_err());
     }
 
     #[test]

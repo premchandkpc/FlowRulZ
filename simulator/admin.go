@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"time"
 
@@ -134,14 +133,4 @@ func (s *Simulator) adminServices(cli *Client) http.HandlerFunc {
 	}
 }
 
-func (s *Simulator) RunForever() error {
-	log.Printf("simulator: starting in interactive mode (%d nodes, %d workers/node)", s.cfg.Nodes, s.cfg.Workers)
-	s.Dispatcher.StartAll()
 
-	if s.Dashboard != nil {
-		s.Dashboard.Start()
-	}
-
-	log.Printf("simulator: running. press Ctrl+C to stop")
-	select {}
-}

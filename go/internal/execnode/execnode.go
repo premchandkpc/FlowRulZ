@@ -112,7 +112,7 @@ func NewConfig() *Config {
 		HTTPAddr:      ":8080",
 		Topic:         "flowrulz-input",
 		NodeID:        "node-1",
-		KafkaBrokers:  []string{"localhost:9092"},
+		KafkaBrokers:  []string{},
 		KafkaGroupID:  "flowrulz",
 	}
 }

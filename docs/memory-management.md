@@ -2,17 +2,12 @@
 
 ## Overview
 
-Three-layer memory architecture designed for high-throughput event processing with minimal allocation overhead.
+Two-layer memory architecture: Arena bump allocator for per-message temporaries + shared intern table. Slab pool was removed as dead code — `flowrulz_msg_alloc`/`release` use `std::alloc` directly.
 
 ```
 ┌──────────────────┐
-│   Slab Pool       │  ← Three-tier pre-allocated buffer pool
-│  (2KB / 8KB / 64KB)│
-└────────┬─────────┘
-         │ acquire/release
-┌────────▼─────────┐
-│   Arena (Bump)    │  ← Bump allocator for per-message temporaries
-│  (bumpalo::Bump)  │
+│ Arena (Bump)      │  ← Bump allocator for per-message temporaries
+│ (bumpalo::Bump)   │
 └────────┬─────────┘
          │ allocate
 ┌────────▼─────────┐
@@ -20,28 +15,6 @@ Three-layer memory architecture designed for high-throughput event processing wi
 │  (boxcar + HashMap)│
 └──────────────────┘
 ```
-
-## Slab Pool
-
-Pre-allocated, lock-free message buffer pool.
-
-### Size Classes
-
-| Class | Size | Pre-alloc Count |
-|-------|------|-----------------|
-| Small | 2,048 bytes | 1024 |
-| Medium | 8,192 bytes | 512 |
-| Large | 65,536 bytes | 64 |
-
-### Implementation
-
-```rust
-static SLAB_POOL: Lazy<Mutex<SlabPool>> = Lazy::new(|| {
-    Mutex::new(SlabPool::new(1024, 512, 64))
-});
-```
-
-Uses `crossbeam::SegQueue` (lock-free MPSC queue) for contention-free acquire/release.
 
 ## Arena
 
@@ -73,26 +46,11 @@ static INTERN_TABLE: Lazy<InternTable> = Lazy::new(|| {
 - Lock-free reads via `boxcar::Vec`
 - Pre-filled with common HTTP headers at startup
 
-## Message Lifecycle
+## Message Memory — `flowrulz_msg_alloc` / `flowrulz_msg_release`
 
-```
-1. Event arrives (opaque payload bytes)
-2. flowrulz_execute(plan, body, msg_id, corr_id, trace_id, ...)
-   │
-   ├── Create ExecutionContext::from_body(body)
-   │   ├── event.id = msg_id
-   │   ├── event.metadata.correlation_id = corr_id
-   │   ├── event.metadata.trace_id = trace_id
-   │   └── event.metadata.partition/offset
-   │
-   ├── Arena reset
-   ├── VM dispatch loop (operates on ctx.body)
-   ├── Service calls store results in ctx.outputs
-   ├── Span emitted per opcode
-   ├── TypeGuard validates schema
-   │
-   └── Read result from ctx.body
-```
+Simple `std::alloc` allocator (was slab pool). No pooling — each call allocates/frees directly. The slab pool (`memory::slab`) was removed as dead code since every allocation went through the pool and was immediately discarded (the pool never actually reused arenas).
+
+## Message Lifecycle
 
 ## Span Ring Buffer
 

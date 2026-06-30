@@ -51,7 +51,7 @@ make clean     # cargo clean + remove binary
 - Span tracing: `thread_local!` ring buffer, lock-free atomic head/tail, drained via `flowrulz_get_spans`
 - **Reply Router** (`go/internal/replyrouter/`): Per-node pending request tracker by correlation_id, timeout-based cleanup, duplicate detection
 - **Scheduler** (`go/internal/scheduler/`): Lane-based priority queues (fast/normal/heavy), semaphore-based concurrency limits, reject-on-full backpressure
-- **Plan Distribution** (`go/internal/plandist/`): Leader publishes plans to `_flowrulz_plans`, followers ACK on `_flowrulz_acks`, quorum-based activation with `WaitForAcks`. Wired in execnode via `handlePlanMessage`/`handleAckMessage` — plan/ack consumers listen on `_flowrulz_plans`/`_flowrulz_acks`, call `Engine.AddVersion()` for "plan" type and `Engine.Promote()` for "activate". Term-based rejection prevents stale plans.
+- **Plan Distribution** (`go/internal/plandist/`): Leader publishes plans to `_flowrulz_plans`, followers ACK on `_flowrulz_acks`, quorum-based activation with `WaitForAcks`. Real Kafka (Sarama) when brokers configured; log-only stubs when empty. Wired in execnode via `handlePlanMessage`/`handleAckMessage` — plan/ack consumers listen on `_flowrulz_plans`/`_flowrulz_acks`, call `Engine.AddVersion()` for "plan" type and `Engine.Promote()` for "activate". Term-based rejection prevents stale plans.
 - **Metrics** (`go/internal/observability/`): Counter, Gauge, Histogram with thread-safe per-name dedup and global shortcuts
 - **Circuit Breaker** (`go/internal/reliability/circuitbreaker.go`): Three-state (Closed/Open/HalfOpen) per-svcID breaker wired in `execnode` svcCaller (threshold=5, recovery=30s)
 - **DLQ** (`go/internal/reliability/dlq.go`): Bounded dead-letter queue, Kafka-backed via `WithDLQProducer()`, per-entry replay, bulk ReplayAll, JSON export
@@ -171,6 +171,7 @@ All endpoints (except `/health`) require `Authorization: Bearer <FLOWRULZ_API_KE
 - `handleExecutions` endpoint groups timeline events by execution, extracts service list and status
 - Both `sim` (in-memory EventBus based simulator) and `flowrulz` (Kafka + Rust VM production node) binaries build and work independently
 - 23 Go packages (15 prod + 8 simulator), `go vet ./go/... ./simulator/...` clean
+- Go source (prod): 21 files ~2,500 lines; Rust source: 34 files ~6,100 lines
 
 ### Phase 1–3: Rust cleanup (complete)
 - Deleted 3 dead files: `bytecode/mapexpr.rs`, `executor/context.rs`, `memory/slab.rs`
@@ -199,13 +200,20 @@ All endpoints (except `/health`) require `Authorization: Bearer <FLOWRULZ_API_KE
 - Fixed `Rules()` shallow copy (new Versions slice, no struct copy of WaitGroup)
 - `go vet` clean, all Go tests pass
 
-### In Progress
-- (none)
+### Phase 6: Simulator cleanup (complete)
+- Removed dead methods: `RunForever`, `AddEvent`, `SubscribeChannel`, `Drop`, `Duplicate`, `Drain`, `Pending`, `DispatchByKey`, `StopBus`, `Stats`, `Dropped`, `Duplicated`, `RecordDropped`, `MarshalJSON`, `TotalSent`, `TotalFailed`, `Clear`, `MarshalJSON`, `Default()`
+- Removed dead fields: `bufferSize`, `subscription.ch`, `WaitingEntry.Service/QueuedAt`, `Plan.Tags`, `MockService.Retryable/ErrorCode`, `CallRecord.Start/Latency/Error/Retryable`, `callLog`, `Network.reordered`, `Config.ReorderRate`, `Result` type
+- Removed dead variables: `OrderFlowAltPayment`, `DefaultConfig`
+- Removed `go vet` warnings (unused imports `sort`, `log`)
+- All simulator + Go tests pass
+
+### Done
+All 4 cleanup phases complete — Rust, Go prod, Go simulator, Docs updated.
 
 ### Next Steps
-1. Phase 6: Simulator dead code & dedup (27 items per audit, `writeJSON`/`compileDSL` across admin.go/dashboard.go/simulator.go)
-2. Phase 7: Update `docs/` `.md` files for deleted files, changed APIs, removed exports
-3. Phase 8: Full verification — `make test`, `make vet`, `cargo check`, scenario smoke tests
+1. Set up Docker Compose for Kafka dev environment (single-node Kafka + ZK)
+2. Wire `FLOWRULZ_KAFKA_BROKERS` env var into `flowrulz` binary for real cluster mode
+3. Update `docs/` for Kafka integration status
 
 ## Admin API (Interactive Mode)
 

@@ -133,25 +133,6 @@ func TestDelayedMessage(t *testing.T) {
 	}
 }
 
-func TestDuplicate(t *testing.T) {
-	b := New(10)
-	defer b.Close()
-
-	var count atomic.Int32
-	b.Subscribe("dup", func(ctx context.Context, msg *transport.Message) {
-		count.Add(1)
-	})
-
-	orig := &transport.Message{Body: []byte("original")}
-	b.Publish("dup", orig)
-	b.Duplicate("dup", orig)
-	time.Sleep(50 * time.Millisecond)
-
-	if n := count.Load(); n != 2 {
-		t.Fatalf("expected 2 deliveries (original+dup), got %d", n)
-	}
-}
-
 func TestCloseRejectsPublish(t *testing.T) {
 	b := New(10)
 	b.Close()

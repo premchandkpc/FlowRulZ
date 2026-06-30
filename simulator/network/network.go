@@ -14,15 +14,7 @@ type Config struct {
 	MaxLatency      time.Duration
 	PacketLossRate  float64
 	DuplicateRate   float64
-	ReorderRate     float64
-}
 
-var DefaultConfig = Config{
-	MinLatency:      1 * time.Millisecond,
-	MaxLatency:      5 * time.Millisecond,
-	PacketLossRate:  0.0,
-	DuplicateRate:   0.0,
-	ReorderRate:     0.0,
 }
 
 type ChaosConfig struct {
@@ -38,7 +30,6 @@ type Network struct {
 	chaos     atomic.Value
 	dropped   atomic.Int64
 	duplicated atomic.Int64
-	reordered atomic.Int64
 }
 
 func New(cfg Config) *Network {
@@ -50,9 +41,6 @@ func New(cfg Config) *Network {
 func (n *Network) SetChaos(c ChaosConfig) {
 	n.chaos.Store(c)
 }
-
-func (n *Network) Dropped() int64   { return n.dropped.Load() }
-func (n *Network) Duplicated() int64 { return n.duplicated.Load() }
 
 func (n *Network) CallService(ctx context.Context, svc *services.MockService, body []byte, cb func(services.CallResult)) {
 	latency := n.cfg.MinLatency

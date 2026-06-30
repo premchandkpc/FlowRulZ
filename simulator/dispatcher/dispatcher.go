@@ -36,21 +36,6 @@ func (d *Dispatcher) Dispatch(ctx *execution.ExecutionContext) {
 	node.Enqueue(ctx)
 }
 
-func (d *Dispatcher) DispatchByKey(key string, ctx *execution.ExecutionContext) {
-	idx := d.hashNode(key, len(d.Nodes))
-	node := d.Nodes[idx]
-
-	d.Timeline.Record(timeline.Event{
-		ExecID:    ctx.ID,
-		Timestamp: ctx.CreatedAt,
-		Type:      timeline.EventCreated,
-		Meta:      ctx.Plan.ID,
-		NodeID:    node.ID,
-	})
-
-	node.Enqueue(ctx)
-}
-
 func (d *Dispatcher) hashNode(key string, n int) int {
 	if n == 0 {
 		return 0

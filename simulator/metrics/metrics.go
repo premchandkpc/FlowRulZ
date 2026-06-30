@@ -1,7 +1,6 @@
 package metrics
 
 import (
-	"encoding/json"
 	"math"
 	"sort"
 	"sync"
@@ -81,10 +80,6 @@ func (c *Collector) RecordCompleted(latency time.Duration) {
 
 func (c *Collector) RecordFailed() {
 	c.failed.Add(1)
-}
-
-func (c *Collector) RecordDropped() {
-	c.dropped.Add(1)
 }
 
 func (c *Collector) RecordServiceCall(service string, latency time.Duration, err bool) {
@@ -218,6 +213,4 @@ func (c *Collector) Snapshot() *Snapshot {
 	return snap
 }
 
-func (c *Collector) MarshalJSON() ([]byte, error) {
-	return json.Marshal(c.Snapshot())
-}
+

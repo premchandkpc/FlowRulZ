@@ -89,7 +89,7 @@ rust/src/
 └── memory/             # Memory management
     ├── mod.rs
     ├── arena.rs        # Bump allocator
-    ├── slab.rs         # Slab pool
+    # slab.rs removed (dead code)
     └── intern.rs       # String interning
 
 go/

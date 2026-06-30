@@ -91,12 +91,6 @@ func New() *ServiceRegistry {
 	}
 }
 
-func NewWithStrategy(strategy LBStrategy) *ServiceRegistry {
-	r := New()
-	r.defStrategy = strategy
-	return r
-}
-
 func (r *ServiceRegistry) SetHeartbeatTimeout(d time.Duration) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -487,19 +481,6 @@ func (r *ServiceRegistry) Snapshot() map[string][]*Endpoint {
 	return snap
 }
 
-func (r *ServiceRegistry) SnapshotInstances() map[string][]*ServiceInstance {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	snap := make(map[string][]*ServiceInstance, len(r.instances))
-	for name, instances := range r.instances {
-		out := make([]*ServiceInstance, len(instances))
-		copy(out, instances)
-		snap[name] = out
-	}
-	return snap
-}
-
 func (r *ServiceRegistry) ServiceInfo(name string) *ServiceInfo {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -545,10 +526,6 @@ var localNodeIDValue atomic.Value
 
 func init() {
 	localNodeIDValue.Store("")
-}
-
-func SetLocalNodeID(id string) {
-	localNodeIDValue.Store(id)
 }
 
 func localNodeID() string {

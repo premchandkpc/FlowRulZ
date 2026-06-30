@@ -1,7 +1,6 @@
 package timeline
 
 import (
-	"encoding/json"
 	"sync"
 	"time"
 )
@@ -111,13 +110,6 @@ func (s *Store) All() []Event {
 	return events
 }
 
-func (s *Store) Clear() {
-	s.mu.Lock()
-	s.events = make([]Event, 0, 100000)
-	s.byExec = make(map[string][]Event)
-	s.mu.Unlock()
-}
-
 func (s *Store) Stats() map[string]int {
 	s.mu.RLock()
 	stats := make(map[string]int)
@@ -129,6 +121,4 @@ func (s *Store) Stats() map[string]int {
 	return stats
 }
 
-func (s *Store) MarshalJSON() ([]byte, error) {
-	return json.Marshal(s.All())
-}
+

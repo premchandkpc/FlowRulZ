@@ -20,16 +20,4 @@ type SimConfig struct {
 	Verbose      bool          `yaml:"verbose"`
 }
 
-func Default() SimConfig {
-	return SimConfig{
-		Nodes:         3,
-		Workers:       4,
-		Scenario:      "black-friday",
-		Duration:      30 * time.Second,
-		Rate:          100,
-		Speed:         1.0,
-		Dashboard:     true,
-		DashboardAddr: ":8081",
-		Verbose:       false,
-	}
-}
+

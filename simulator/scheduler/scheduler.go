@@ -17,11 +17,6 @@ import (
 	"github.com/premchandkpc/FlowRulZ/simulator/timeline"
 )
 
-type Result struct {
-	Ctx      *execution.ExecutionContext
-	Error    error
-}
-
 type Scheduler struct {
 	ID        string
 	ReadyQ    *execution.ReadyQueue
@@ -486,9 +481,4 @@ func (s *Scheduler) Snapshot() map[string]int {
 	}
 }
 
-func (s *Scheduler) StopBus() {
-	if s.busSub != nil {
-		s.Bus.Unsubscribe(s.busSub.ID)
-		s.busSub = nil
-	}
-}
+

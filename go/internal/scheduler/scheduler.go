@@ -194,41 +194,4 @@ func (s *Scheduler) execTask(ctx context.Context, task *Task, l *lane) {
 	}
 }
 
-func (s *Scheduler) QueuedCount(p Priority) int {
-	l, ok := s.lanes[p]
-	if !ok {
-		return 0
-	}
-	return len(l.queue)
-}
 
-func (s *Scheduler) RunningCount(p Priority) int {
-	l, ok := s.lanes[p]
-	if !ok {
-		return 0
-	}
-	return len(l.sem)
-}
-
-func (s *Scheduler) TotalEnqueued() int64 {
-	return s.totalEnq.Load()
-}
-
-func (s *Scheduler) TotalDequeued() int64 {
-	return s.totalDeq.Load()
-}
-
-func (s *Scheduler) TotalRejected() int64 {
-	return s.totalRej.Load()
-}
-
-func PriorityForScore(score uint32) Priority {
-	switch {
-	case score < 10:
-		return PriorityFast
-	case score <= 50:
-		return PriorityNormal
-	default:
-		return PriorityHeavy
-	}
-}

@@ -94,7 +94,7 @@ unsigned char* flowrulz_msg_alloc(size_t size);
 void flowrulz_msg_release(unsigned char* ptr);
 ```
 
-Slab pool backed — returns pre-allocated buffers. Falls back to fresh allocation if pool empty.
+Direct `std::alloc` allocation (was slab pool backed — slab pool removed as dead code). No pooling.
 
 ### String Interning
 
@@ -191,6 +191,6 @@ The Go side resolves service calls between steps, enabling async multiplexing, c
 ### Thread Safety
 
 - All FFI functions are safe to call concurrently
-- `flowrulz_msg_alloc` / `flowrulz_msg_release` use lock-free slab pools
+- `flowrulz_msg_alloc` / `flowrulz_msg_release` use `std::alloc` directly (slab pool removed as dead code)
 - The Go `ServiceCaller` callback uses `sync.Map` keyed by execution `ctx_id`
 - Multiple callers can be active concurrently for `Parallel` and `DAG` opcodes

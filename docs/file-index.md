@@ -215,7 +215,7 @@ Token-bucket rate limiter. Per-name buckets with configurable rate (tokens/sec) 
 
 Per-node reply router for request/reply pattern. `Send(corrID, timeout)` registers a `PendingRequest` in a `map[string]*PendingRequest` and returns a buffered `chan []byte`. The caller waits on the channel for the reply.
 
-`Route(corrID, response)` looks up the entry, deletes it, sends the response on the channel, and closes it. `RouteOrStore()` is a best-effort variant that silently ignores not-found (reply arrived after timeout).
+`Route(corrID, response)` looks up the entry, deletes it, sends the response on the channel, and closes it.
 
 Cleanup goroutine runs every 1s, evicting expired entries (past `Deadline`) and closing their channels. Duplicate correlation IDs and capacity limits (default 10,000) are rejected with typed errors.
 
@@ -239,11 +239,11 @@ Lane workers: one goroutine per lane, each acquires a semaphore slot, dequeues a
 ### `go/pkg/transport/eventbus.go`
 **Package:** `transport`
 
-Public `EventBus` interface — the canonical pub/sub abstraction for FlowRulZ. Defines `Publish`, `Subscribe`, `Request`, `Reply`, `Broadcast`, `PublishToPartition`, `Unsubscribe`, `TopicStats`, and `Close`. Also defines `Message` (universal message type with ID, Type, Topic, Body, Headers, CorrelationID, etc.), `Handler` callback type, and `Subscription` struct.
+Canonical pub/sub abstraction. `EventBus` interface defines `Publish`, `PublishToPartition`, `Subscribe`, `Request`, `Reply`, `Broadcast`, `Unsubscribe`, `TopicStats`, `Close` — the single contract consumed by both production code and the simulator. Lives in `go/pkg/` (not `go/internal/`) so it can be imported by both `go/...` and `simulator/...` packages. The in-memory implementation is at `simulator/eventbus/`; production Kafka/HTTP implementations at `go/internal/transport/`.
 
-This interface lives in `go/pkg/` (not `go/internal/`) so it can be imported by both `go/...` and `simulator/...` packages. The in-memory implementation is at `simulator/eventbus/eventbus.go`; production Kafka/HTTP implementations are at `go/internal/transport/`.
+Also defines `Message` — universal message type with ID, Type, Topic, Body, Headers, CorrelationID, CreatedAt, Delay, PartitionKey, Metadata, and `Handler` callback type + `Subscription` struct.
 
-**Exports:** `EventBus`, `Message`, `MessageType`, `TypePublish`, `TypeRequest`, `TypeReply`, `TypeBroadcast`, `TypeExecution`, `Handler`, `Subscription`
+**Exports:** `EventBus`, `Message`, `MessageType` (`TypePublish`, `TypeRequest`, `TypeReply`, `TypeBroadcast`, `TypeExecution`), `Handler`, `Subscription`
 
 ---
 
@@ -451,7 +451,7 @@ Crate root. Declares all modules: `bytecode`, `dsl`, `executor`, `memory`, `trac
 ### `rust/src/ffi.rs`
 **Package:** `flowrulz_core`
 
-C FFI boundary. All functions use `#[no_mangle] pub extern "C"` with the `flowrulz_` prefix:
+C FFI boundary. All functions use `#[no_mangle] pub unsafe extern "C"` with the `flowrulz_` prefix:
 - `flowrulz_compile(dsl, rule_id)` — DSL string → zero-copy `Vec<u8>` plan bytes
 - `flowrulz_execute(plan, body, caller_cb, ctx)` — deserialize plan, create `VM`, run, return `ctx.body`
 - `flowrulz_get_spans(buf, len)` — drain the thread-local span ring buffer into the given buffer
@@ -470,9 +470,9 @@ The service call caller registers the C function pointer via `caller_cb_t` signa
 ### `rust/src/error.rs`
 **Package:** `flowrulz_core`
 
-Unified error types. `Error` enum covers DSL lex/parse/compile errors, VM execution errors, schema validation errors, and memory errors. Implements `Display` and `std::error::Error`.
+FFI error codes. `FfiError` enum covers null pointer, buffer too small, lex/parse/compile/serialize/deserialize/execution errors. Implements `Display`.
 
-**Exports:** `Error`, `FfiError`
+**Exports:** `FfiError`
 
 ---
 
@@ -522,7 +522,7 @@ Universal message type. `Event` holds `id`, `topic`, `payload`, `headers`, `meta
 ### `rust/src/bytecode/plan.rs`
 **Package:** `flowrulz_core::bytecode`
 
-`ExecutionPlan` — the compiled output of the DSL compiler. Contains: `instructions` (flat vec), `constant_pool`, `service_table`, `dag_tables`, `map_expressions`, `retry_configs`, `chunk_configs`, `schema`, version metadata.
+`ExecutionPlan` — the compiled output of the DSL compiler. Contains: `instructions` (flat vec), `constant_pool`, `service_table`, `dag_tables`, `retry_configs`, `chunk_configs`, `schema`, version metadata.
 
 Also holds helper types: `RetryConfig` (max_attempts, strategy, fixed_ms), `ChunkConfig` (mode, count).
 
@@ -559,14 +559,7 @@ Enum syntax in DSL: `enum[val1|val2|...]`.
 
 ---
 
-### `rust/src/bytecode/mapexpr.rs`
-**Package:** `flowrulz_core::bytecode`
 
-Map expression types. `MapExpr` is a sequence of `MapKV` entries (field extraction, transformation, or constant assignment). Used by the `Map` opcode to restructure `ctx.body`.
-
-**Exports:** `MapExpr`, `MapKV`
-
----
 
 ### `rust/src/bytecode/dag_table.rs`
 **Package:** `flowrulz_core::bytecode`
@@ -619,7 +612,7 @@ Optimizer — transforms `Pipeline` → `OptimizedPipeline`. Performs: timeout h
 ### `rust/src/dsl/compiler.rs`
 **Package:** `flowrulz_core::dsl`
 
-Compiler — consumes `OptimizedPipeline`, produces `ExecutionPlan`. Handles: schema parsing from DSL, compile-time type checking (Gate conditions and Map expressions against declared field types), label resolution for jumps, DAG compilation (node/layer generation from DAG blocks), service table construction, constant pool population.
+Compiler — consumes `OptimizedPipeline`, produces `ExecutionPlan`. `Compiler::new()` takes no arguments (was `new(&[])`). Handles: schema parsing from DSL, compile-time type checking (Gate conditions and Map expressions against declared field types), label resolution for jumps, DAG compilation (node/layer generation from DAG blocks), service table construction, constant pool population.
 
 Emits `CompileError` with span information for all DSL-level errors.
 
@@ -643,10 +636,7 @@ After each dispatch, emits a `Span` (opcode, service_id, duration, status) via `
 ### `rust/src/executor/runtime.rs`
 **Package:** `flowrulz_core::executor`
 
-`ExecutionRuntime` — higher-level wrapper around `VM`. `execute(body)` checks the first instruction's opcode:
-- **Buffer (9)**: store body in accumulator, return (no VM run). Subsequent `buffer_push()` calls merge JSON; `buffer_flush()` returns the full accumulator.
-- **Chunk (15)**: split body into N chunks, run VM on each, collect results into a JSON array.
-- **Other**: delegate to `run_vm(body)`.
+`ExecutionRuntime` — higher-level wrapper around `VM`. Handles Chunk (split and execute) and Buffer (accumulate) opcodes at runtime level.
 
 **Exports:** `ExecutionRuntime`
 
@@ -714,14 +704,7 @@ Calling convention: plugin exports `memory` + `process(ptr: i32, len: i32) → i
 
 ---
 
-### `rust/src/executor/context.rs`
-**Package:** `flowrulz_core::executor`
 
-Thin re-export of `ExecutionContext` from `bytecode::execution`.
-
-**Exports:** `ExecutionContext` (re-export)
-
----
 
 ### `rust/src/executor/expr.rs`
 **Package:** `flowrulz_core::executor`
@@ -737,9 +720,9 @@ Expression evaluator for `Map` expressions. Parses and evaluates: field referenc
 ### `rust/src/executor/helpers.rs`
 **Package:** `flowrulz_core::executor`
 
-Utility functions: `merge_json_array()` (concatenate two JSON arrays), `extract_json_field()` (dot-path field lookup on `serde_json::Value`), `compare_values()` (type-coercing comparison for Gate opcodes).
+Utility functions: `extract_json_field()` (dot-path field lookup on `serde_json::Value`), `compare_values()` (type-coercing comparison for Gate opcodes). JSON merge logic consolidated in `dag::deep_merge`.
 
-**Exports:** `merge_json_array()`, `extract_json_field()`, `compare_values()`
+**Exports:** `extract_json_field()`, `compare_values()`
 
 ---
 
@@ -767,9 +750,9 @@ Results are allocated on the `Arena` bump allocator and returned as `&mut [u8]`.
 ### `rust/src/executor/chunk.rs`
 **Package:** `flowrulz_core::executor`
 
-`split_chunks()` — splits a body into N roughly equal chunks by byte length. `execute_chunked_seq()` runs VM sequentially on each chunk. All results are assembled into a single JSON array.
+`split_chunks()` — splits a body into N roughly equal chunks by byte length. Chunked execution is handled at the `ExecutionRuntime` level (not `chunk.rs`).
 
-**Exports:** `split_chunks()`, `execute_chunked_seq()`, `execute_chunked_par()`
+**Exports:** `split_chunks()`
 
 ---
 
@@ -789,14 +772,7 @@ Module declaration. Re-exports all memory sub-module types.
 
 ---
 
-### `rust/src/memory/slab.rs`
-**Package:** `flowrulz_core::memory`
 
-`SlabPool` — pre-allocated pool of `Arena`s in three size classes (small: 4KB, medium: 16KB, large: 64KB). Uses `crossbeam::SegQueue` for lock-free acquire/put. Borrow-checked via runtime lease pattern.
-
-**Exports:** `SlabPool`
-
----
 
 ### `rust/src/memory/intern.rs`
 **Package:** `flowrulz_core::memory`
@@ -844,7 +820,7 @@ Go module definition. Standard dependencies.
 **Location:** `rust/`
 **Crate:** `flowrulz_core`
 
-Rust crate definition with dependencies: `bumpalo`, `serde`, `serde_json`, `crossbeam`, `boxcar`, `criterion` (dev).
+Rust crate definition with dependencies: `bumpalo`, `serde`, `serde_json`, `boxcar`, `criterion` (dev).
 
 ---
 
@@ -869,9 +845,9 @@ Rust crate definition with dependencies: `bumpalo`, `serde`, `serde_json`, `cros
 
 | Layer | Files | Lines |
 |-------|-------|-------|
-| Go source (prod) | 22 | ~2,550 |
-| Go source (simulator) | 18 | ~2,200 |
-| Rust source | 37 | ~6,400 |
+| Go source (prod) | 21 | ~2,500 |
+| Go source (simulator) | 18 | ~2,100 |
+| Rust source | 34 | ~6,100 |
 | C source | 1 | 14 |
 | Build/config | 3 | — |
 | Docs | 12 | — |

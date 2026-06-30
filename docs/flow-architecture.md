@@ -325,7 +325,6 @@ Kafka      Partition Worker         Engine              ExecutionRuntime        
 | `rust/src/ffi.rs` | `flowrulz_execute()` (sync callback-based) + `flowrulz_execute_step()` (cooperative step-based): deserialize plan, create VM with ExecutionContext |
 | `rust/src/executor/mod.rs` | VM dispatch loop, opcode handlers |
 | `rust/src/executor/runtime.rs` | ExecutionRuntime: Chunk/Buffer orchestration |
-| `rust/src/executor/context.rs` | ExecutionContext: event + body + variables + outputs |
 
 ---
 

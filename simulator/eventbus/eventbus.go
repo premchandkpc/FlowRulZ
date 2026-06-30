@@ -11,28 +11,25 @@ import (
 )
 
 type subscription struct {
-	id   string
+	id    string
 	topic string
-	ch   chan *transport.Message
-	done chan struct{}
+	done  chan struct{}
 }
 
 type EventBus struct {
-	mu         sync.RWMutex
-	topics     map[string]map[string]transport.Handler
-	subs       map[string]*subscription
-	msgID      atomic.Uint64
-	closed     atomic.Bool
-	bufferSize int
+	mu     sync.RWMutex
+	topics map[string]map[string]transport.Handler
+	subs   map[string]*subscription
+	msgID  atomic.Uint64
+	closed atomic.Bool
 
 	wg sync.WaitGroup
 }
 
 func New(bufferSize int) *EventBus {
 	return &EventBus{
-		topics:     make(map[string]map[string]transport.Handler),
-		subs:       make(map[string]*subscription),
-		bufferSize: bufferSize,
+		topics: make(map[string]map[string]transport.Handler),
+		subs:   make(map[string]*subscription),
 	}
 }
 
@@ -96,20 +93,6 @@ func (b *EventBus) Subscribe(topic string, handler transport.Handler) *transport
 	return &transport.Subscription{ID: id, Topic: topic}
 }
 
-func (b *EventBus) SubscribeChannel(topic string, buffer int) (<-chan *transport.Message, *transport.Subscription) {
-	ch := make(chan *transport.Message, buffer)
-	sub := b.Subscribe(topic, func(ctx context.Context, msg *transport.Message) {
-		select {
-		case ch <- msg:
-		case <-ctx.Done():
-		}
-	})
-	if s, ok := b.subs[sub.ID]; ok {
-		s.ch = ch
-	}
-	return ch, sub
-}
-
 func (b *EventBus) Request(topic string, msg *transport.Message, timeout time.Duration) (*transport.Message, error) {
 	if b.closed.Load() {
 		return nil, fmt.Errorf("eventbus closed")
@@ -155,24 +138,6 @@ func (b *EventBus) Reply(topic string, reqID string, msg *transport.Message) err
 func (b *EventBus) Broadcast(topic string, msg *transport.Message) error {
 	msg.Type = transport.TypeBroadcast
 	return b.Publish(topic, msg)
-}
-
-func (b *EventBus) Drop(msg *transport.Message) {
-	b.mu.RLock()
-	handlers, ok := b.topics[msg.Topic]
-	b.mu.RUnlock()
-	if !ok {
-		return
-	}
-	for _, h := range handlers {
-		_ = h
-	}
-}
-
-func (b *EventBus) Duplicate(topic string, msg *transport.Message) error {
-	dup := *msg
-	dup.ID = b.nextID()
-	return b.Publish(topic, &dup)
 }
 
 func (b *EventBus) Unsubscribe(subID string) {

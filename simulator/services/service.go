@@ -18,20 +18,13 @@ type MockService struct {
 	LatencyJitter time.Duration
 	FailureRate   float64
 	MaxConcurrent int
-	Retryable     bool
-	ErrorCode     int
 
 	mu       sync.Mutex
 	running  int
-	callLog  []CallRecord
+
 }
 
-type CallRecord struct {
-	Start    time.Time
-	Latency  time.Duration
-	Error    bool
-	Retryable bool
-}
+
 
 type CallResult struct {
 	Body    []byte
@@ -101,13 +94,6 @@ func (s *MockService) Call(ctx context.Context, body []byte) CallResult {
 	defer func() {
 		s.mu.Lock()
 		s.running--
-		s.callLog = append(s.callLog, CallRecord{
-			Start:     start,
-			Latency:   time.Since(start),
-		})
-		if len(s.callLog) > 10000 {
-			s.callLog = s.callLog[5000:]
-		}
 		s.mu.Unlock()
 	}()
 
@@ -137,14 +123,6 @@ func (s *MockService) Call(ctx context.Context, body []byte) CallResult {
 		Latency: time.Since(start),
 		Error:   nil,
 	}
-}
-
-func (s *MockService) Stats() (running int, callCount int) {
-	s.mu.Lock()
-	running = s.running
-	callCount = len(s.callLog)
-	s.mu.Unlock()
-	return
 }
 
 func DefaultServices() *ServiceRegistry {
@@ -183,7 +161,7 @@ func DefaultServices() *ServiceRegistry {
 			LatencyJitter: d.jitter,
 			FailureRate:   d.failureRate,
 			MaxConcurrent: d.concurrency,
-			Retryable:     true,
+	
 		})
 	}
 	return r

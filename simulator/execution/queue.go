@@ -39,14 +39,6 @@ func (q *ReadyQueue) Len() int {
 	return n
 }
 
-func (q *ReadyQueue) Drain() []*ExecutionContext {
-	q.mu.Lock()
-	items := q.items
-	q.items = make([]*ExecutionContext, 0, 1024)
-	q.mu.Unlock()
-	return items
-}
-
 type WaitingEntry struct {
 	Ctx           *ExecutionContext
 	Service       string
@@ -105,14 +97,4 @@ func (q *WaitingQueue) Len() int {
 	return n
 }
 
-func (q *WaitingQueue) Pending() []WaitingEntry {
-	q.mu.Lock()
-	entries := make([]WaitingEntry, 0, len(q.items))
-	for _, id := range q.order {
-		if e, ok := q.items[id]; ok {
-			entries = append(entries, *e)
-		}
-	}
-	q.mu.Unlock()
-	return entries
-}
+

@@ -119,7 +119,7 @@ func (g *Generator) selectPlan() *execution.Plan {
 
 func (g *Generator) sendOne() {
 	plan := g.selectPlan()
-	body := []byte(fmt.Sprintf(`{"type":"%s"}`, plan.Tags["type"]))
+	body := []byte(fmt.Sprintf(`{"type":"%s"}`, plan.ID))
 	ctx := execution.NewContext(plan, body)
 	g.dispatcher.Dispatch(ctx)
 	g.totalSent.Add(1)
@@ -244,5 +244,4 @@ func max(a, b int) int {
 	return b
 }
 
-func (g *Generator) TotalSent() int64    { return g.totalSent.Load() }
-func (g *Generator) TotalFailed() int64  { return g.totalFailed.Load() }
+

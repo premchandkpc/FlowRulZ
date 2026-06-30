@@ -97,10 +97,6 @@ func (ec *ExecutionContext) Transition(to State, meta string) {
 	ec.UpdatedAt = time.Now()
 }
 
-func (ec *ExecutionContext) AddEvent(event timeline.Event) {
-	ec.Events = append(ec.Events, event)
-}
-
 func (ec *ExecutionContext) MarkDone() {
 	ec.Duration = time.Since(ec.CreatedAt)
 	ec.Transition(StateCompleted, "execution completed")

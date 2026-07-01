@@ -28,6 +28,7 @@ import (
 	"github.com/premchandkpc/FlowRulZ/go/internal/execstate"
 	"github.com/premchandkpc/FlowRulZ/go/internal/membership"
 	"github.com/premchandkpc/FlowRulZ/go/internal/observability"
+	"github.com/premchandkpc/FlowRulZ/go/internal/partition"
 	"github.com/premchandkpc/FlowRulZ/go/internal/plandist"
 	"github.com/premchandkpc/FlowRulZ/go/internal/plugins"
 	"github.com/premchandkpc/FlowRulZ/go/internal/registry"
@@ -94,6 +95,8 @@ type ExecutionNode struct {
 	GRPCBus     *grpctransport.GRPCBus
 	OtelExporter *observability.SpanExporter
 	ClusterNode  *cluster.ClusterNode
+	Partitions  *partition.Manager
+	Rebalancer  *partition.RebalanceNotifier
 }
 
 type Config struct {
@@ -191,6 +194,17 @@ func New(cfg *Config) *ExecutionNode {
 		plandist.WithAckProducer(ackProducer),
 		plandist.WithQuorumProvider(en.Membership),
 	)
+
+	en.Partitions = partition.New(partition.DefaultNumPartitions)
+	partProducer := en.mkProducer(partition.PartitionTopic, kafkaCfg)
+	en.Partitions.SetProducer(partProducer)
+	en.Rebalancer = partition.NewRebalanceNotifier(en.Partitions,
+		func() []string { return en.Membership.AliveNodes() },
+		func() uint64 { return en.PlanDist.CurrentTerm() },
+	)
+	en.mu.Lock()
+	en.producers = append(en.producers, partProducer)
+	en.mu.Unlock()
 
 	if cfg.CompilerAddr != "" {
 		en.AdminSrv = admin.NewWithCompiler(en.Engine, compiler.NewRemote(cfg.CompilerAddr))
@@ -434,13 +448,19 @@ func (en *ExecutionNode) runLeaderElection() {
 			en.TermStore.Save(en.PlanDist.CurrentTerm(), en.nodeID)
 		}
 		log.Printf("leader election: node %s promoted to leader (term %d)", en.nodeID, en.PlanDist.CurrentTerm())
+		en.Partitions.OnLeaderChange(en.nodeID)
+		en.Rebalancer.CheckAndRebalance()
 	} else if !shouldBeLeader && isCurrentlyLeader {
 		en.SetLeader(false)
 		if en.TermStore != nil {
 			en.TermStore.Save(en.PlanDist.CurrentTerm(), leaderID)
 		}
 		log.Printf("leader election: node %s stepped down (new leader: %s)", en.nodeID, leaderID)
+		en.Partitions.OnLeaderChange(leaderID)
 	}
+
+	// Rebalance check on every election run (even if no change) to catch membership changes
+	en.Rebalancer.CheckAndRebalance()
 }
 
 func (en *ExecutionNode) handlePlanMessage(ctx context.Context, msg []byte) ([]byte, error) {
@@ -477,6 +497,13 @@ func (en *ExecutionNode) handleAckMessage(ctx context.Context, msg []byte) ([]by
 		return nil, fmt.Errorf("plandist: unmarshal ack: %w", err)
 	}
 	en.PlanDist.RecordAck(*am)
+	return nil, nil
+}
+
+func (en *ExecutionNode) handlePartitionMessage(ctx context.Context, msg []byte) ([]byte, error) {
+	if err := en.Partitions.HandleAssignmentMessage(msg); err != nil {
+		log.Printf("partition: handle message error: %v", err)
+	}
 	return nil, nil
 }
 
@@ -833,16 +860,37 @@ func (en *ExecutionNode) Start() {
 	membersConsumer := en.mkConsumer(DefaultMembersTopic, en.handleMembershipMessage, kafkaCfg)
 	planConsumer := en.mkConsumer(plandist.DefaultPlanTopic, en.handlePlanMessage, kafkaCfg)
 	ackConsumer := en.mkConsumer(plandist.DefaultAckTopic, en.handleAckMessage, kafkaCfg)
+	partConsumer := en.mkConsumer(partition.PartitionTopic, en.handlePartitionMessage, kafkaCfg)
 	en.mu.Lock()
-	en.consumers = append(en.consumers, inputConsumer, membersConsumer, planConsumer, ackConsumer)
+	en.consumers = append(en.consumers, inputConsumer, membersConsumer, planConsumer, ackConsumer, partConsumer)
 	en.mu.Unlock()
 	go inputConsumer.Start(ctx)
 	go membersConsumer.Start(ctx)
 	go planConsumer.Start(ctx)
 	go ackConsumer.Start(ctx)
+	go partConsumer.Start(ctx)
 
 	en.PlanDist.Start(ctx)
 	en.Membership.StartEviction(ctx, membership.DefaultHeartbeatTimeout)
+	en.Membership.StartLeaderLeaseChecker(ctx, membership.DefaultHeartbeatInterval)
+	en.Membership.OnLeaseExpiry(func(leaderID string) {
+		log.Printf("lease: leader %s lost, running re-election", leaderID)
+		en.runLeaderElection()
+	})
+
+	en.Rebalancer.SetNotify(func() {
+		if !en.IsLeader() {
+			return
+		}
+		assignments := en.Partitions.Rebalance(en.Membership.AliveNodes(), en.PlanDist.CurrentTerm())
+		if len(assignments) > 0 {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := en.Partitions.PublishAssignments(ctx, assignments); err != nil {
+				log.Printf("partition: publish assignments error: %v", err)
+			}
+		}
+	})
 	go en.startHeartbeat(ctx)
 
 	en.Scheduler.Start(ctx)
@@ -904,6 +952,35 @@ func (en *ExecutionNode) Start() {
 	mux.HandleFunc("GET /executions", func(w http.ResponseWriter, r *http.Request) {
 		execs := en.Execs.List()
 		json.NewEncoder(w).Encode(execs)
+	})
+	mux.HandleFunc("GET /partitions", func(w http.ResponseWriter, r *http.Request) {
+		assignments := en.Partitions.Assignments()
+		nodeParts := make(map[string][]uint32)
+		for _, n := range en.Membership.AliveNodes() {
+			nodeParts[n] = en.Partitions.PartitionsForNode(n)
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"num_partitions": en.Partitions.NumPartitions(),
+			"assignments":    assignments,
+			"node_partitions": nodeParts,
+		})
+	})
+	mux.HandleFunc("POST /partitions/rebalance", func(w http.ResponseWriter, r *http.Request) {
+		if !en.IsLeader() {
+			http.Error(w, "not leader", http.StatusForbidden)
+			return
+		}
+		assignments := en.Partitions.Rebalance(en.Membership.AliveNodes(), en.PlanDist.CurrentTerm())
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		if err := en.Partitions.PublishAssignments(ctx, assignments); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":       "rebalanced",
+			"assignments":  len(assignments),
+		})
 	})
 
 	en.HTTP = &http.Server{Addr: en.httpAddr, Handler: mux}

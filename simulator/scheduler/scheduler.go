@@ -71,6 +71,19 @@ func (pc *PlanCache) Get(id string) *execution.Plan {
 	return p
 }
 
+func (pc *PlanCache) Remove(id string) {
+	pc.mu.Lock()
+	delete(pc.plans, id)
+	pc.mu.Unlock()
+}
+
+func (pc *PlanCache) Len() int {
+	pc.mu.RLock()
+	n := len(pc.plans)
+	pc.mu.RUnlock()
+	return n
+}
+
 func New(id string, workers int, services *services.ServiceRegistry, net *network.Network, tl *timeline.Store, mc *metrics.Collector) *Scheduler {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Scheduler{

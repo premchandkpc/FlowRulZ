@@ -104,6 +104,17 @@ func (c *Client) Plans() []string {
 	return c.sim.Nodes[0].Plans.List()
 }
 
+func (c *Client) Plan(id string) *execution.Plan {
+	return c.sim.Nodes[0].Plans.Get(id)
+}
+
+func (c *Client) RemoveRule(id string) error {
+	for _, node := range c.sim.Nodes {
+		node.Plans.Remove(id)
+	}
+	return nil
+}
+
 type ServiceInfo struct {
 	Name          string                `json:"name"`
 	Methods       []services.MethodInfo `json:"methods,omitempty"`

@@ -27,6 +27,8 @@ type ClusterNode struct {
 	handlersMu sync.RWMutex
 	handlers   map[string]SubscribeHandler
 
+	gossiper *Gossiper
+
 	started bool
 	mu      sync.Mutex
 }
@@ -34,13 +36,15 @@ type ClusterNode struct {
 type SubscribeHandler func(ctx context.Context, topic string, body []byte)
 
 func NewClusterNode(nodeID, grpcAddr string) *ClusterNode {
-	return &ClusterNode{
+	cn := &ClusterNode{
 		nodeID:   nodeID,
 		grpcAddr: grpcAddr,
 		bus:      grpctransport.NewGRPCBus(grpcAddr),
 		peers:    make(map[string]*Peer),
 		handlers: make(map[string]SubscribeHandler),
 	}
+	cn.gossiper = NewGossiper(nodeID, grpcAddr, cn)
+	return cn
 }
 
 func (cn *ClusterNode) Start() error {
@@ -55,6 +59,11 @@ func (cn *ClusterNode) Start() error {
 	if err := cn.bus.Start(); err != nil {
 		return fmt.Errorf("cluster node: start bus: %w", err)
 	}
+
+	cn.Subscribe("_flowrulz_gossip", cn.gossiper.HandleGossipMessage)
+
+	go cn.gossiper.Start(context.Background())
+
 	log.Printf("cluster node %s: listening on %s", cn.nodeID, cn.grpcAddr)
 	return nil
 }

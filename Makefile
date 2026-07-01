@@ -67,6 +67,20 @@ clean:
 	rm -f $(BIN) $(SIM_BIN) simulator/simulator
 	rm -rf rust/target
 
+# === E2E ===
+e2e-up:
+	docker compose up -d --build
+	@echo "Waiting for cluster..."
+	@sleep 8
+
+e2e-test: e2e-up
+	E2E=1 go test ./e2e/... -v -count=1 -timeout=120s
+
+e2e-down:
+	docker compose down -v
+
+e2e: e2e-test e2e-down
+
 # === Docker ===
 docker:
 	docker build --target flowrulz -t flowrulz:latest .

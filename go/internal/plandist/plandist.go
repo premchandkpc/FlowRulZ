@@ -220,15 +220,21 @@ func (pd *PlanDistributor) SendAck(ctx context.Context, ruleID string, version u
 }
 
 func (pd *PlanDistributor) WaitForAcks(ctx context.Context, ruleID string, version uint64, quorum int, timeout time.Duration) error {
-	if quorum == 0 {
+	// quorum=0 means majority of followers (n-1)/2+1; -1 means all followers
+	if quorum == 0 || quorum < 0 {
 		if pd.quorumProvider != nil {
 			n := pd.quorumProvider.AliveCount()
-			quorum = n/2 + 1
-		}
-	}
-	if quorum < 0 {
-		if pd.quorumProvider != nil {
-			quorum = pd.quorumProvider.AliveCount()
+			if n > 1 {
+				if quorum == 0 {
+					quorum = (n-1)/2 + 1 // majority of non-leader nodes
+				} else {
+					quorum = n - 1 // all non-leader nodes
+				}
+			} else {
+				quorum = 0 // no followers, skip ack wait
+			}
+		} else {
+			quorum = 1 // fallback: wait for at least one ack
 		}
 	}
 	if quorum <= 0 {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -201,6 +202,107 @@ func TestWaitForAcksTimeout(t *testing.T) {
 	err := pd.WaitForAcks(ctx, "rule-1", 1, 2, 100*time.Millisecond)
 	if err == nil {
 		t.Fatal("expected timeout error")
+	}
+}
+
+type mockQuorumProvider struct {
+	count int
+}
+
+func (m *mockQuorumProvider) AliveCount() int { return m.count }
+
+func TestQuorumZeroWithMajority(t *testing.T) {
+	pd := New("leader", WithQuorumProvider(&mockQuorumProvider{count: 5}))
+	err := pd.WaitForAcks(context.Background(), "rule-1", 1, 0, 100*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected timeout (quorum=3 > acks=0)")
+	}
+}
+
+func TestQuorumNegativeAll(t *testing.T) {
+	pd := New("leader", WithQuorumProvider(&mockQuorumProvider{count: 3}))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		pd.RecordAck(AckMessage{RuleID: "rule-1", Version: 1, NodeID: "node-b", Status: "received"})
+		pd.RecordAck(AckMessage{RuleID: "rule-1", Version: 1, NodeID: "node-c", Status: "received"})
+	}()
+	err := pd.WaitForAcks(ctx, "rule-1", 1, -1, 2*time.Second)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+func TestQuorumZeroSingleNode(t *testing.T) {
+	pd := New("leader", WithQuorumProvider(&mockQuorumProvider{count: 1}))
+	err := pd.WaitForAcks(context.Background(), "rule-1", 1, 0, 100*time.Millisecond)
+	if err != nil {
+		t.Fatalf("expected immediate return with 0 quorum, got %v", err)
+	}
+}
+
+func TestQuorumZeroNoProvider(t *testing.T) {
+	pd := New("leader")
+	err := pd.WaitForAcks(context.Background(), "rule-1", 1, 0, 100*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected timeout (fallback quorum=1 > acks=0)")
+	}
+}
+
+func TestSetTerm(t *testing.T) {
+	pd := New("leader")
+	if pd.CurrentTerm() != 0 {
+		t.Fatalf("expected initial term 0, got %d", pd.CurrentTerm())
+	}
+	pd.SetTerm(42)
+	if pd.CurrentTerm() != 42 {
+		t.Fatalf("expected term 42, got %d", pd.CurrentTerm())
+	}
+	pd.SetTerm(99)
+	if pd.CurrentTerm() != 99 {
+		t.Fatalf("expected term 99, got %d", pd.CurrentTerm())
+	}
+}
+
+func TestHandleAckNoPending(t *testing.T) {
+	pd := New("leader")
+	pd.handleAck(AckMessage{RuleID: "no-such", Version: 99, NodeID: "node-b", Status: "received"})
+}
+
+func TestHandleAckDuplicate(t *testing.T) {
+	pd := New("leader")
+
+	done := make(chan int, 1)
+	received := new(atomic.Int32)
+	q32 := int32(2)
+	key := ackKey("rule-dup", 1)
+	pd.pendingAcks.Store(key, pendingAck{done: done, received: received, quorum: q32})
+
+	pd.RecordAck(AckMessage{RuleID: "rule-dup", Version: 1, NodeID: "node-b", Status: "received"})
+	pd.RecordAck(AckMessage{RuleID: "rule-dup", Version: 1, NodeID: "node-c", Status: "received"})
+
+	select {
+	case n := <-done:
+		if n != 2 {
+			t.Fatalf("expected done signal with 2, got %d", n)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for done signal")
+	}
+
+	// Extra ACK should not panic or block
+	pd.RecordAck(AckMessage{RuleID: "rule-dup", Version: 1, NodeID: "node-d", Status: "received"})
+}
+
+func TestPublishPlanNoProducer(t *testing.T) {
+	pd := New("leader")
+	err := pd.PublishPlan(context.Background(), "rule-1", 1, []byte("data"), "dsl")
+	if err == nil {
+		t.Fatal("expected error when no plan producer configured")
+	}
+	if err.Error() != "plandist: no plan producer configured" {
+		t.Fatalf("unexpected error message: %v", err)
 	}
 }
 

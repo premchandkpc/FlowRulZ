@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/premchandkpc/FlowRulZ/simulator/execution"
 	"github.com/premchandkpc/FlowRulZ/simulator/services"
 )
 
@@ -17,7 +19,12 @@ func (s *Simulator) RegisterAdminHandlers() {
 	cli := s.Client()
 	s.Dashboard.AddHandler("/api/admin/send", s.adminSend(cli))
 	s.Dashboard.AddHandler("/api/admin/rules", s.adminRules(cli))
+	s.Dashboard.AddHandler("/api/admin/rules/", s.adminRulesDetail(cli))
 	s.Dashboard.AddHandler("/api/admin/services", s.adminServices(cli))
+	s.Dashboard.AddHandler("/api/admin/lanes", s.adminLanes(cli))
+	s.Dashboard.AddHandler("/api/admin/validate", s.adminValidate(cli))
+	s.Dashboard.AddHandler("/api/admin/health", s.adminHealth(cli))
+	s.Dashboard.AddHandler("/api/admin/partitions", s.adminPartitions(cli))
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -130,6 +137,105 @@ func (s *Simulator) adminServices(cli *Client) http.HandlerFunc {
 		default:
 			httpError(w, "GET or POST required", 405)
 		}
+	}
+}
+
+func (s *Simulator) adminRulesDetail(cli *Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/api/admin/rules/")
+		if id == "" {
+			httpError(w, "rule id required", 400)
+			return
+		}
+		switch r.Method {
+		case "GET":
+			plan := cli.Plan(id)
+			if plan == nil {
+				httpError(w, "rule not found", 404)
+				return
+			}
+			writeJSON(w, plan)
+
+		case "DELETE":
+			if err := cli.RemoveRule(id); err != nil {
+				httpError(w, fmt.Sprintf("remove rule: %v", err), 500)
+				return
+			}
+			writeJSON(w, map[string]string{"status": "deleted", "id": id})
+
+		default:
+			httpError(w, "GET or DELETE required", 405)
+		}
+	}
+}
+
+func (s *Simulator) adminLanes(cli *Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{
+			"lanes": []map[string]any{
+				{"name": "fast", "concurrency": 50, "queue_size": 5000},
+				{"name": "normal", "concurrency": 20, "queue_size": 2000},
+				{"name": "heavy", "concurrency": 5, "queue_size": 500},
+			},
+		})
+	}
+}
+
+func (s *Simulator) adminValidate(cli *Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			httpError(w, "POST required", 405)
+			return
+		}
+		var req struct {
+			DSL string `json:"dsl"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpError(w, fmt.Sprintf("bad request: %v", err), 400)
+			return
+		}
+		if req.DSL == "" {
+			httpError(w, "dsl required", 400)
+			return
+		}
+		plan := &execution.Plan{ID: "_validate"}
+		if err := compileDSL(plan, req.DSL); err != nil {
+			writeJSON(w, map[string]any{"valid": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]any{"valid": true, "instructions": len(plan.Instructions)})
+	}
+}
+
+func (s *Simulator) adminHealth(cli *Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{
+			"status":      "ok",
+			"node_id":     "simulator",
+			"is_leader":   true,
+			"term":        1,
+			"num_nodes":   len(s.Nodes),
+			"num_services": len(s.Services.All()),
+			"num_rules":   len(cli.Plans()),
+		})
+	}
+}
+
+func (s *Simulator) adminPartitions(cli *Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		numNodes := len(s.Nodes)
+		assignments := make([]string, 64)
+		nodeParts := make(map[int][]uint32)
+		for i := range assignments {
+			nodeIdx := i % numNodes
+			assignments[i] = fmt.Sprintf("node-%d", nodeIdx+1)
+			nodeParts[nodeIdx] = append(nodeParts[nodeIdx], uint32(i))
+		}
+		writeJSON(w, map[string]any{
+			"num_partitions":  64,
+			"assignments":     assignments,
+			"node_partitions": nodeParts,
+		})
 	}
 }
 

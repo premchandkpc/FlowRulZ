@@ -11,6 +11,7 @@ import (
 const (
 	DefaultHeartbeatInterval = 3 * time.Second
 	DefaultHeartbeatTimeout  = 10 * time.Second
+	DefaultLeaderLease       = 8 * time.Second // 2.5x heartbeat interval before leader considered dead
 )
 
 type NodeInfo struct {
@@ -20,17 +21,34 @@ type NodeInfo struct {
 	LastSeen  time.Time
 }
 
+type LeaseCallback func(leaderID string)
+
 type Membership struct {
-	mu              sync.RWMutex
-	nodes           map[string]*NodeInfo
+	mu               sync.RWMutex
+	nodes            map[string]*NodeInfo
 	heartbeatTimeout time.Duration
+	leaderLease      time.Duration
+	leaseCallback    LeaseCallback
 }
 
 func New() *Membership {
 	return &Membership{
 		nodes:            make(map[string]*NodeInfo),
 		heartbeatTimeout: DefaultHeartbeatTimeout,
+		leaderLease:      DefaultLeaderLease,
 	}
+}
+
+func (m *Membership) SetLeaderLease(d time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.leaderLease = d
+}
+
+func (m *Membership) OnLeaseExpiry(cb LeaseCallback) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.leaseCallback = cb
 }
 
 func (m *Membership) Add(id, address string) {
@@ -120,6 +138,17 @@ func (m *Membership) LeaderID() string {
 	return nodes[0]
 }
 
+// leaderIDLocked returns the lowest-ID alive node; caller must hold m.mu
+func (m *Membership) leaderIDLocked() string {
+	var leader string
+	for id, n := range m.nodes {
+		if n.IsAlive && (leader == "" || id < leader) {
+			leader = id
+		}
+	}
+	return leader
+}
+
 func (m *Membership) Snapshot() []NodeInfo {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -143,14 +172,70 @@ func (m *Membership) Lookup(id string) *NodeInfo {
 
 func (m *Membership) evictStale() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	now := time.Now()
+	leaderBefore := m.leaderIDLocked()
 	for id, n := range m.nodes {
 		if n.IsAlive && now.Sub(n.LastSeen) > m.heartbeatTimeout {
 			n.IsAlive = false
 			log.Printf("membership: node %s timed out (last seen %v ago)", id, now.Sub(n.LastSeen))
 		}
 	}
+	leaderAfter := m.leaderIDLocked()
+	m.mu.Unlock()
+
+	if leaderBefore != "" && leaderBefore != leaderAfter && m.leaseCallback != nil {
+		log.Printf("membership: leader %s lost due to heartbeat timeout, notifying lease callback", leaderBefore)
+		m.leaseCallback(leaderBefore)
+	}
+}
+
+func (m *Membership) LeaderLastSeen() time.Time {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	leaderID := m.LeaderID()
+	if leaderID == "" {
+		return time.Time{}
+	}
+	n, ok := m.nodes[leaderID]
+	if !ok {
+		return time.Time{}
+	}
+	return n.LastSeen
+}
+
+func (m *Membership) StartLeaderLeaseChecker(ctx context.Context, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				m.mu.Lock()
+				leaderID := m.leaderIDLocked()
+				if leaderID == "" {
+					m.mu.Unlock()
+					continue
+				}
+				n, ok := m.nodes[leaderID]
+				if !ok || !n.IsAlive {
+					m.mu.Unlock()
+					continue
+				}
+				if time.Since(n.LastSeen) > m.leaderLease {
+					n.IsAlive = false
+					log.Printf("membership: leader %s lease expired (last seen %v ago)", leaderID, time.Since(n.LastSeen))
+					m.mu.Unlock()
+					if m.leaseCallback != nil {
+						m.leaseCallback(leaderID)
+					}
+				} else {
+					m.mu.Unlock()
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 }
 
 func (m *Membership) StartEviction(ctx context.Context, interval time.Duration) {

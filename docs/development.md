@@ -33,6 +33,9 @@ cd rust && cargo test
 # Go only
 CGO_ENABLED=1 go test -count=1 ./go/... ./simulator/...
 
+# E2E cluster tests (3-node docker-compose)
+make e2e
+
 # Go lint
 CGO_ENABLED=1 go vet ./go/... ./simulator/...
 ```
@@ -104,8 +107,9 @@ go/
 │   └── eventbus.go         # EventBus, Message, Handler, Subscription types
 └── internal/
     ├── engine/             # Rule lifecycle, versioning, lane routing, persistence
-    ├── execnode/           # ExecutionNode: process wrapping engine + transport + admin
-    ├── transport/          # Kafka consumer/producer (Sarama-backed) + HTTP transport, MessageConsumer/MessageProducer interfaces
+    ├── execnode/           # ExecutionNode, ExecRegistry, TermStore — all process orchestrations
+    ├── cluster/            # ClusterNode (gRPC p2p), Gossiper (epidemic gossip), ClusterProducer/Consumer
+    ├── transport/          # Kafka consumer/producer (Sarama-backed) + gRPC transport, MessageConsumer/MessageProducer interfaces
     ├── admin/              # HTTP API (rules CRUD, validate, promote, lanes)
     ├── flow/               # Flow orchestrator with state machine
     ├── plugins/            # WASM plugin loader — scans .wasm files, registers via FFI
@@ -114,7 +118,8 @@ go/
     ├── scheduler/          # Priority queue (fast/normal/heavy), concurrency limits, backpressure
     ├── plandist/           # PlanDistributor — plan/ack topics, versioned ACK quorum, activation
     ├── observability/      # MetricsCollector — counters, gauges, histograms, global shortcuts
-    └── reliability/        # DLQ, rate limiter, circuit breaker
+    ├── reliability/        # DLQ, rate limiter, circuit breaker, saga tracker, dedup
+    └── membership/         # Membership — alive tracking, leader election, lease detection, eviction
 
 simulator/                  # Simulator for testing rules, services, and cluster behavior
 ├── cmd/simulator/          # CLI entry point (--scenario, --interactive, --dashboard)

@@ -9,6 +9,9 @@
 | `go/internal/transport/kafka.go` | Sarama-backed Kafka consumer/producer |
 | `go/internal/transport/types.go` | `MessageConsumer`/`MessageProducer` interfaces |
 
+> **Note:** The following topics are also managed over the Cluster Bus in non-legacy mode:
+> `_flowrulz_gossip` (gossip protocol push/pull) and `_flowrulz_partitions` (partition assignment).
+
 ## Internal Topics (Legacy)
 
 | Topic | Retention | Description |

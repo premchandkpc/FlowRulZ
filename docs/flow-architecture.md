@@ -132,7 +132,7 @@ resp, err := client.Request("payment", paymentReq, 5*time.Second)
 Client → FlowRulZ → Route to Payment Worker → Wait → Response → Client
 ```
 
-Mode: `Mode::Request`. FlowRulZ tracks reply_to + correlation_id. Replies are routed via the `_flowrulz_replies` Kafka topic, keyed by `hash(correlation_id)`, handled by `go/internal/replyrouter/`.
+Mode: `Mode::Request`. FlowRulZ tracks reply_to + correlation_id. Replies are routed via the `_flowrulz_replies` cluster bus topic, keyed by `hash(correlation_id)`, handled by `go/internal/replyrouter/`.
 
 ### 3. Rule Execution
 
@@ -180,7 +180,7 @@ Client
            │
            ▼
 ┌─────────────────────────┐
-│  Message Store (Kafka)  │  Durable log, replication
+│  Cluster Bus / Memory   │  Message delivery
 │  (optional per mode)    │
 └──────────┬──────────────┘
            │
@@ -217,13 +217,13 @@ flow.Publish("orders", order)
     ▼
 FlowRulZ Node
     │
-    ├── Persist to Kafka topic "orders"
+    ├── Route via cluster bus topic "orders"
     ├── Ack producer (fire-and-forget)
     │
     ▼
 Partition Worker
     │
-    ├── Dequeue event from Kafka
+    ├── Dequeue event from transport
     ├── Load matching ExecutionPlans for topic "orders"
     │
     ▼
@@ -241,7 +241,7 @@ VM.run()
     ├── dispatch(Emit)    → publish result to output topic
     │
     ▼
-Result emitted to configured output (Kafka topic, reply channel, etc.)
+Result emitted to configured output (cluster bus topic, reply channel, etc.)
 ```
 
 ---
@@ -315,7 +315,7 @@ Kafka      Partition Worker         Engine              ExecutionRuntime        
 | File | What It Does |
 |------|-------------|
 | `go/pkg/transport/eventbus.go` | Canonical `EventBus` interface — `Publish`, `Subscribe`, `Request`, `Reply`, `Broadcast` |
-| `go/internal/transport/` | Kafka consumer/producer + interfaces (`MessageConsumer`/`MessageProducer`), invokes handler with event bytes |
+| `go/internal/cluster/` | Cluster Bus — gRPC p2p overlay (`ClusterNode`, `ClusterProducer`/`ClusterConsumer`), invokes handler with event bytes |
 | `go/internal/execnode/` | ExecutionNode: engine + scheduler + transport + admin + lifecycle |
 | `go/internal/engine/` | `ActivePlanBytes()`: collect active plan bytes; `executePlan()`: cooperative step loop via `bridge.ExecuteStep` |
 | `go/internal/scheduler/` | Priority queue lanes (fast/normal/heavy), concurrency limits, backpressure |
@@ -462,7 +462,7 @@ VM.dispatch(Next)
 ```rust
 #[repr(C)]
 pub struct Span {
-    opcode:      u8,     // 0-22
+    opcode:      u8,     // 0-24
     service_id:  u16,
     layer:       u8,     // DAG layer
     duration_ns: u64,

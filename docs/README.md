@@ -42,17 +42,16 @@ FlowRulZ/
 │   ├── admin.go       # Admin HTTP handlers
 │   └── ...            # scheduler, dispatcher, services, loadgen, network, etc.
 ├── docs/
-│   ├── specs/
-│   │   ├── flow-architecture.md  # Distributed Event Runtime — architecture, Event model, ExecutionContext, flows
-│   │   ├── dsl-syntax.md         # DSL language specification
-│   │   ├── bytecode-format.md    # ExecutionPlan, Instruction, opcodes, types
-│   │   ├── vm-architecture.md    # VM dispatch, opcode handlers, ExecutionContext
-│   │   ├── memory-management.md  # Slab pool, arena, interning, message lifecycle
-│   │   ├── ffi-api.md            # C FFI surface for Go bridge
-│   │   ├── kafka-semantics.md    # Consumer groups, offset commit, DLQ
-│   │   ├── cluster-model.md      # Single-leader cluster, membership, plan distribution, service registry
-│   │   ├── flows.md              # Every data path: membership → deployment → execution → DLQ → metrics
-│   │   └── file-index.md         # Every source file: package, purpose, key exports
+│   ├── flow-architecture.md  # Distributed Event Runtime — architecture, Event model, ExecutionContext, flows
+│   ├── dsl-syntax.md         # DSL language specification
+│   ├── bytecode-format.md    # ExecutionPlan, Instruction, opcodes, types
+│   ├── vm-architecture.md    # VM dispatch, opcode handlers, ExecutionContext
+│   ├── memory-management.md  # Arena, interning, message lifecycle
+│   ├── ffi-api.md            # C FFI surface for Go bridge
+│   ├── kafka-semantics.md    # Legacy Kafka transport reference
+│   ├── cluster-model.md      # Single-leader cluster, membership, plan distribution, service registry
+│   ├── flows.md              # Every data path: membership → deployment → execution → DLQ → metrics
+│   └── file-index.md         # Every source file: package, purpose, key exports
 │   ├── development.md
 │   └── README.md
 ├── CLAUDE.md
@@ -81,7 +80,7 @@ make bench
 | Rust hot path, Go I/O | Performance-critical execution in Rust; Go for admin, observability, transport |
 | Event as universal type | Opaque payload — any serialization (JSON, Protobuf, Avro, MessagePack, binary) |
 | 8-byte packed instructions | Cache-friendly, easy to snapshot/serialize |
-| Slab pool for messages | Zero-alloc message lifecycle via `flowrulz_msg_alloc` / `flowrulz_msg_release` |
+| Direct std::alloc | `flowrulz_msg_alloc` / `flowrulz_msg_release` use `std::alloc` directly — slab pool removed |
 | DSL → bytecode compiler | Compile once, execute many; no parse cost per message |
 | ExecutionContext | Services enrich context (body + outputs + variables) instead of replacing a single JSON blob |
 | DAG as embedded sub-language | Complex routing expressed declaratively; validated at compile time |

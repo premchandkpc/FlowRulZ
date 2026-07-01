@@ -466,14 +466,16 @@ Crate root. Declares all modules: `bytecode`, `dsl`, `executor`, `memory`, `trac
 **Package:** `flowrulz_core`
 
 C FFI boundary. All functions use `#[no_mangle] pub unsafe extern "C"` with the `flowrulz_` prefix:
-- `flowrulz_compile(dsl, rule_id)` — DSL string → zero-copy `Vec<u8>` plan bytes
+- `flowrulz_compile(dsl, rule_id)` — DSL string → `Vec<u8>` plan bytes (bincode serialized)
 - `flowrulz_execute(plan, body, caller_cb, ctx)` — deserialize plan, create `VM`, run, return `ctx.body`
+- `flowrulz_execute_step(plan, ctx_bytes, resp, caller_cb)` — cooperative single-step execution
 - `flowrulz_get_spans(buf, len)` — drain the thread-local span ring buffer into the given buffer
-- `flowrulz_free(ptr)` — free C-heap allocated memory
 - `flowrulz_version()` — return semver string
 - `flowrulz_plan_complexity(plan)` — count instructions for lane assignment
+- `flowrulz_plan_services(plan)` — extract service IDs from plan
 - `flowrulz_intern(string)` / `flowrulz_intern_lookup(id)` — string interning
 - `flowrulz_register_plugin(name, wasm_bytes)` — register a WASM plugin module by name
+- `flowrulz_msg_alloc(size)` / `flowrulz_msg_release(ptr)` — allocate/free via `std::alloc`
 
 The service call caller registers the C function pointer via `caller_cb_t` signature.
 
@@ -500,7 +502,7 @@ Module declaration. Re-exports all bytecode sub-module types with `pub use *`.
 ### `rust/src/bytecode/opcode.rs`
 **Package:** `flowrulz_core::bytecode`
 
-Opcode enum (23 variants: 0–22). Also defines `GateOp` (comparison operators), `ChunkMode`, and `RetryStrategy` enums used by instruction operands.
+Opcode enum (25 variants: 0–24). Also defines `GateOp` (comparison operators), `ChunkMode`, and `RetryStrategy` enums used by instruction operands.
 
 **Exports:** `OpCode`, `GateOp`, `ChunkMode`, `RetryStrategy`
 
@@ -518,7 +520,7 @@ The 8-byte `Instruction` struct: `{op: u8, flags: u8, a: u16, b: u16, c: u16}`. 
 ### `rust/src/bytecode/event.rs`
 **Package:** `flowrulz_core::bytecode`
 
-Universal message type. `Event` holds `id`, `topic`, `payload`, `headers`, `metadata`. `EventMetadata` contains `mode`, `reply_to`, `correlation_id`, `trace_id`, `content_type`, `schema_name`, `schema_version`, `partition`, `offset`. `Mode` enum with 6 variants.
+Universal message type. `Event` holds `id`, `topic`, `payload`, `headers`, `metadata`. `Mode` enum with 6 variants. `EventMetadata` contains `mode`, `reply_to`, `correlation_id`, `trace_id`, `content_type`, `schema_name`, `schema_version`, `partition`, `offset`. `Mode` enum with 6 variants.
 
 **Exports:** `Event`, `EventMetadata`, `Mode`
 
@@ -844,16 +846,16 @@ Rust crate definition with dependencies: `bumpalo`, `serde`, `serde_json`, `boxc
 |------|---------|
 | `docs/README.md` | Project overview, directory layout, features table, quick start |
 | `docs/development.md` | Dev setup, package tree, adding opcodes, benchmarks |
-| `docs/specs/flow-architecture.md` | Distributed Event Runtime — architecture, Event model, ExecutionContext, flows |
-| `docs/specs/dsl-syntax.md` | DSL language specification |
-| `docs/specs/bytecode-format.md` | ExecutionPlan, Instruction, opcodes, types |
-| `docs/specs/vm-architecture.md` | VM dispatch, opcode handlers, ExecutionContext |
-| `docs/specs/memory-management.md` | Slab pool, arena, interning, message lifecycle |
-| `docs/specs/ffi-api.md` | C FFI surface for Go bridge |
-| `docs/specs/kafka-semantics.md` | Consumer groups, offset commit, DLQ, internal topics |
-| `docs/specs/cluster-model.md` | Single-leader cluster, membership, plan distribution, service registry |
-| `docs/specs/flows.md` | Every data path: membership → deployment → execution → DLQ → metrics |
-| `docs/specs/file-index.md` | This file |
+| `docs/flow-architecture.md` | Distributed Event Runtime — architecture, Event model, ExecutionContext, flows |
+| `docs/dsl-syntax.md` | DSL language specification |
+| `docs/bytecode-format.md` | ExecutionPlan, Instruction, opcodes, types |
+| `docs/vm-architecture.md` | VM dispatch, opcode handlers, ExecutionContext |
+| `docs/memory-management.md` | Arena, interning, message lifecycle |
+| `docs/ffi-api.md` | C FFI surface for Go bridge |
+| `docs/kafka-semantics.md` | Legacy Kafka transport reference |
+| `docs/cluster-model.md` | Single-leader cluster, membership, plan distribution, service registry |
+| `docs/flows.md` | Every data path: membership → deployment → execution → DLQ → metrics |
+| `docs/file-index.md` | This file |
 
 ## Summary
 

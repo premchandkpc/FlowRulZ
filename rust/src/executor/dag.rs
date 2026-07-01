@@ -129,9 +129,23 @@ fn merge_dag_results<'a>(
             arena.alloc_copy(&out)
         }
         MergeStrategy::ExplicitMap => {
-            // ExplicitMap requires an explicit mapping config that doesn't exist yet.
-            // Fall back to LastWins.
-            merge_last_wins(terminal_nodes, results, failed, plan, arena)
+            // ExplicitMap: key each terminal node result by its service name from the plan.
+            let mut merged = serde_json::Map::new();
+            for &svc_id in terminal_nodes {
+                if failed.contains(&svc_id) {
+                    merged.insert(format!("svc_{}", svc_id), serde_json::Value::Null);
+                    continue;
+                }
+                if let Some(resp) = results.get(&svc_id) {
+                    let entry = plan.services.get(svc_id);
+                    let svc_name = entry.name.clone();
+                    if let Ok(val) = serde_json::from_slice::<serde_json::Value>(resp) {
+                        merged.insert(svc_name, val);
+                    }
+                }
+            }
+            let out = serde_json::to_vec(&serde_json::Value::Object(merged)).unwrap_or_default();
+            arena.alloc_copy(&out)
         }
         MergeStrategy::LastWins => {
             merge_last_wins(terminal_nodes, results, failed, plan, arena)

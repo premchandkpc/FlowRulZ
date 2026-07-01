@@ -20,7 +20,7 @@ Bit:  63..48  47..32  31..16  15..8  7..0
 
 | Field | Bits | Type | Description |
 |-------|------|------|-------------|
-| `opcode` | 7:0 | u8 | Operation code (0–22) |
+| `opcode` | 7:0 | u8 | Operation code (0–24) |
 | `flags` | 15:8 | u8 | Per-opcode modifier flags |
 | `a` | 31:16 | u16 | Primary operand |
 | `b` | 47:32 | u16 | Secondary operand |
@@ -65,7 +65,9 @@ pub struct Instruction {
 | 19 | SvcArg | svc_id | — | — |
 | 20 | RetryData | flags(max_attempts,strategy) | fixed_ms_hi | fixed_ms_lo |
 | 21 | JumpOffset | offset | — | — |
-| **22** | **TypeGuard** | **strict(0/1)** | — | — |
+| 22 | TypeGuard | strict(0/1) | — | — |
+| 23 | SvcCall | service_id | — | — |
+| 24 | Delay | delay_ms_hi | delay_ms_lo | — |
 
 ### TypeGuard
 
@@ -85,7 +87,6 @@ pub struct ExecutionPlan {
     pub const_pool: ConstantPool,
     pub services: ServiceTable,
     pub dag_tables: Vec<DAGTable>,
-    pub map_exprs: Vec<MapExpr>,
     pub retry_configs: Vec<RetryConfig>,
     pub chunk_configs: Vec<ChunkConfig>,
     pub schema: Option<Schema>,
@@ -225,6 +226,14 @@ pub enum ResolvedType {
 - `Schema::is_valid()` returns `true` for any `Any` field regardless of the actual value
 
 Enum values are validated at runtime by the TypeGuard opcode.
+
+### SvcCall
+
+Opcode 23 is a direct service call dispatched by the VM but **never emitted by the compiler**. Reserved for future use or manual plan construction.
+
+### Delay
+
+Opcode 24 yields `StepResult::Delay` via the `step()` execution path. Used for deferred execution. At the VM level it is a no-op in `run()` mode — handled via the step API. `delay_ms` is encoded in the `b` and `c` fields (hi/lo u16).
 
 ### RetryConfig / ChunkConfig
 

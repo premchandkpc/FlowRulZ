@@ -57,12 +57,11 @@ rust/src/
 │   ├── mod.rs
 │   ├── event.rs        # Event, Mode, EventMetadata — universal message type
 │   ├── execution.rs    # ExecutionContext — event + body + variables + outputs
-│   ├── opcode.rs       # Opcode enum (0–22) + GateOp, ChunkMode, RetryStrategy
+│   ├── opcode.rs       # Opcode enum (0–24) + GateOp, ChunkMode, RetryStrategy
 │   ├── instruction.rs  # 8-byte packed Instruction
 │   ├── consts.rs       # ConstantPool
 │   ├── services.rs     # ServiceTable
 │   ├── dag_table.rs    # DAGTable + DAGNode + DAGFailurePolicy + MergeStrategy
-│   ├── mapexpr.rs      # MapExpr
 │   ├── resolved_type.rs# ResolvedType enum (incl. Enum), FieldSchema, Schema
 │   └── plan.rs         # ExecutionPlan
 ├── dsl/                # Language toolchain
@@ -73,7 +72,6 @@ rust/src/
 │   └── compiler.rs     # AST → ExecutionPlan (complexity scoring, schema, type checking)
 ├── executor/           # Virtual machine
 │   ├── mod.rs          # VM dispatch loop + TypeGuard handler (operates on ExecutionContext)
-│   ├── context.rs      # Re-exports bytecode::execution::ExecutionContext
 │   ├── runtime.rs      # ExecutionRuntime — Chunk/Buffer orchestration
 │   ├── next.rs         # Service call + retry
 │   ├── parallel.rs     # Parallel fan-out
@@ -84,15 +82,14 @@ rust/src/
 │   ├── dag.rs          # DAG execution (parent merging, failure policies, merge strategies)
 │   ├── chunk.rs        # Chunk processing
 │   ├── helpers.rs      # JSON utilities
-│   └── expr.rs         # Expression engine (22 builtins)
+│   └── expr.rs         # Expression engine (31 builtins)
 ├── ffi.rs              # extern "C" exports for Go bridge
 ├── tracing/            # Span ring buffer
 │   ├── mod.rs          # Span struct + thread_local buffer + emit_span
 │   └── ring_buffer.rs  # Lock-free ring buffer (atomic head/tail)
-└── memory/             # Memory management
+    └── memory/             # Memory management
     ├── mod.rs
     ├── arena.rs        # Bump allocator
-    # slab.rs removed (dead code)
     └── intern.rs       # String interning
 
 go/
@@ -196,7 +193,7 @@ WASM plugins are sandboxed WebAssembly modules called from DSL via `w:plugin.fun
 ## Conventions
 
 - **Naming:** snake_case for functions/vars, CamelCase for types
-- **Errors:** Use `thiserror` derive macros; return `Result<_, ExecError>` or `Result<_, CompileError>`
+- **Errors:** `FfiError` enum with `Display` impl; `CompileError` for DSL errors; return `Result<_, CompileError>` or error codes for FFI
 - **Testing:** Rust unit tests inline in source files (`#[cfg(test)]`); Go test files alongside source
 - **FFI safety:** All `extern "C"` functions check null pointers; return error codes
 - **Go cgo pattern:** Callbacks use `//export` + `sync.Map` caller dispatch by `ctx_id`; no mutex in hot path
@@ -205,6 +202,6 @@ WASM plugins are sandboxed WebAssembly modules called from DSL via `w:plugin.fun
 
 - VM dispatch uses `match` on opcode — compiler generates jump table
 - Service calls are FFI-bound (C callbacks into Go); overhead dominated by serialization, not dispatch
-- Slab pool should be sized to workload peak concurrency
-- Expression engine uses simple recursive descent — no parser generator dependency
+- `std::alloc` for FFI message allocation (no custom allocator)
+- Expression engine uses simple recursive descent with quote-aware argument parsing — no parser generator dependency
 - Span ring buffer is thread-local + lock-free; zero contention per thread

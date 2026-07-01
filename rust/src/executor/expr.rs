@@ -61,17 +61,38 @@ fn parse_args(input: &str) -> Result<Vec<Expr>, String> {
     let mut args = Vec::new();
     let mut depth = 0;
     let mut start = 0;
+    let mut in_quote = false;
+    let mut quote_char = 0u8;
     let bytes = input.as_bytes();
+    let len = input.len();
 
-    for i in 0..input.len() {
-        if bytes[i] == b'(' {
+    for i in 0..len {
+        let c = bytes[i];
+        if in_quote {
+            if c == quote_char {
+                in_quote = false;
+            }
+            if i == len - 1 {
+                let part = input[start..].trim();
+                if !part.is_empty() {
+                    args.push(parse_expr(part)?);
+                }
+            }
+            continue;
+        }
+        if c == b'\'' || c == b'"' {
+            in_quote = true;
+            quote_char = c;
+            continue;
+        }
+        if c == b'(' {
             depth += 1;
         }
-        if bytes[i] == b')' {
+        if c == b')' {
             depth -= 1;
         }
-        if (bytes[i] == b',' && depth == 0) || i == input.len() - 1 {
-            let end = if i == input.len() - 1 { i + 1 } else { i };
+        if (c == b',' && depth == 0) || i == len - 1 {
+            let end = if i == len - 1 { i + 1 } else { i };
             let part = input[start..end].trim();
             if !part.is_empty() {
                 args.push(parse_expr(part)?);
@@ -307,6 +328,77 @@ fn call_builtin(name: &str, args: &[serde_json::Value]) -> Result<serde_json::Va
             let hash = consistent_hash(&s);
             Ok(serde_json::Value::Number(serde_json::Number::from(hash)))
         }
+        "abs" => {
+            let n = arg_as_f64(args, 0).ok_or("abs: expected number")?;
+            Ok(serde_json::Number::from_f64(n.abs())
+                .map(serde_json::Value::Number)
+                .unwrap_or(serde_json::Value::Null))
+        }
+        "round" => {
+            let n = arg_as_f64(args, 0).ok_or("round: expected number")?;
+            Ok(serde_json::Value::Number(serde_json::Number::from_f64(n.round()).unwrap_or(serde_json::Number::from(0))))
+        }
+        "ceil" => {
+            let n = arg_as_f64(args, 0).ok_or("ceil: expected number")?;
+            Ok(serde_json::Value::Number(serde_json::Number::from_f64(n.ceil()).unwrap_or(serde_json::Number::from(0))))
+        }
+        "floor" => {
+            let n = arg_as_f64(args, 0).ok_or("floor: expected number")?;
+            Ok(serde_json::Value::Number(serde_json::Number::from_f64(n.floor()).unwrap_or(serde_json::Number::from(0))))
+        }
+        "min" => {
+            let a = arg_as_f64(args, 0).ok_or("min: expected number")?;
+            let b = arg_as_f64(args, 1).ok_or("min: expected number")?;
+            Ok(serde_json::Number::from_f64(a.min(b))
+                .map(serde_json::Value::Number)
+                .unwrap_or(serde_json::Value::Null))
+        }
+        "max" => {
+            let a = arg_as_f64(args, 0).ok_or("max: expected number")?;
+            let b = arg_as_f64(args, 1).ok_or("max: expected number")?;
+            Ok(serde_json::Number::from_f64(a.max(b))
+                .map(serde_json::Value::Number)
+                .unwrap_or(serde_json::Value::Null))
+        }
+        "base64_decode" => {
+            let s = arg_as_str(args, 0);
+            decode_base64(&s).map(|bytes| {
+                String::from_utf8(bytes).map(serde_json::Value::String)
+                    .unwrap_or(serde_json::Value::Null)
+            })
+        }
+        "parse_bool" => {
+            let s = arg_as_str(args, 0).to_lowercase();
+            match s.as_str() {
+                "true" | "1" | "yes" => Ok(serde_json::Value::Bool(true)),
+                "false" | "0" | "no" => Ok(serde_json::Value::Bool(false)),
+                _ => Err(format!("parse_bool: cannot parse '{}'", s)),
+            }
+        }
+        "split" => {
+            let s = arg_as_str(args, 0);
+            let delim = arg_as_str(args, 1);
+            if delim.is_empty() {
+                let chars: Vec<serde_json::Value> = s.chars().map(|c| serde_json::Value::String(c.to_string())).collect();
+                Ok(serde_json::Value::Array(chars))
+            } else {
+                let parts: Vec<serde_json::Value> = s.split(&delim).map(|p| serde_json::Value::String(p.to_string())).collect();
+                Ok(serde_json::Value::Array(parts))
+            }
+        }
+        "typeof" => {
+            let v = args.first().ok_or("typeof: missing arg")?;
+            let type_name = match v {
+                serde_json::Value::Null => "null",
+                serde_json::Value::Bool(_) => "bool",
+                serde_json::Value::Number(n) if n.is_f64() && n.as_f64().unwrap().fract() != 0.0 => "float",
+                serde_json::Value::Number(_) => "int",
+                serde_json::Value::String(_) => "string",
+                serde_json::Value::Array(_) => "array",
+                serde_json::Value::Object(_) => "object",
+            };
+            Ok(serde_json::Value::String(type_name.to_string()))
+        }
         _ => Err(format!("unknown function: {}", name)),
     }
 }
@@ -351,6 +443,38 @@ fn now_iso() -> String {
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:09}Z",
         y, m, d, hours as u32, mins as u32, sec as u32, nanos
     )
+}
+
+fn decode_base64(s: &str) -> Result<Vec<u8>, String> {
+    const DECODE: [i8; 256] = {
+        let mut t = [-1i8; 256];
+        let mut i = 0u8;
+        let chars = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        while i < 64 {
+            t[chars[i as usize] as usize] = i as i8;
+            i += 1;
+        }
+        t
+    };
+    let bytes = s.trim_end_matches('=').as_bytes();
+    let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
+    for chunk in bytes.chunks(4) {
+        let mut buf = 0u32;
+        let mut bits = 0;
+        for &b in chunk {
+            let val = DECODE.get(b as usize).copied().unwrap_or(-1);
+            if val < 0 {
+                return Err(format!("base64_decode: invalid character '{}'", b as char));
+            }
+            buf = (buf << 6) | val as u32;
+            bits += 6;
+        }
+        while bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+        }
+    }
+    Ok(out)
 }
 
 fn base64_encode(s: &str) -> String {
@@ -503,5 +627,119 @@ mod tests {
         let result = eval_map_expression("sub=substring(text,0,5)", body).unwrap();
         let json: serde_json::Value = serde_json::from_slice(&result).unwrap();
         assert_eq!(json["sub"], "hello");
+    }
+
+    #[test]
+    fn test_function_abs() {
+        let body = br#"{"n":-42.5}"#;
+        let result = eval_map_expression("v=abs(n)", body).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert!((json["v"].as_f64().unwrap() - 42.5).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_function_round() {
+        let body = br#"{"n":3.7}"#;
+        let result = eval_map_expression("v=round(n)", body).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert!((json["v"].as_f64().unwrap() - 4.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_function_ceil() {
+        let body = br#"{"n":3.2}"#;
+        let result = eval_map_expression("v=ceil(n)", body).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert!((json["v"].as_f64().unwrap() - 4.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_function_floor() {
+        let body = br#"{"n":3.8}"#;
+        let result = eval_map_expression("v=floor(n)", body).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert!((json["v"].as_f64().unwrap() - 3.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_function_min() {
+        let body = br#"{"a":3,"b":7}"#;
+        let result = eval_map_expression("v=min(a,b)", body).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert!((json["v"].as_f64().unwrap() - 3.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_function_max() {
+        let body = br#"{"a":3,"b":7}"#;
+        let result = eval_map_expression("v=max(a,b)", body).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert!((json["v"].as_f64().unwrap() - 7.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_function_base64_decode() {
+        let body = br#"{"data":"aGVsbG8="}"#;
+        let result = eval_map_expression("decoded=base64_decode(data)", body).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert_eq!(json["decoded"], "hello");
+    }
+
+    #[test]
+    fn test_function_parse_bool() {
+        let body = br#"{"s":"true"}"#;
+        let result = eval_map_expression("b=parse_bool(s)", body).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert_eq!(json["b"], true);
+    }
+
+    #[test]
+    fn test_function_parse_bool_false() {
+        let body = br#"{"s":"false"}"#;
+        let result = eval_map_expression("b=parse_bool(s)", body).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert_eq!(json["b"], false);
+    }
+
+    #[test]
+    fn test_function_split() {
+        let body = br#"{"s":"a,b,c"}"#;
+        let result = eval_map_expression("parts=split(s,',')", body).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert_eq!(json["parts"][0], "a");
+        assert_eq!(json["parts"][1], "b");
+        assert_eq!(json["parts"][2], "c");
+    }
+
+    #[test]
+    fn test_function_typeof() {
+        let body = br#"{"s":"hello"}"#;
+        let result = eval_map_expression("t=typeof(s)", body).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert_eq!(json["t"], "string");
+    }
+
+    #[test]
+    fn test_function_typeof_number() {
+        let body = br#"{"n":42}"#;
+        let result = eval_map_expression("t=typeof(n)", body).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert_eq!(json["t"], "int");
+    }
+
+    #[test]
+    fn test_function_typeof_bool() {
+        let body = br#"{"b":true}"#;
+        let result = eval_map_expression("t=typeof(b)", body).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert_eq!(json["t"], "bool");
+    }
+
+    #[test]
+    fn test_function_typeof_array() {
+        let body = br#"{"a":[1,2]}"#;
+        let result = eval_map_expression("t=typeof(a)", body).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert_eq!(json["t"], "array");
     }
 }

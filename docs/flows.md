@@ -17,23 +17,22 @@ Resolve seeds → dial seed peers
     ├── Join request to seed → seed confirms membership
     │
     ▼
-Announce on _flowrulz_members
-    ├── Key: node_id
-    ├── Value: NodeState{id, addr, port, load, services}
-    └── Compacted topic → last write per key retained
+Announce on _flowrulz_members (cluster bus topic)
+    ├── NodeState{id, addr, port, load, services}
+    ├── Gossip protocol propagates state to all nodes
     │
     ▼
 Leader election (every node runs independently)
     ├── Read all alive entries from _flowrulz_members
     ├── Sort by node_id ascending
     ├── Lowest ID = leader
-    └── No Raft/Paxos — Kafka compaction provides durability
+    └── No Raft/Paxos — lowest-ID-alive via cluster bus gossip
     │
     ▼
 Periodic heartbeat
-    ├── Re-announce on _flowrulz_members every TTL/3
-    ├── TTL = cleanup policy on topic (default: 30s)
-    └── Stale entries compacted away by Kafka
+    ├── Broadcast on _flowrulz_members every 3s via cluster bus
+    ├── LeaderLease (8s) detects stale leaders
+    └── Lease expiry triggers re-election
     │
     ▼
 Leader responsibilities
@@ -52,36 +51,35 @@ Leader responsibilities
 ```
 JOIN
     │
-    ├── Announce on _flowrulz_members (key = node_id)
-    ├── Start consumer group → get partition assignment
-    ├── Catch-up: consume from last committed offset
-    └── Enter normal consumption loop
+    ├── Announce on _flowrulz_members via cluster bus
+    ├── Leader rebalances partitions (64 partitions, round-robin)
+    ├── Catch-up: receive current rules from leader
+    └── Enter normal execution loop
     │
     ▼
 NORMAL
-    ├── Consume messages from assigned partitions
-    ├── Execute rules per topic match
+    ├── Execute rules for assigned partitions
     ├── Heartbeat periodically on _flowrulz_members
-    └── Watch for plan updates on _flowrulz_plans
+    ├── Watch for plan updates on _flowrulz_plans
+    └── Watch for partition changes on _flowrulz_partitions
     │
     ▼
 DRAIN (signal: SIGTERM / admin / partition revoke)
-    ├── Pause consumer (stop ingesting new messages)
+    ├── Stop consuming new messages
     ├── Signal scheduler to reject new tasks
     ├── Wait for in-flight tasks to complete
     │   └── (or timeout after grace period)
-    ├── Leave _flowrulz_members (delete key or mark leaving)
-    ├── Close producers
+    ├── Announce departure on _flowrulz_members
+    ├── Leader rebalances partitions away
     └── Shutdown HTTP server
     │
     ▼
 CRASH / REJOIN
-    ├── Kafka session timeout → partitions rebalanced
+    ├── Node becomes unresponsive → lease expiry triggers rebalance
     ├── Node restarts with same node_id
     ├── Re-announce on _flowrulz_members
-    ├── Rejoin consumer group → get partition assignment
-    ├── Catch-up from last committed offset
-    └── Resume normal consumption
+    ├── Catch-up from leader (missed rule versions)
+    └── Resume normal execution
 ```
 
 **Files:** `go/internal/execnode/execnode.go` (`Start`, `Shutdown`)
@@ -167,17 +165,17 @@ Client                              Admin Server
 ## 5. Message Ingestion Flow
 
 ```
-Kafka partition
+Cluster bus / transport ingress
     │
-    ├── Consumer.PollBatch(N) → []Message
+    ├── Consumer.Receive() → Message
     │
     ▼
-Consumer handler(Message)
+Message handler
     │
     ├── RateLimiter.Allow("ingress")
     │   ├── true  → continue
     │   └── false → DLQ.Send(entry{body, error:"rate limited"})
-    │                return (message dropped, not committed)
+    │                return (message dropped)
     │
     ├── Scheduler.Enqueue(Task{ID, body, Execute: handlerFn})
     │   ├── Fast lane (score < 10):  blocking send to 5k buffered chan
@@ -185,7 +183,7 @@ Consumer handler(Message)
     │   └── Heavy lane (score > 50):  non-blocking send to 500 chan
     │       RejectOnFull → ErrQueueFull → DLQ.Send (if heavy lane full)
     │
-    └── Return (consumer commits offset after all plans execute)
+    └── Return (handler completes)
 ```
 
 **Scheduler dequeue (laneWorker goroutine):**
@@ -222,7 +220,7 @@ laneWorker loop
     └── <-sem                  (release concurrency slot)
 ```
 
-**Files:** `go/internal/transport/consumer.go`, `go/internal/execnode/execnode.go`,
+**Files:** `go/internal/cluster/transport.go`, `go/internal/execnode/execnode.go`,
 `go/internal/scheduler/scheduler.go`, `go/internal/engine/engine.go`,
 `go/bridge/bridge.go`, `go/internal/reliability/ratelimit.go`
 
@@ -417,9 +415,9 @@ Client                                              FlowRulZ Node
   │                                                      │  ├── Check: duplicate? capacity?
   │                                                      │  └── Return ReplyCh (buffered, cap 1)
   │                                                      │
-  │                                                      │  Publish event to Kafka
-  │                                                      │  Mode = Request
-  │                                                      │  Headers: { correlation_id, reply_to }
+    │                                                      │  Publish event to cluster bus
+    │                                                      │  Mode = Request
+    │                                                      │  Headers: { correlation_id, reply_to }
   │                                                      │
   │                                                      ▼
   │                                               Partition Worker
@@ -429,9 +427,9 @@ Client                                              FlowRulZ Node
   │                                                      ├── VM calls service (Next opcode)
   │                                                      └── VM emits result
   │                                                      │
-  │                                                      │  Response → _flowrulz_replies
-  │                                                      │  Key = hash(correlation_id)
-  │                                                      │  Partition = hash % N
+    │                                                      │  Response → _flowrulz_replies (cluster bus topic)
+    │                                                      │  Key = hash(correlation_id)
+    │                                                      │  Routed to origin node via cluster bus
   │                                                      │
   │                                                      ▼
   │                                               ReplyRouter.Route(corrID, response)
@@ -451,7 +449,7 @@ Client                                              FlowRulZ Node
 ```
 
 **Files:** `go/internal/replyrouter/replyrouter.go`,
-`go/internal/transport/producer.go`, `go/internal/execnode/execnode.go`
+`go/internal/cluster/node.go`, `go/internal/execnode/execnode.go`
 
 ---
 
@@ -840,10 +838,10 @@ admin.ServeHTTP(w, r)
                 └───────────┬───────────────────┘
                             │ Plan activation
                             ▼
-┌──────────┐     ┌──────────────────┐     ┌────────────┐
-│ Kafka    │────►│ Message          │────►│ Scheduler  │
-│ Consumer │     │ Ingestion (flow 5)│     │ (flow 6)   │
-└──────────┘     │ Rate Limit(flow12)│     └──────┬─────┘
+┌──────────────┐ ┌──────────────────┐     ┌────────────┐
+│ Cluster Bus  │─►│ Message          │────►│ Scheduler  │
+│ / Transport  │  │ Ingestion (flow 5)│     │ (flow 6)   │
+└──────────────┘  │ Rate Limit(flow12)│     └──────┬─────┘
                  └──────────────────┘            │
                                                  ▼
                                        ┌──────────────────┐
@@ -868,8 +866,8 @@ admin.ServeHTTP(w, r)
                     └─────────────┘ └──────────┘ └──────────┘
                                                       │
                                                       ▼
-                                                  Kafka /
-                                                  Response
+                                                   Cluster Bus /
+                                                   Response
 ```
 
 ---
@@ -878,15 +876,15 @@ admin.ServeHTTP(w, r)
 
 | # | Flow | Entry Point | Key Components | Persistence |
 |---|------|-------------|----------------|-------------|
-| 1 | Cluster Membership | Node startup | `_flowrulz_members`, seed gossip | Kafka compacted |
+| 1 | Cluster Membership | Node startup | `_flowrulz_members`, gossip protocol | Cluster bus |
 | 2 | Node Lifecycle | `execnode.Start()` | Consumer, scheduler, HTTP server | In-memory |
-| 3 | Plan Distribution | `plandist.PublishPlan()` | `_flowrulz_plans`, `_flowrulz_acks`, quorum | Kafka |
+| 3 | Plan Distribution | `plandist.PublishPlan()` | `_flowrulz_plans`, `_flowrulz_acks`, quorum | Cluster bus |
 | 4 | Rule Deployment | `POST /rules` | Admin, engine, bridge, plandist | JSON file |
-| 5 | Message Ingestion | Kafka `Consumer.handler` | Rate limiter, scheduler, `executeAll`/`executePlan`/`callService` | Kafka |
+| 5 | Message Ingestion | Transport handler | Rate limiter, scheduler, `executeAll`/`executePlan`/`callService` | Cluster bus |
 | 6 | Scheduling | `Scheduler.Enqueue()` | Lane queues, semaphore, goroutines | None |
 | 7 | Execution (VM) | `VM::run()` / `VM::step()` | Instruction dispatch, opcode handlers, cooperative step loop | None |
 | 8 | Service Call | `op_next` / `StepPending` | Bridge CGo, registry, external service, `callService()` | None |
-| 9 | Request/Reply | `flow.Request()` | `_flowrulz_replies`, ReplyRouter | Kafka |
+| 9 | Request/Reply | `flow.Request()` | `_flowrulz_replies`, ReplyRouter | Cluster bus |
 | 10 | DAG Execution | `op_dag` | Layers, parent merge, failure policy | None |
 | 11 | DLQ | `bridge.Execute()`/`ExecuteStep()` error | `DLQ.Send`, admin replay | In-memory (bounded) |
 | 12 | Rate Limiting | `RateLimiter.Allow()` | Token bucket refill, allow/deny | None |

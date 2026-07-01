@@ -108,6 +108,7 @@ make clean     # cargo clean + remove binary
 - `caller_cb_t` signature: `int(uint64_t ctx_id, uint16_t svc_id, const u8* body, size_t body_len, u8* resp, size_t* resp_len)`
 - `Instruction` is 8 bytes: `{op: u8, flags: u8, a: u16, b: u16, c: u16}`
 - Schema DSL: `schema:{field:type,!required_field:type}` — emits `TypeGuard` opcode (22)
+- Opcodes 23 (`SvcCall`) and 24 (`Delay`) exist but are never emitted by the compiler
 - Compile-time type inference: when `schema:{...}` is present, the compiler pre-pass validates Gate operators (`type_check_gate()`) and Map expressions (`type_check_map()`) against declared field types, emitting `TypeMismatch` errors for incompatible operations
 - DAGTable fields: `failure_policy` (AbortAll/ContinueOthers/SkipDependents), `node_timeouts`, `merge_strategy` (LastWins/ArrayConcat/DeepMerge/ExplicitMap), `distributed`
 - DAGNode has `parent_ids: Vec<u16>` — populated during compile from deps, used at runtime to merge parent results into downstream node input
@@ -122,7 +123,7 @@ make clean     # cargo clean + remove binary
 
 ## Expression Builtins
 
-`to_string`, `parse_int`, `parse_float`, `coalesce`, `default`, `contains`, `keys`, `merge`, `epoch`, `hash`, `uuid`, `now`, `lower`, `upper`, `trim`, `length`, `concat`, `base64`, `json`, `substring`, `replace`
+`to_string`, `parse_int`, `parse_float`, `parse_bool`, `coalesce`, `default`, `contains`, `keys`, `merge`, `epoch`, `hash`, `uuid`, `now`, `lower`, `upper`, `trim`, `length`, `concat`, `base64`, `base64_decode`, `json`, `substring`, `replace`, `split`, `abs`, `round`, `ceil`, `floor`, `min`, `max`, `typeof`
 
 `call_builtin` takes `&[serde_json::Value]` (not `&[&str]`).
 
@@ -145,9 +146,9 @@ All endpoints (except `/health`) require `Authorization: Bearer <FLOWRULZ_API_KE
 - `GET /lanes` — lane configs
 - `GET /health` — health check
 
-## Opcodes (0-22)
+## Opcodes (0-24)
 
-0=Next, 1=Parallel, 2=Collect, 3=Fallback, 4=Gate, 5=Split, 6=Map, 7=Emit, 8=Drop, 9=Buffer, 10=Key, 11=Retry, 12=Pipe, 13=Timeout, 14=Async, 15=Chunk, 16=Dag, 17=Jmp, 18=Label, 19=SvcArg, 20=RetryData, 21=JumpOffset, 22=TypeGuard
+0=Next, 1=Parallel, 2=Collect, 3=Fallback, 4=Gate, 5=Split, 6=Map, 7=Emit, 8=Drop, 9=Buffer, 10=Key, 11=Retry, 12=Pipe, 13=Timeout, 14=Async, 15=Chunk, 16=Dag, 17=Jmp, 18=Label, 19=SvcArg, 20=RetryData, 21=JumpOffset, 22=TypeGuard, 23=SvcCall, 24=Delay
 
 ## Known Issues — Status
 

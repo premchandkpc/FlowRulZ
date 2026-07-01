@@ -172,7 +172,7 @@ m:<expr>
 
 Evaluates an expression and transforms the message. Expressions use dots for field paths and support function calls.
 
-**Built-in functions (21 total):**
+**Built-in functions (31 total):**
 
 | Function | Description |
 |----------|-------------|
@@ -196,7 +196,7 @@ Evaluates an expression and transforms the message. Expressions use dots for fie
 | `contains(list, val)` | Array membership check |
 | `keys(obj)` | Object key extraction |
 | `merge(a, b)` | Deep merge two objects |
-| `hash(alg, s)` | Hash (md5/sha1/sha256) |
+| `hash(s)` | Consistent hash (u64) |
 
 `call_builtin` takes `&[serde_json::Value]` (not `&[&str]`).
 
@@ -207,7 +207,7 @@ m:.user_id=.id
 m:.display=upper(.name)
 m:.greeting='hello ' + .name
 m:.payload=json(.raw_json)
-m:.hash=hash(md5, .email)
+m:.hash=hash(.email)
 ```
 
 ### WASM Plugin Call

@@ -269,10 +269,9 @@ Messages are `&[u8]` / `Vec<u8>` at the VM boundary, internally parsed to `serde
 
 ## Concurrency
 
-- Parallel execution uses `rayon::scope` for bounded parallelism
 - Service calls are synchronous from Rust's perspective (C FFI blocks)
-- DAG node execution is fully parallel within each layer
-- Chunk processing (par mode) uses rayon work-stealing
+- DAG node execution is sequential within the VM (parallelism handled at step API level)
+- Multiple VM instances run concurrently in independent goroutines
 
 ## Type System
 

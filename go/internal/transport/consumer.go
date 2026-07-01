@@ -24,7 +24,7 @@ func NewConsumer(topic string, handler MessageHandler) *Consumer {
 }
 
 func (c *Consumer) Start(ctx context.Context) {
-	log.Printf("consumer started for topic: %s", c.topic)
+	slog.Info("consumer started", "topic", c.topic)
 	for {
 		select {
 		case <-c.stopCh:
@@ -34,7 +34,7 @@ func (c *Consumer) Start(ctx context.Context) {
 		case msg := <-c.msgCh:
 			_, err := c.handler(ctx, msg)
 			if err != nil {
-				log.Printf("handler error: %v", err)
+				slog.Error("consumer handler error", "error", err)
 			}
 		}
 	}

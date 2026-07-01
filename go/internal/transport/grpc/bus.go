@@ -69,7 +69,7 @@ func (b *GRPCBus) Start() error {
 
 	go func() {
 		if err := b.server.Serve(lis); err != nil {
-			log.Printf("grpc bus: serve: %v", err)
+			slog.Error("grpc bus serve error", "error", err)
 		}
 	}()
 
@@ -286,11 +286,11 @@ func toProtoMessage(msg *transport.Message) *BusMessage {
 }
 
 type GRPCClient struct {
-	addr    string
-	conn    *grpc.ClientConn
-	client  EventBusClient
-	subs    map[string]func()
-	subsMu  sync.Mutex
+	addr   string
+	conn   *grpc.ClientConn
+	client EventBusClient
+	subs   map[string]func()
+	subsMu sync.Mutex
 }
 
 func NewGRPCClient(addr string) *GRPCClient {
@@ -345,7 +345,7 @@ func (c *GRPCClient) Subscribe(topic string, handler transport.Handler) *transpo
 		SubId: subID,
 	})
 	if err != nil {
-		log.Printf("grpc: subscribe error: %v", err)
+		slog.Error("grpc subscribe error", "error", err)
 		streamCancel()
 		return &transport.Subscription{ID: subID, Topic: topic}
 	}

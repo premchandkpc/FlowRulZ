@@ -51,6 +51,18 @@
     {
       "name": "memory-pools",
       "description": "Typed object pools: Expression Pool, Context Pool, Plan Pool, JSON Arena, thread-local arenas"
+    },
+    {
+      "name": "architecture-review",
+      "description": "Review FlowRulZ for decoupling, SOLID, DRY, OOP design, and architecture quality"
+    },
+    {
+      "name": "cluster-debugging",
+      "description": "Investigate leader election, membership, plan distribution, and cluster coordination issues"
+    },
+    {
+      "name": "docs-sync",
+      "description": "Update docs after code changes so architecture and developer guidance stay in sync"
     }
   ]
 }

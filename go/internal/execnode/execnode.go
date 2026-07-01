@@ -54,19 +54,19 @@ type ServiceResolver interface {
 }
 
 type ExecutionNode struct {
-	Engine       *engine.Engine
-	AdminSrv     *admin.Server
-	HTTP         *http.Server
-	Scheduler    *scheduler.Scheduler
-	ReplyRouter  *replyrouter.ReplyRouter
-	DLQ          *reliability.DLQ
-	RateLimiter  *reliability.RateLimiter
-	Metrics      *observability.MetricsCollector
-	Dedup        *reliability.DedupTracker
-	PlanDist     *plandist.PlanDistributor
-	Membership   *membership.Membership
-	Registry     *registry.ServiceRegistry
-	RaftCluster  *cluster.RaftCluster
+	Engine      *engine.Engine
+	AdminSrv    *admin.Server
+	HTTP        *http.Server
+	Scheduler   *scheduler.Scheduler
+	ReplyRouter *replyrouter.ReplyRouter
+	DLQ         *reliability.DLQ
+	RateLimiter *reliability.RateLimiter
+	Metrics     *observability.MetricsCollector
+	Dedup       *reliability.DedupTracker
+	PlanDist    *plandist.PlanDistributor
+	Membership  *membership.Membership
+	Registry    *registry.ServiceRegistry
+	RaftCluster *cluster.RaftCluster
 
 	serviceResolver ServiceResolver
 
@@ -87,31 +87,31 @@ type ExecutionNode struct {
 	StateStore *execstate.FileStore
 	Execs      *ExecRegistry
 
-	GRPCBus     *grpctransport.GRPCBus
+	GRPCBus      *grpctransport.GRPCBus
 	OtelExporter *observability.SpanExporter
 	ClusterNode  *cluster.ClusterNode
-	Partitions  *partition.Manager
-	Rebalancer  *partition.RebalanceNotifier
+	Partitions   *partition.Manager
+	Rebalancer   *partition.RebalanceNotifier
 }
 
 type Config struct {
-	PersistPath    string
-	ExecStateDir   string
-	HTTPAddr       string
-	GRPCAddr       string
-	RaftPort       int
-	RaftDir        string
-	RaftBootstrap  bool
-	CompilerAddr   string
-	PluginDir      string
-	Topic          string
-	NodeID         string
-	Seeds          []string
-	KafkaBrokers   []string
-	KafkaGroupID   string
-	KafkaAcks      string
+	PersistPath     string
+	ExecStateDir    string
+	HTTPAddr        string
+	GRPCAddr        string
+	RaftPort        int
+	RaftDir         string
+	RaftBootstrap   bool
+	CompilerAddr    string
+	PluginDir       string
+	Topic           string
+	NodeID          string
+	Seeds           []string
+	KafkaBrokers    []string
+	KafkaGroupID    string
+	KafkaAcks       string
 	KafkaIdempotent bool
-	APIKey         string
+	APIKey          string
 }
 
 func NewConfig() *Config {
@@ -153,7 +153,7 @@ func New(cfg *Config) *ExecutionNode {
 	en.Metrics = observability.NewMetricsCollector()
 	en.Scheduler = scheduler.New(nil)
 	en.ReplyRouter = replyrouter.New(
-		replyrouter.WithCleanupInterval(1 * time.Second),
+		replyrouter.WithCleanupInterval(1*time.Second),
 		replyrouter.WithMaxPending(10000),
 	)
 	en.Dedup = reliability.NewDedupTracker(10000, 5*time.Minute)
@@ -212,25 +212,7 @@ func New(cfg *Config) *ExecutionNode {
 	}
 	en.AdminSrv.RegisterDLQ(en.DLQ)
 
-	en.Engine.AfterDeploy = func(id, dsl string, plan []byte, version uint64) {
-		if !en.IsLeader() {
-			return
-		}
-		term := uint64(0)
-		if en.RaftCluster != nil {
-			term = en.RaftCluster.CurrentTerm()
-		} else {
-			term = en.PlanDist.CurrentTerm() + 1
-		}
-		en.PlanDist.SetTerm(term)
-		go en.distributePlan(id, dsl, plan, version)
-	}
-	en.Engine.AfterPromote = func(id string, version uint64) {
-		if !en.IsLeader() {
-			return
-		}
-		go en.distributeActivate(id, version)
-	}
+	en.configureEngineHooks()
 
 	en.mu.Lock()
 	en.producers = append(en.producers, dlqProducer, planProducer, ackProducer)
@@ -292,6 +274,33 @@ func (en *ExecutionNode) CurrentTerm() uint64 {
 		return en.RaftCluster.CurrentTerm()
 	}
 	return en.PlanDist.CurrentTerm()
+}
+
+func (en *ExecutionNode) configureEngineHooks() {
+	en.Engine.AfterDeploy = en.handleEngineDeploy
+	en.Engine.AfterPromote = en.handleEnginePromote
+}
+
+func (en *ExecutionNode) handleEngineDeploy(id, dsl string, plan []byte, version uint64) {
+	if !en.IsLeader() {
+		return
+	}
+	en.PlanDist.SetTerm(en.nextDeployTerm())
+	go en.distributePlan(id, dsl, plan, version)
+}
+
+func (en *ExecutionNode) handleEnginePromote(id string, version uint64) {
+	if !en.IsLeader() {
+		return
+	}
+	go en.distributeActivate(id, version)
+}
+
+func (en *ExecutionNode) nextDeployTerm() uint64 {
+	if en.RaftCluster != nil {
+		return en.RaftCluster.CurrentTerm()
+	}
+	return en.PlanDist.CurrentTerm() + 1
 }
 
 func (en *ExecutionNode) httpCall(endpoint string, body []byte, cb *reliability.CircuitBreaker) ([]byte, error) {
@@ -989,8 +998,8 @@ func (en *ExecutionNode) Start() {
 			nodeParts[n] = en.Partitions.PartitionsForNode(n)
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"num_partitions": en.Partitions.NumPartitions(),
-			"assignments":    assignments,
+			"num_partitions":  en.Partitions.NumPartitions(),
+			"assignments":     assignments,
 			"node_partitions": nodeParts,
 		})
 	})
@@ -1007,8 +1016,8 @@ func (en *ExecutionNode) Start() {
 			return
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":       "rebalanced",
-			"assignments":  len(assignments),
+			"status":      "rebalanced",
+			"assignments": len(assignments),
 		})
 	})
 
@@ -1081,5 +1090,3 @@ func (en *ExecutionNode) Shutdown() {
 	close(en.shutdownCh)
 	slog.Info("execnode: shutdown complete", "node_id", en.nodeID)
 }
-
-

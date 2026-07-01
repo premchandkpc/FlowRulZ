@@ -38,15 +38,15 @@ type KafkaConfig struct {
 }
 
 type KafkaConsumer struct {
-	topic       string
-	handler     MessageHandler
-	cfg         KafkaConfig
-	client      sarama.ConsumerGroup
-	msgCh       chan []byte
-	stopCh      chan struct{}
-	started     bool
-	mu          sync.Mutex
-	wg          sync.WaitGroup
+	topic        string
+	handler      MessageHandler
+	cfg          KafkaConfig
+	client       sarama.ConsumerGroup
+	msgCh        chan []byte
+	stopCh       chan struct{}
+	started      bool
+	mu           sync.Mutex
+	wg           sync.WaitGroup
 	manualCommit bool
 }
 
@@ -56,11 +56,11 @@ func NewKafkaConsumer(topic string, handler MessageHandler, cfg KafkaConfig) *Ka
 		ch = make(chan []byte, 1000)
 	}
 	return &KafkaConsumer{
-		topic:       topic,
-		handler:     handler,
-		cfg:         cfg,
-		msgCh:       ch,
-		stopCh:      make(chan struct{}),
+		topic:        topic,
+		handler:      handler,
+		cfg:          cfg,
+		msgCh:        ch,
+		stopCh:       make(chan struct{}),
 		manualCommit: len(cfg.Brokers) > 0,
 	}
 }
@@ -76,8 +76,11 @@ func (kc *KafkaConsumer) Start(ctx context.Context) {
 	kc.started = true
 	kc.mu.Unlock()
 
-	log.Printf("kafka consumer: topic=%s brokers=%v group=%s manual_commit=%t",
-		kc.topic, kc.cfg.Brokers, kc.cfg.GroupID, kc.manualCommit)
+	slog.Info("kafka consumer started",
+		"topic", kc.topic,
+		"brokers", kc.cfg.Brokers,
+		"group", kc.cfg.GroupID,
+		"manual_commit", kc.manualCommit)
 
 	if len(kc.cfg.Brokers) == 0 {
 		kc.runChannel(ctx)
@@ -97,7 +100,7 @@ func (kc *KafkaConsumer) Start(ctx context.Context) {
 
 	client, err := sarama.NewConsumerGroup(kc.cfg.Brokers, kc.cfg.GroupID, config)
 	if err != nil {
-		log.Printf("kafka consumer %s: failed to create consumer group: %v", kc.topic, err)
+		slog.Error("kafka consumer failed to create consumer group", "topic", kc.topic, "error", err)
 		kc.runChannel(ctx)
 		return
 	}
@@ -114,7 +117,7 @@ func (kc *KafkaConsumer) Start(ctx context.Context) {
 			}
 			err := client.Consume(ctx, []string{kc.topic}, kc)
 			if err != nil {
-				log.Printf("kafka consumer %s: consume error: %v", kc.topic, err)
+				slog.Error("kafka consumer consume error", "topic", kc.topic, "error", err)
 				select {
 				case <-kc.stopCh:
 					return
@@ -135,7 +138,7 @@ func (kc *KafkaConsumer) runChannel(ctx context.Context) {
 		case msg := <-kc.msgCh:
 			_, err := kc.handler(ctx, msg)
 			if err != nil {
-				log.Printf("kafka handler error: %v", err)
+				slog.Error("kafka handler error", "error", err)
 			}
 		}
 	}
@@ -159,7 +162,7 @@ func (kc *KafkaConsumer) Inject(msg []byte) {
 	select {
 	case kc.msgCh <- msg:
 	default:
-		log.Printf("kafka consumer %s: dropping message (buffer full)", kc.topic)
+		slog.Warn("kafka consumer dropping message", "topic", kc.topic, "reason", "buffer_full")
 	}
 }
 
@@ -175,7 +178,7 @@ func (kc *KafkaConsumer) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sa
 	for msg := range claim.Messages() {
 		_, err := kc.handler(context.Background(), msg.Value)
 		if err != nil {
-			log.Printf("kafka consumer %s: handler error: %v", kc.topic, err)
+			slog.Error("kafka consumer handler error", "topic", kc.topic, "error", err)
 		}
 		if kc.manualCommit {
 			sess.MarkMessage(msg, "")
@@ -223,7 +226,7 @@ func (kp *KafkaProducer) Send(ctx context.Context, key, value []byte) error {
 	if err != nil {
 		return fmt.Errorf("kafka produce %s: %w", kp.topic, err)
 	}
-	log.Printf("kafka produce: topic=%s key=%s partition=%d offset=%d bytes=%d", kp.topic, string(key), part, offset, len(value))
+	slog.Debug("kafka produce", "topic", kp.topic, "key", string(key), "partition", part, "offset", offset, "bytes", len(value))
 	return nil
 }
 
@@ -240,7 +243,7 @@ func kafkaAcksToSarama(acks AcksLevel) sarama.RequiredAcks {
 
 func (kp *KafkaProducer) initProducer() error {
 	if len(kp.cfg.Brokers) == 0 {
-		log.Printf("kafka producer %s: no brokers configured, using log-only mode", kp.topic)
+		slog.Warn("kafka producer using log-only mode", "topic", kp.topic, "reason", "no_brokers")
 		return nil
 	}
 	config := sarama.NewConfig()
@@ -253,7 +256,7 @@ func (kp *KafkaProducer) initProducer() error {
 		config.Producer.Idempotent = true
 		config.Net.MaxOpenRequests = 1
 		if kp.cfg.Acks != AcksAll {
-			log.Printf("kafka producer %s: idempotent requires acks=all, overriding", kp.topic)
+			slog.Warn("kafka producer idempotent requires acks=all, overriding", "topic", kp.topic)
 			config.Producer.RequiredAcks = sarama.WaitForAll
 		}
 	}

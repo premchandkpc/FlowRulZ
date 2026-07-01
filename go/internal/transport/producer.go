@@ -14,7 +14,7 @@ func NewProducer(topic string) *Producer {
 }
 
 func (p *Producer) Send(ctx context.Context, key, value []byte) error {
-	log.Printf("produced to %s: key=%s val=%d bytes", p.topic, string(key), len(value))
+	slog.Debug("produced to topic", "topic", p.topic, "key", string(key), "bytes", len(value))
 	return nil
 }
 

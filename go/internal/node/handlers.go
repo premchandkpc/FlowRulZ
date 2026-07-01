@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"time"
+
+	pkgpartition "github.com/premchandkpc/FlowRulZ/go/pkg/partition"
 )
 
 func (n *ProdNode) registerHandlers(mux *http.ServeMux) {
@@ -80,7 +82,7 @@ func (n *ProdNode) handleListExecutions(w http.ResponseWriter, r *http.Request) 
 
 func (n *ProdNode) handleListPartitions(w http.ResponseWriter, r *http.Request) {
 	assignments := n.Partitions.Assignments()
-	nodeParts := make(map[string][]uint32)
+	nodeParts := make(map[string][]pkgpartition.PartitionID)
 	for _, nodeID := range n.Membership.AliveNodes() {
 		nodeParts[nodeID] = n.Partitions.PartitionsForNode(nodeID)
 	}

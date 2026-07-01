@@ -51,7 +51,7 @@ type Store interface {
 	Create(ctx context.Context, s *State) error
 	Save(ctx context.Context, s *State) error
 	Load(ctx context.Context, id string) (*State, error)
-	List(ctx context.Context, statuses ...Status) ([]*State, error)
+	ListByStatus(ctx context.Context, statuses ...Status) ([]*State, error)
 	Delete(ctx context.Context, id string) error
 	Close() error
 }

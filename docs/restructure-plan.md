@@ -1,5 +1,7 @@
 # FlowRulZ Go Architecture — SOLID Restructure
 
+> **Status:** Phase 1 complete. Phase 2 (interface extraction) complete — 13 packages in `go/pkg/`. Phase 3a (adapter layer) complete — 6 `pkgsupport.go` files implementing `pkg/` interfaces from `internal/` types, all with compile-time assertions. Phase 3b (ProdNode DI wiring) partial — `Dependencies` struct + `NewNode(cfg, deps)` + `DefaultDependencies()` created, 5 fields migrated to `pkg/` interfaces, 8+ fields remain concrete. Next: migrate `execnode/execnode.go` and `admin/api.go` to interfaces, create `pkg/transport` interfaces.
+
 ## Package Dependency Hierarchy (top→bottom)
 
 ```
@@ -1213,150 +1215,69 @@ func main() {
 
 ---
 
-## Full File Tree After Restructuring
+## Actual Current File Tree
 
 ```
 go/
-├── pkg/                                    # Interfaces + domain types (zero impls)
-│   ├── node/
-│   │   ├── node.go                         # Node interface
-│   │   ├── types.go                        # ExecuteRequest, ExecuteResponse
-│   │   └── errors.go                       # NodeError, ErrNotLeader, etc.
-│   ├── transport/
-│   │   ├── interfaces.go                   # Publisher, Subscriber, Requester, etc.
-│   │   ├── types.go                        # Message, MessageType, MessageHandler
-│   │   └── errors.go                       # TransportError
-│   ├── cluster/
-│   │   ├── cluster.go                      # ClusterMember interface
-│   │   ├── gossiper.go                     # Gossiper interface
-│   │   └── types.go                        # MemberID, MemberInfo, ClusterState
-│   ├── scheduler/
-│   │   ├── scheduler.go                    # Scheduler interface
-│   │   ├── types.go                        # ExecutionContext, Plan, Result, State
-│   │   ├── lane.go                         # Lane enum + configs
-│   │   └── errors.go                       # ErrQueueFull, ErrStopped
-│   ├── store/
-│   │   ├── store.go                        # Store interface
-│   │   └── types.go                        # ExecutionRecord, ExecutionID
-│   ├── vm/
-│   │   ├── compiler.go                     # PlanCompiler interface
-│   │   ├── runner.go                       # VMRunner interface
-│   │   └── types.go                        # CompileResult, StepResult, StepCode
-│   ├── registry/
-│   │   ├── registry.go                     # Registry interface
-│   │   └── types.go                        # ServiceRegistration, ServiceInstance
-│   ├── plandist/
-│   │   ├── plandist.go                     # PlanDistributor interface
-│   │   ├── ack.go                          # Ack handling (separate concern)
-│   │   └── types.go                        # PlanMessage, AckMessage, QuorumProvider
-│   ├── membership/
-│   │   ├── membership.go                   # Membership interface
-│   │   └── types.go                        # NodeInfo
-│   ├── reliability/
-│   │   ├── circuitbreaker.go               # CircuitBreaker interface
-│   │   ├── ratelimiter.go                  # RateLimiter interface
-│   │   ├── dedup.go                        # Deduplicator interface
-│   │   ├── dlq.go                          # DLQ interface
-│   │   └── saga.go                         # SagaOrchestrator interface
-│   ├── replyrouter/
-│   │   └── replyrouter.go                  # ReplyRouter interface
-│   ├── partition/
-│   │   ├── partition.go                    # PartitionManager interface
-│   │   ├── rebalance.go                    # RebalanceNotifier interface
-│   │   └── types.go                        # Assignment, PartitionID
-│   └── engine/
-│       ├── engine.go                       # Engine interface
-│       └── types.go                        # Rule, ExecuteOptions
+├── pkg/                                          # Interfaces + domain types (no impls)
+│   ├── cluster/cluster.go, gossiper.go, types.go
+│   ├── engine/engine.go, types.go
+│   ├── membership/membership.go, types.go
+│   ├── node/node.go, types.go, errors.go
+│   ├── partition/partition.go, rebalance.go, types.go
+│   ├── plandist/plandist.go, types.go
+│   ├── registry/registry.go, types.go
+│   ├── reliability/circuitbreaker.go, ratelimiter.go, dedup.go, dlq.go, saga.go
+│   ├── replyrouter/replyrouter.go
+│   ├── scheduler/scheduler.go, types.go, lane.go, errors.go
+│   ├── store/store.go, types.go
+│   ├── transport/interfaces.go, types.go, errors.go, eventbus.go
+│   └── vm/vm.go, types.go
 │
-├── internal/                                # Implementations
-│   ├── node/
-│   │   ├── prod.go                         # ProdNode struct (assembles deps)
-│   │   ├── http.go                         # HTTP server lifecycle
-│   │   ├── grpc.go                         # gRPC server lifecycle
-│   │   ├── handlers.go                     # Health, metrics, debug handlers
-│   │   ├── cluster.go                      # Cluster + membership wiring
-│   │   ├── factory.go                      # DefaultDependencies() for production
-│   │   └── config.go                       # NodeConfig struct
-│   ├── transport/
-│   │   ├── kafka/
-│   │   │   ├── producer.go                 # Kafka producer
-│   │   │   └── consumer.go                 # Kafka consumer
-│   │   ├── memory/
-│   │   │   └── bus.go                      # In-memory FullEventBus
-│   │   └── grpc/
-│   │       ├── bus.go                      # gRPC server-side bus
-│   │       └── client.go                   # gRPC client
-│   ├── scheduler/
-│   │   ├── prod.go                         # ProdScheduler struct
-│   │   ├── lane.go                         # Priority lanes impl
-│   │   └── worker.go                       # Worker goroutine pool
-│   ├── cluster/
-│   │   ├── raft.go                         # RaftCluster impl
-│   │   ├── gossiper.go                     # Gossiper impl
-│   │   └── fsm.go                          # Raft FSM
-│   ├── store/
-│   │   └── filestore.go                    # FileStore impl
-│   ├── registry/
-│   │   ├── registry.go                     # Prod registry impl
-│   │   ├── lookup.go                       # Lookup strategies
-│   │   ├── health.go                       # Health checking
-│   │   └── http.go                         # HTTP handlers for registry
-│   ├── plandist/
-│   │   └── distributor.go                  # PlanDistributor impl
-│   ├── membership/
-│   │   └── membership.go                   # Membership impl
-│   ├── partition/
-│   │   ├── manager.go                      # PartitionManager impl
-│   │   └── rebalance.go                    # RebalanceNotifier impl
-│   ├── reliability/
-│   │   ├── circuitbreaker.go               # CircuitBreaker impl
-│   │   ├── ratelimiter.go                  # RateLimiter impl
-│   │   ├── dedup.go                        # Deduplicator impl
-│   │   ├── dlq.go                          # DLQ impl
-│   │   └── saga.go                         # SagaOrchestrator impl
-│   ├── replyrouter/
-│   │   └── router.go                       # ReplyRouter impl
-│   ├── engine/
-│   │   └── engine.go                       # Engine impl
-│   ├── admin/
-│   │   └── api.go                          # Reusable AdminAPI (mountable on any server)
-│   └── observability/
-│       └── metrics.go                      # Metrics collector
+├── internal/                                      # Implementations
+│   ├── admin/api.go, service.go
+│   ├── cluster/node.go, raft.go, gossip.go, transport.go
+│   ├── compiler/compiler.go
+│   ├── engine/engine.go, persistence.go
+│   ├── execnode/              # Legacy node — 11 files
+│   ├── execstate/             # Execution file store
+│   ├── flow/flow.go
+│   ├── logger/logger.go
+│   ├── membership/membership.go, lease.go
+│   ├── node/                  # ProdNode DI assembler — 10 files
+│   │   ├── prod.go, config.go, lifecylce.go
+│   │   ├── grpc.go, cluster.go, http.go
+│   │   ├── handlers.go, messages.go, recovery.go
+│   │   └── exec_registry.go, execute_plan.go
+│   ├── observability/metrics.go, tracer.go
+│   ├── partition/manager.go, rebalance.go
+│   ├── plandist/distributor.go, ack.go
+│   ├── plugins/loader.go
+│   ├── registry/registry.go, lookup.go, health.go, http.go
+│   ├── reliability/circuitbreaker.go, ratelimit.go, dedup.go, dlq.go, saga.go
+│   ├── replyrouter/router.go
+│   ├── scheduler/prod.go, lane.go, worker.go
+│   └── transport/
+│       ├── producer.go, consumer.go, types.go
+│       ├── kafka/config.go, consumer.go, producer.go
+│       ├── grpc/bus.go, client.go, *.pb.go
+│       └── memory/bus.go
 │
-├── bridge/
-│   ├── bridge.go                           # CGo declarations
-│   ├── vm.go                               # BridgeVM (implements vm.PlanCompiler + vm.VMRunner)
-│   ├── compile.go                          # Compile helper
-│   ├── execute.go                          # Execute helper
-│   ├── plan.go                             # Plan serialization
-│   └── memory.go                           # C memory management
+├── bridge/                                         # CGo (FlowRulZ C core)
+│   ├── bridge.go, caller_bridge.c                  # CGo declarations
+│   ├── vm_adapter.go                               # BridgeVM adapter
+│   ├── compile.go, execute.go, plan.go, memory.go  # helpers
+│   └── bridge_test.go
 │
 ├── cmd/
-│   ├── flowrulz/
-│   │   └── main.go                         # Production entrypoint
-│   └── flowrulz-compiler/
-│       └── main.go                         # Standalone compiler service
+│   ├── flowrulz/main.go
+│   └── flowrulz-compiler/main.go
 │
-└── flow/
-    └── flow.go                             # Client SDK
+└── flow/client.go                                   # Client SDK
 
-simulator/
-├── simulator.go                             # Simulator struct (wraps node.Node + simulation deps)
-├── cmd/simulator/
-│   └── main.go                              # Simulator entrypoint (uses memory deps, not Kafka)
-├── scheduler/
-│   ├── sim.go                               # Simulator scheduler impl
-│   └── events.go                            # Event execution loop
-├── dashboard/
-│   ├── dashboard.go                         # Dashboard struct + lifecycle
-│   ├── handlers.go                          # API handlers
-│   └── embed.go                             # //go:embed templates/*
-├── eventbus/
-│   └── bus.go                               # Simulator event bus (wraps memory.Bus + extra)
-├── ...                                      # Most sub-packages unchanged
-└── mock/
-    └── vm.go                                # MockVM (no CGo dependency!)
-```
+simulator/ (unchanged external project)
+
+> **Completed restructuring** (Phase 2-3): All file renames done (`raft_cluster.go→raft.go`, `plan.go→distributor.go`, `scheduler.go→prod.go`, `timerwheel.go→worker.go`, `server.go→api.go`). Kafka moved to subdirectory (`kafka/producer.go+consumer.go+config.go`). Node package expanded to 10 files (grpc.go+cluster.go extracted). Phase 3a: 6 adapter files (`pkgsupport.go`) in `internal/{execstate,scheduler,registry,cluster,engine,reliability}/`. Phase 3b: `Dependencies` struct + `NewNode(cfg,deps)` + `DefaultDependencies()` in `internal/node/`. Remaining: migrate `execnode/execnode.go` and `admin/api.go` to DI pattern, switch remaining 8+ concrete ProdNode fields to interfaces, create `pkg/transport` interfaces.
 
 ---
 

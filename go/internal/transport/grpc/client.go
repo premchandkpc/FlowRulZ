@@ -12,6 +12,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+var _ transport.EventBus = (*GRPCClient)(nil)
+
 type GRPCClient struct {
 	addr   string
 	conn   *grpc.ClientConn

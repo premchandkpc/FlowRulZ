@@ -11,6 +11,7 @@ import (
 
 	"github.com/premchandkpc/FlowRulZ/go/internal/cluster"
 	"github.com/premchandkpc/FlowRulZ/go/internal/transport"
+	kafkatransport "github.com/premchandkpc/FlowRulZ/go/internal/transport/kafka"
 )
 
 func (en *ExecutionNode) IsLeader() bool {
@@ -54,9 +55,9 @@ func (en *ExecutionNode) nextDeployTerm() uint64 {
 	return en.PlanDist.CurrentTerm() + 1
 }
 
-func (en *ExecutionNode) mkProducer(topic string, kc transport.KafkaConfig) transport.MessageProducer {
+func (en *ExecutionNode) mkProducer(topic string, kc kafkatransport.Config) transport.MessageProducer {
 	if len(kc.Brokers) > 0 {
-		p := transport.NewKafkaProducer(topic, kc)
+		p := kafkatransport.NewProducer(topic, kc)
 		en.mu.Lock()
 		en.producers = append(en.producers, p)
 		en.mu.Unlock()
@@ -68,9 +69,9 @@ func (en *ExecutionNode) mkProducer(topic string, kc transport.KafkaConfig) tran
 	return transport.NewProducer(topic)
 }
 
-func (en *ExecutionNode) mkConsumer(topic string, handler transport.MessageHandler, kc transport.KafkaConfig) transport.MessageConsumer {
+func (en *ExecutionNode) mkConsumer(topic string, handler transport.MessageHandler, kc kafkatransport.Config) transport.MessageConsumer {
 	if len(kc.Brokers) > 0 {
-		return transport.NewKafkaConsumer(topic, handler, kc)
+		return kafkatransport.NewConsumer(topic, handler, kc)
 	}
 	if en.ClusterNode != nil {
 		return cluster.NewClusterConsumer(topic, handler, en.ClusterNode)

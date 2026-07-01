@@ -1,10 +1,7 @@
 package node
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
 	"log/slog"
 	"time"
 
@@ -12,6 +9,7 @@ import (
 	"github.com/premchandkpc/FlowRulZ/go/internal/partition"
 	"github.com/premchandkpc/FlowRulZ/go/internal/plandist"
 	"github.com/premchandkpc/FlowRulZ/go/internal/transport"
+	kafkatransport "github.com/premchandkpc/FlowRulZ/go/internal/transport/kafka"
 )
 
 const DefaultMembersTopic = "_flowrulz_members"
@@ -21,53 +19,7 @@ type NodeDiscoveryMessage struct {
 	Address string `json:"address"`
 }
 
-func (n *ProdNode) startCluster(ctx context.Context) {
-	if n.ClusterNode == nil {
-		return
-	}
-
-	if err := n.ClusterNode.Start(); err != nil {
-		slog.Error("cluster: start error", "error", err)
-	}
-
-	n.ClusterNode.Gossiper().OnNodeJoin(func(nodeID, address string) {
-		n.Membership.Heartbeat(nodeID, address)
-		if address != "" && nodeID != n.nodeID {
-			if err := n.ClusterNode.AddPeer(nodeID, address); err != nil {
-				slog.Debug("cluster: auto-add peer from gossip", "peer", nodeID, "addr", address, "error", err)
-			}
-		}
-	})
-
-	go func() {
-		ticker := time.NewTicker(3 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				discMsg, _ := json.Marshal(NodeDiscoveryMessage{
-					NodeID:  n.nodeID,
-					Address: n.config.GRPCAddr,
-				})
-				n.ClusterNode.Publish(DefaultMembersTopic, n.nodeID, discMsg)
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-
-	for _, seedAddr := range n.config.Seeds {
-		if seedAddr == n.config.GRPCAddr {
-			continue
-		}
-		seedID := fmt.Sprintf("seed-%s", seedAddr)
-		if err := n.ClusterNode.AddPeer(seedID, seedAddr); err != nil {
-			slog.Error("cluster: connect to seed", "seed_addr", seedAddr, "error", err)
-		}
-	}
-}
-
-func (n *ProdNode) startConsumers(ctx context.Context, handler transport.MessageHandler, kc transport.KafkaConfig) {
+func (n *ProdNode) startConsumers(ctx context.Context, handler transport.MessageHandler, kc kafkatransport.Config) {
 	inputConsumer := n.makeConsumer(n.config.Topic, handler, kc)
 	membersConsumer := n.makeConsumer(DefaultMembersTopic, n.handleNodeDiscoveryMessage, kc)
 	planConsumer := n.makeConsumer(plandist.DefaultPlanTopic, n.handlePlanMessage, kc)
@@ -131,18 +83,9 @@ func (n *ProdNode) startSubsystems(ctx context.Context) {
 	}
 
 	n.Scheduler.Start(ctx)
-	n.ReplyRouter.StartCleanup()
+	n.ReplyRouter.StartCleanup(ctx)
 	n.Dedup.StartCleanup(ctx, 30*time.Second)
 	n.recoverInFlight(ctx)
-}
-
-func (n *ProdNode) startGRPC() {
-	if n.GRPCBus == nil {
-		return
-	}
-	if err := n.GRPCBus.Start(); err != nil {
-		slog.Error("grpc: start error", "error", err)
-	}
 }
 
 func (n *ProdNode) startOTel(ctx context.Context) {
@@ -172,13 +115,6 @@ func (n *ProdNode) handleEnginePromote(id string, version uint64) {
 	go n.distributeActivate(id, version)
 }
 
-func (n *ProdNode) nextDeployTerm() uint64 {
-	if n.RaftCluster != nil {
-		return n.RaftCluster.CurrentTerm()
-	}
-	return n.PlanDist.CurrentTerm() + 1
-}
-
 func (n *ProdNode) distributePlan(id, dsl string, plan []byte, version uint64) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -206,36 +142,4 @@ func (n *ProdNode) distributeActivate(id string, version uint64) {
 	}
 }
 
-func (n *ProdNode) joinRaftCluster(ctx context.Context) {
-	raftAddr := fmt.Sprintf("localhost:%d", n.config.RaftPort)
-	body, _ := json.Marshal(map[string]string{
-		"node_id":   n.nodeID,
-		"raft_addr": raftAddr,
-	})
 
-	for _, seed := range n.config.Seeds {
-		seedURL := fmt.Sprintf("http://%s/cluster/join", seed)
-		for i := 0; i < 30; i++ {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-
-			resp, err := n.httpClient.Post(seedURL, "application/json", bytes.NewReader(body))
-			if err != nil {
-				slog.Warn("raft join: attempt failed", "attempt", i+1, "seed_url", seedURL, "error", err)
-				time.Sleep(2 * time.Second)
-				continue
-			}
-			resp.Body.Close()
-			if resp.StatusCode == 200 {
-				slog.Info("raft join: successfully joined cluster", "seed_url", seedURL)
-				return
-			}
-			slog.Warn("raft join: attempt got non-200", "attempt", i+1, "seed_url", seedURL, "status_code", resp.StatusCode)
-			time.Sleep(2 * time.Second)
-		}
-	}
-	slog.Error("raft join: failed to join cluster after 30 attempts")
-}

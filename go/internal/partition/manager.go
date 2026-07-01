@@ -9,20 +9,17 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/premchandkpc/FlowRulZ/go/internal/transport"
+	pkgpartition "github.com/premchandkpc/FlowRulZ/go/pkg/partition"
 )
+
+var _ pkgpartition.PartitionManager = (*Manager)(nil)
 
 const (
 	DefaultNumPartitions = 64
 	PartitionTopic       = "_flowrulz_partitions"
 )
 
-type Assignment struct {
-	NodeID    string `json:"node_id"`
-	Address   string `json:"address,omitempty"`
-	Partition uint32 `json:"partition"`
-	Term      uint64 `json:"term"`
-}
+type Assignment = pkgpartition.Assignment
 
 type PartitionMessage struct {
 	Type        string       `json:"type"`
@@ -35,9 +32,9 @@ type Manager struct {
 	mu            sync.RWMutex
 	numPartitions uint32
 	assignments   []string
-	nodeParts     map[string][]uint32
+	nodeParts     map[string][]pkgpartition.PartitionID
 	currentTerm   uint64
-	producer      transport.MessageProducer
+	producer      pkgpartition.Producer
 	leaderID      string
 }
 
@@ -48,11 +45,11 @@ func New(numPartitions uint32) *Manager {
 	return &Manager{
 		numPartitions: numPartitions,
 		assignments:   make([]string, numPartitions),
-		nodeParts:     make(map[string][]uint32),
+		nodeParts:     make(map[string][]pkgpartition.PartitionID),
 	}
 }
 
-func (m *Manager) SetProducer(p transport.MessageProducer) {
+func (m *Manager) SetProducer(p pkgpartition.Producer) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.producer = p
@@ -66,27 +63,27 @@ func (m *Manager) Assignments() []string {
 	return out
 }
 
-func (m *Manager) NodeForPartition(partition uint32) string {
+func (m *Manager) NodeForPartition(partition pkgpartition.PartitionID) string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if int(partition) >= len(m.assignments) {
 		return ""
 	}
-	return m.assignments[partition]
+	return m.assignments[int(partition)]
 }
 
-func (m *Manager) PartitionsForNode(nodeID string) []uint32 {
+func (m *Manager) PartitionsForNode(nodeID string) []pkgpartition.PartitionID {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	out := make([]uint32, len(m.nodeParts[nodeID]))
+	out := make([]pkgpartition.PartitionID, len(m.nodeParts[nodeID]))
 	copy(out, m.nodeParts[nodeID])
 	return out
 }
 
-func (m *Manager) PartitionForKey(key string) uint32 {
+func (m *Manager) PartitionForKey(key string) pkgpartition.PartitionID {
 	h := fnv.New32a()
 	h.Write([]byte(key))
-	return h.Sum32() % m.numPartitions
+	return pkgpartition.PartitionID(h.Sum32() % m.numPartitions)
 }
 
 func (m *Manager) NumPartitions() uint32 {
@@ -107,7 +104,7 @@ func (m *Manager) Rebalance(aliveNodes []string, term uint64) []Assignment {
 	m.currentTerm = term
 
 	newAssignments := make([]string, m.numPartitions)
-	nodeParts := make(map[string][]uint32)
+	nodeParts := make(map[string][]pkgpartition.PartitionID)
 
 	if len(aliveNodes) == 0 {
 		m.assignments = newAssignments
@@ -115,9 +112,9 @@ func (m *Manager) Rebalance(aliveNodes []string, term uint64) []Assignment {
 		return nil
 	}
 
-	for i := uint32(0); i < m.numPartitions; i++ {
+	for i := pkgpartition.PartitionID(0); i < pkgpartition.PartitionID(m.numPartitions); i++ {
 		node := aliveNodes[int(i)%len(aliveNodes)]
-		newAssignments[i] = node
+		newAssignments[int(i)] = node
 		nodeParts[node] = append(nodeParts[node], i)
 	}
 
@@ -132,7 +129,7 @@ func (m *Manager) Rebalance(aliveNodes []string, term uint64) []Assignment {
 	for i, nodeID := range m.assignments {
 		assignments[i] = Assignment{
 			NodeID:    nodeID,
-			Partition: uint32(i),
+			Partition: pkgpartition.PartitionID(i),
 			Term:      term,
 		}
 	}
@@ -145,11 +142,11 @@ func (m *Manager) ApplyAssignments(assignments []Assignment) {
 	defer m.mu.Unlock()
 
 	newAssignments := make([]string, m.numPartitions)
-	nodeParts := make(map[string][]uint32)
+	nodeParts := make(map[string][]pkgpartition.PartitionID)
 
 	for _, a := range assignments {
 		if int(a.Partition) < len(newAssignments) {
-			newAssignments[a.Partition] = a.NodeID
+			newAssignments[int(a.Partition)] = a.NodeID
 			nodeParts[a.NodeID] = append(nodeParts[a.NodeID], a.Partition)
 		}
 		if a.Term > m.currentTerm {

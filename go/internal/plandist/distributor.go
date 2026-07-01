@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/premchandkpc/FlowRulZ/go/internal/transport"
+
+	pkgplandist "github.com/premchandkpc/FlowRulZ/go/pkg/plandist"
 )
 
 const (
@@ -18,15 +20,9 @@ const (
 	defaultAckTimeout = 10 * time.Second
 )
 
-type PlanMessage struct {
-	Type    string `json:"type"`
-	RuleID  string `json:"rule_id"`
-	Version uint64 `json:"version"`
-	Term    uint64 `json:"term"`
-	Plan    []byte `json:"plan,omitempty"`
-	DSL     string `json:"dsl,omitempty"`
-	NodeID  string `json:"node_id,omitempty"`
-}
+var _ pkgplandist.PlanDistributor = (*PlanDistributor)(nil)
+
+type PlanMessage = pkgplandist.PlanMessage
 
 type PlanHandler func(ctx context.Context, msg PlanMessage) error
 
@@ -107,11 +103,11 @@ func WithClusterTerm(term uint64) Option {
 	return func(pd *PlanDistributor) { pd.clusterTerm.Store(term) }
 }
 
-func (pd *PlanDistributor) Start(ctx context.Context) {
+func (pd *PlanDistributor) Start(ctx context.Context) error {
 	pd.mu.Lock()
 	if pd.started {
 		pd.mu.Unlock()
-		return
+		return nil
 	}
 	pd.started = true
 	pd.mu.Unlock()
@@ -124,13 +120,14 @@ func (pd *PlanDistributor) Start(ctx context.Context) {
 	}
 
 	log.Printf("plandist: node=%s started", pd.nodeID)
+	return nil
 }
 
-func (pd *PlanDistributor) Stop() {
+func (pd *PlanDistributor) Stop() error {
 	pd.mu.Lock()
 	defer pd.mu.Unlock()
 	if !pd.started {
-		return
+		return nil
 	}
 	close(pd.stopCh)
 	if pd.planConsumer != nil {
@@ -146,6 +143,7 @@ func (pd *PlanDistributor) Stop() {
 		pd.ackProducer.Close()
 	}
 	pd.started = false
+	return nil
 }
 
 func (pd *PlanDistributor) SetTerm(term uint64) {
@@ -160,8 +158,38 @@ func (pd *PlanDistributor) PublishPlan(ctx context.Context, ruleID string, versi
 	if pd.planProducer == nil {
 		return fmt.Errorf("plandist: no plan producer configured")
 	}
+	return pd.publishMessage(ctx, "plan", ruleID, version, plan, dsl)
+}
+
+func (pd *PlanDistributor) ActivatePlan(ctx context.Context, ruleID string, version uint64) error {
+	if pd.planProducer == nil {
+		return fmt.Errorf("plandist: no plan producer configured")
+	}
+	return pd.publishMessage(ctx, "activate", ruleID, version, nil, "")
+}
+
+func (pd *PlanDistributor) DeactivatePlan(ctx context.Context, ruleID string) error {
+	if pd.planProducer == nil {
+		return fmt.Errorf("plandist: no plan producer configured")
+	}
+	return pd.publishMessage(ctx, "deactivate", ruleID, 0, nil, "")
+}
+
+func (pd *PlanDistributor) OnPlan(fn func(ctx context.Context, msg PlanMessage) error) {
+	pd.mu.Lock()
+	defer pd.mu.Unlock()
+	pd.planHandler = fn
+}
+
+func (pd *PlanDistributor) OnAck(fn func(ctx context.Context, msg AckMessage)) {
+	pd.mu.Lock()
+	defer pd.mu.Unlock()
+	pd.ackHandler = fn
+}
+
+func (pd *PlanDistributor) publishMessage(ctx context.Context, msgType, ruleID string, version uint64, plan []byte, dsl string) error {
 	msg := PlanMessage{
-		Type:    "plan",
+		Type:    msgType,
 		RuleID:  ruleID,
 		Version: version,
 		Term:    pd.clusterTerm.Load(),
@@ -171,25 +199,7 @@ func (pd *PlanDistributor) PublishPlan(ctx context.Context, ruleID string, versi
 	}
 	data, err := json.Marshal(msg)
 	if err != nil {
-		return fmt.Errorf("plandist marshal plan: %w", err)
-	}
-	return pd.planProducer.Send(ctx, []byte(ruleID), data)
-}
-
-func (pd *PlanDistributor) ActivatePlan(ctx context.Context, ruleID string, version uint64) error {
-	if pd.planProducer == nil {
-		return fmt.Errorf("plandist: no plan producer configured")
-	}
-	msg := PlanMessage{
-		Type:    "activate",
-		RuleID:  ruleID,
-		Version: version,
-		Term:    pd.clusterTerm.Load(),
-		NodeID:  pd.nodeID,
-	}
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return fmt.Errorf("plandist marshal activate: %w", err)
+		return fmt.Errorf("plandist marshal %s: %w", msgType, err)
 	}
 	return pd.planProducer.Send(ctx, []byte(ruleID), data)
 }

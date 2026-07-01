@@ -1,5 +1,13 @@
 package scheduler
 
+type Lane int
+
+const (
+	LaneFast   Lane = iota
+	LaneNormal
+	LaneHeavy
+)
+
 type LaneConfig struct {
 	Lane        Lane
 	Concurrency int

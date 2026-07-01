@@ -25,6 +25,7 @@ import (
 	"github.com/premchandkpc/FlowRulZ/go/internal/scheduler"
 	"github.com/premchandkpc/FlowRulZ/go/internal/transport"
 	grpctransport "github.com/premchandkpc/FlowRulZ/go/internal/transport/grpc"
+	kafkatransport "github.com/premchandkpc/FlowRulZ/go/internal/transport/kafka"
 )
 
 const (
@@ -154,10 +155,10 @@ func New(cfg *Config) *ExecutionNode {
 		en.ClusterNode = cluster.NewClusterNode(nodeID, grpcAddr)
 	}
 
-	kafkaCfg := transport.KafkaConfig{
+	kafkaCfg := kafkatransport.Config{
 		Brokers:    cfg.KafkaBrokers,
 		GroupID:    cfg.KafkaGroupID,
-		Acks:       transport.AcksLevelFromString(cfg.KafkaAcks),
+		Acks:       kafkatransport.AcksLevelFromString(cfg.KafkaAcks),
 		Idempotent: cfg.KafkaIdempotent,
 	}
 

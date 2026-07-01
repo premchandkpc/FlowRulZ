@@ -5,7 +5,11 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+
+	pkgpartition "github.com/premchandkpc/FlowRulZ/go/pkg/partition"
 )
+
+var _ pkgpartition.RebalanceNotifier = (*RebalanceNotifier)(nil)
 
 type RebalanceNotifier struct {
 	manager   *Manager

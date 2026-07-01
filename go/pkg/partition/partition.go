@@ -5,15 +5,6 @@ import (
 	"errors"
 )
 
-type PartitionID uint32
-
-type Assignment struct {
-	NodeID    string
-	Address   string
-	Partition PartitionID
-	Term      uint64
-}
-
 type PartitionManager interface {
 	NumPartitions() uint32
 	NodeForPartition(partition PartitionID) string
@@ -29,16 +20,7 @@ type PartitionManager interface {
 	SetProducer(p Producer)
 }
 
-type Producer interface {
-	Send(ctx context.Context, key []byte, msg []byte) error
-}
-
-type RebalanceNotifier interface {
-	SetNotify(fn func())
-	CheckAndRebalance() bool
-}
-
 var (
-	ErrNoProducer = errors.New("no partition producer configured")
+	ErrNoProducer       = errors.New("no partition producer configured")
 	ErrInvalidPartition = errors.New("invalid partition")
 )

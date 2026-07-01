@@ -6,23 +6,6 @@ import (
 	"time"
 )
 
-type PlanMessage struct {
-	Type    string
-	RuleID  string
-	Version uint64
-	Term    uint64
-	Plan    []byte
-	DSL     string
-	NodeID  string
-}
-
-type AckMessage struct {
-	NodeID  string
-	RuleID  string
-	Version uint64
-	Status  string
-}
-
 type PlanDistributor interface {
 	Start(ctx context.Context) error
 	Stop() error
@@ -37,12 +20,8 @@ type PlanDistributor interface {
 	OnAck(fn func(ctx context.Context, msg AckMessage))
 }
 
-type QuorumProvider interface {
-	AliveCount() int
-}
-
 var (
-	ErrNoPlanProducer = errors.New("no plan producer configured")
-	ErrAckTimeout     = errors.New("ack wait timed out")
+	ErrNoPlanProducer  = errors.New("no plan producer configured")
+	ErrAckTimeout      = errors.New("ack wait timed out")
 	ErrInsufficientAcks = errors.New("insufficient acks")
 )

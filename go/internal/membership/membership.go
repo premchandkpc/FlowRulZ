@@ -4,6 +4,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	pkgmembership "github.com/premchandkpc/FlowRulZ/go/pkg/membership"
 )
 
 const (
@@ -12,18 +14,13 @@ const (
 	DefaultLeaderLease       = 8 * time.Second
 )
 
-type NodeInfo struct {
-	ID       string
-	Address  string
-	IsAlive  bool
-	LastSeen time.Time
-}
+var _ pkgmembership.Membership = (*Membership)(nil)
 
 type LeaseCallback func(leaderID string)
 
 type Membership struct {
 	mu               sync.RWMutex
-	nodes            map[string]*NodeInfo
+	nodes            map[string]*pkgmembership.NodeInfo
 	heartbeatTimeout time.Duration
 	leaderLease      time.Duration
 	leaseCallback    LeaseCallback
@@ -31,7 +28,7 @@ type Membership struct {
 
 func New() *Membership {
 	return &Membership{
-		nodes:            make(map[string]*NodeInfo),
+		nodes: make(map[string]*pkgmembership.NodeInfo),
 		heartbeatTimeout: DefaultHeartbeatTimeout,
 		leaderLease:      DefaultLeaderLease,
 	}
@@ -43,16 +40,21 @@ func (m *Membership) SetLeaderLease(d time.Duration) {
 	m.leaderLease = d
 }
 
-func (m *Membership) OnLeaseExpiry(cb LeaseCallback) {
+func (m *Membership) OnLeaseExpiry(cb func(leaderID string)) pkgmembership.CancelFunc {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.leaseCallback = cb
+	return func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		m.leaseCallback = nil
+	}
 }
 
 func (m *Membership) Add(id, address string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.nodes[id] = &NodeInfo{
+	m.nodes[id] = &pkgmembership.NodeInfo{
 		ID:       id,
 		Address:  address,
 		IsAlive:  true,
@@ -94,7 +96,7 @@ func (m *Membership) Heartbeat(id, address string) {
 			n.Address = address
 		}
 	} else {
-		m.nodes[id] = &NodeInfo{
+		m.nodes[id] = &pkgmembership.NodeInfo{
 			ID:       id,
 			Address:  address,
 			IsAlive:  true,
@@ -146,17 +148,17 @@ func (m *Membership) leaderIDLocked() string {
 	return leader
 }
 
-func (m *Membership) Snapshot() []NodeInfo {
+func (m *Membership) Snapshot() []pkgmembership.NodeInfo {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	out := make([]NodeInfo, 0, len(m.nodes))
+	out := make([]pkgmembership.NodeInfo, 0, len(m.nodes))
 	for _, n := range m.nodes {
 		out = append(out, *n)
 	}
 	return out
 }
 
-func (m *Membership) Lookup(id string) *NodeInfo {
+func (m *Membership) Lookup(id string) *pkgmembership.NodeInfo {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	n, ok := m.nodes[id]

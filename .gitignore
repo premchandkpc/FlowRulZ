@@ -55,6 +55,10 @@ Thumbs.db
 .env
 .env.local
 
+# Skills CLI artifacts (global in ~/.config/opencode/skills/)
+.agents/
+skills-lock.json
+
 # Build
 flowrulz
 *.o

@@ -70,11 +70,11 @@ func New(lanes []LaneConfig) *Scheduler {
 	return s
 }
 
-func (s *Scheduler) Start(ctx context.Context) {
+func (s *Scheduler) Start(ctx context.Context) error {
 	s.mu.Lock()
 	if s.started {
 		s.mu.Unlock()
-		return
+		return nil
 	}
 	s.started = true
 	s.mu.Unlock()
@@ -84,22 +84,24 @@ func (s *Scheduler) Start(ctx context.Context) {
 	}
 
 	log.Printf("scheduler: started with %d lanes", len(s.lanes))
+	return nil
 }
 
-func (s *Scheduler) Stop() {
+func (s *Scheduler) Stop() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.started {
-		return
+		return nil
 	}
 	close(s.stopCh)
 	for _, l := range s.lanes {
 		l.wg.Wait()
 	}
 	s.started = false
+	return nil
 }
 
-func (s *Scheduler) Enqueue(task *Task) error {
+func (s *Scheduler) EnqueueTask(task *Task) error {
 	if task == nil {
 		return errors.New("scheduler: nil task")
 	}
@@ -128,7 +130,7 @@ func (s *Scheduler) Enqueue(task *Task) error {
 
 func (s *Scheduler) EnqueueAndWait(ctx context.Context, task *Task) ([]byte, error) {
 	task.ResultCh = make(chan TaskResult, 1)
-	if err := s.Enqueue(task); err != nil {
+	if err := s.EnqueueTask(task); err != nil {
 		return nil, err
 	}
 	select {

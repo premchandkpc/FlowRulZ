@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"golang.org/x/net/context"
+
+	pkgpartition "github.com/premchandkpc/FlowRulZ/go/pkg/partition"
 )
 
 func (en *ExecutionNode) registerHandlers(mux *http.ServeMux) {
@@ -84,7 +86,7 @@ func (en *ExecutionNode) handleListExecutions(w http.ResponseWriter, r *http.Req
 
 func (en *ExecutionNode) handleListPartitions(w http.ResponseWriter, r *http.Request) {
 	assignments := en.Partitions.Assignments()
-	nodeParts := make(map[string][]uint32)
+	nodeParts := make(map[string][]pkgpartition.PartitionID)
 	for _, n := range en.Membership.AliveNodes() {
 		nodeParts[n] = en.Partitions.PartitionsForNode(n)
 	}

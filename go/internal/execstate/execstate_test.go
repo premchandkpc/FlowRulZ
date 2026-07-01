@@ -61,7 +61,7 @@ func TestFileStoreList(t *testing.T) {
 		})
 	}
 
-	all, err := fs.List(context.Background())
+	all, err := fs.ListByStatus(context.Background(), StatusCreated, StatusRunning, StatusCompleted, StatusFailed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestFileStoreList(t *testing.T) {
 		t.Fatalf("expected 3, got %d", len(all))
 	}
 
-	running, err := fs.List(context.Background(), StatusRunning)
+	running, err := fs.ListByStatus(context.Background(), StatusRunning)
 	if err != nil {
 		t.Fatal(err)
 	}

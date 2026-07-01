@@ -3,25 +3,9 @@ package engine
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/premchandkpc/FlowRulZ/go/pkg/scheduler"
 )
-
-type Rule struct {
-	ID      string
-	DSL     string
-	Version uint64
-	Active  bool
-	Lane    scheduler.Lane
-}
-
-type ExecuteOptions struct {
-	Timeout       time.Duration
-	CorrelationID string
-	ReplyTo       string
-	Metadata      map[string]string
-}
 
 type Engine interface {
 	Start(ctx context.Context) error
@@ -36,6 +20,6 @@ type Engine interface {
 }
 
 var (
-	ErrRuleNotFound = errors.New("rule not found")
+	ErrRuleNotFound  = errors.New("rule not found")
 	ErrCompileFailed = errors.New("rule compilation failed")
 )

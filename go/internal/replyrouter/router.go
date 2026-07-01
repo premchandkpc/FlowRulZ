@@ -1,32 +1,34 @@
 package replyrouter
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"time"
+
+	pkgreplyrouter "github.com/premchandkpc/FlowRulZ/go/pkg/replyrouter"
+	"github.com/premchandkpc/FlowRulZ/go/pkg/transport"
 )
 
 var (
-	ErrPendingNotFound   = errors.New("replyrouter: pending request not found")
-	ErrPendingExpired    = errors.New("replyrouter: pending request expired")
-	ErrPendingLimit      = errors.New("replyrouter: max pending requests reached")
-	ErrDuplicateCorrID   = errors.New("replyrouter: duplicate correlation ID")
+	ErrPendingLimit    = errors.New("replyrouter: max pending requests reached")
+	ErrDuplicateCorrID = errors.New("replyrouter: duplicate correlation ID")
 )
+
+var _ pkgreplyrouter.ReplyRouter = (*ReplyRouter)(nil)
 
 type PendingRequest struct {
 	CorrelationID string
-	ReplyCh       chan []byte
+	ReplyCh       chan<- *transport.Message
 	Deadline      time.Time
-	CreatedAt     time.Time
-	SourceNode    string
 }
 
 type ReplyRouter struct {
-	mu           sync.RWMutex
-	pending      map[string]*PendingRequest
-	cleanupStop  chan struct{}
-	cleanupTick  time.Duration
-	maxPending   int
+	mu          sync.RWMutex
+	pending     map[string]*PendingRequest
+	cleanupStop chan struct{}
+	cleanupTick time.Duration
+	maxPending  int
 }
 
 type Option func(*ReplyRouter)
@@ -56,52 +58,63 @@ func New(opts ...Option) *ReplyRouter {
 	return rr
 }
 
-func (rr *ReplyRouter) Send(corrID string, timeout time.Duration) (<-chan []byte, error) {
-	if corrID == "" {
-		return nil, errors.New("replyrouter: empty correlation ID")
+func (rr *ReplyRouter) Register(ctx context.Context, correlationID string, ch chan<- *transport.Message, timeout time.Duration) error {
+	if correlationID == "" {
+		return errors.New("replyrouter: empty correlation ID")
 	}
 
 	deadline := time.Now().Add(timeout)
-	ch := make(chan []byte, 1)
 
 	rr.mu.Lock()
-	if _, exists := rr.pending[corrID]; exists {
-		rr.mu.Unlock()
-		return nil, ErrDuplicateCorrID
+	defer rr.mu.Unlock()
+
+	if _, exists := rr.pending[correlationID]; exists {
+		return ErrDuplicateCorrID
 	}
 	if rr.maxPending > 0 && len(rr.pending) >= rr.maxPending {
-		rr.mu.Unlock()
-		return nil, ErrPendingLimit
+		return ErrPendingLimit
 	}
 
-	rr.pending[corrID] = &PendingRequest{
-		CorrelationID: corrID,
+	rr.pending[correlationID] = &PendingRequest{
+		CorrelationID: correlationID,
 		ReplyCh:       ch,
 		Deadline:      deadline,
-		CreatedAt:     time.Now(),
 	}
-	rr.mu.Unlock()
-
-	return ch, nil
+	return nil
 }
 
-func (rr *ReplyRouter) Route(corrID string, response []byte) error {
+func (rr *ReplyRouter) Cancel(correlationID string) {
 	rr.mu.Lock()
-	pr, ok := rr.pending[corrID]
-	if !ok {
-		rr.mu.Unlock()
-		return ErrPendingNotFound
+	pr, ok := rr.pending[correlationID]
+	if ok {
+		delete(rr.pending, correlationID)
 	}
-	delete(rr.pending, corrID)
 	rr.mu.Unlock()
 
+	if ok {
+		close(pr.ReplyCh)
+	}
+}
+
+func (rr *ReplyRouter) Deliver(ctx context.Context, correlationID string, msg *transport.Message) bool {
+	rr.mu.Lock()
+	pr, ok := rr.pending[correlationID]
+	if ok {
+		delete(rr.pending, correlationID)
+	}
+	rr.mu.Unlock()
+
+	if !ok {
+		return false
+	}
+
 	select {
-	case pr.ReplyCh <- response:
+	case pr.ReplyCh <- msg:
 	default:
 	}
 
 	close(pr.ReplyCh)
-	return nil
+	return true
 }
 
 func (rr *ReplyRouter) PendingCount() int {
@@ -110,7 +123,7 @@ func (rr *ReplyRouter) PendingCount() int {
 	return len(rr.pending)
 }
 
-func (rr *ReplyRouter) StartCleanup() {
+func (rr *ReplyRouter) StartCleanup(ctx context.Context) {
 	go func() {
 		ticker := time.NewTicker(rr.cleanupTick)
 		defer ticker.Stop()

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/premchandkpc/FlowRulZ/go/internal/transport"
+	pkgpartition "github.com/premchandkpc/FlowRulZ/go/pkg/partition"
 )
 
 type mockProducer struct {
@@ -316,7 +317,7 @@ func TestPartitionOnLeaderChangeLeaderID(t *testing.T) {
 func TestPartitionKeyDistribution(t *testing.T) {
 	m := New(64)
 
-	partitions := make(map[uint32]int)
+	partitions := make(map[pkgpartition.PartitionID]int)
 	for i := 0; i < 1000; i++ {
 		key := string(rune(i))
 		p := m.PartitionForKey(key)

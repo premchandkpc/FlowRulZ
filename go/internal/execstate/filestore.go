@@ -55,7 +55,7 @@ func (fs *FileStore) Load(_ context.Context, id string) (*State, error) {
 	return fs.readLocked(fs.path(id))
 }
 
-func (fs *FileStore) List(_ context.Context, statuses ...Status) ([]*State, error) {
+func (fs *FileStore) ListByStatus(_ context.Context, statuses ...Status) ([]*State, error) {
 	fs.mu.RLock()
 	defer fs.mu.RUnlock()
 

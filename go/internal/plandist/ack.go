@@ -6,14 +6,11 @@ import (
 	"fmt"
 	"sync/atomic"
 	"time"
+
+	pkgplandist "github.com/premchandkpc/FlowRulZ/go/pkg/plandist"
 )
 
-type AckMessage struct {
-	NodeID  string `json:"node_id"`
-	RuleID  string `json:"rule_id"`
-	Version uint64 `json:"version"`
-	Status  string `json:"status"`
-}
+type AckMessage = pkgplandist.AckMessage
 
 type AckHandler func(ctx context.Context, msg AckMessage)
 

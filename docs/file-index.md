@@ -134,8 +134,8 @@ Core transport interfaces. `MessageHandler` func type, `MessageConsumer`/`Messag
 
 ---
 
-### `go/internal/transport/kafka.go`
-**Package:** `transport`
+### `go/internal/transport/kafka/` (3 files: config.go, consumer.go, producer.go)
+
 
 Legacy Kafka transport (Sarama-backed). Only active when `FLOWRULZ_KAFKA_BROKERS` is explicitly set. Default is Cluster Bus.
 
@@ -143,7 +143,7 @@ Legacy Kafka transport (Sarama-backed). Only active when `FLOWRULZ_KAFKA_BROKERS
 
 ---
 
-### `go/internal/transport/kafka_test.go`
+### `go/internal/transport/kafka_test.go` (legacy, test code moved into kafka/ as package-level tests)
 **Package:** `transport`
 
 Tests: `TestKafkaProducerSend`, `TestKafkaConsumerConsume`

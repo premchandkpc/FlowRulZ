@@ -15,7 +15,7 @@ import (
 	"github.com/premchandkpc/FlowRulZ/go/internal/membership"
 	"github.com/premchandkpc/FlowRulZ/go/internal/partition"
 	"github.com/premchandkpc/FlowRulZ/go/internal/plandist"
-	"github.com/premchandkpc/FlowRulZ/go/internal/transport"
+	kafkatransport "github.com/premchandkpc/FlowRulZ/go/internal/transport/kafka"
 )
 
 func (en *ExecutionNode) Start() {
@@ -66,10 +66,10 @@ func (en *ExecutionNode) Start() {
 		}
 	}
 
-	kafkaCfg := transport.KafkaConfig{
+	kafkaCfg := kafkatransport.Config{
 		Brokers:    en.config.KafkaBrokers,
 		GroupID:    en.config.KafkaGroupID,
-		Acks:       transport.AcksLevelFromString(en.config.KafkaAcks),
+		Acks:       kafkatransport.AcksLevelFromString(en.config.KafkaAcks),
 		Idempotent: en.config.KafkaIdempotent,
 	}
 	inputConsumer := en.mkConsumer(en.config.Topic, handler, kafkaCfg)
@@ -131,7 +131,7 @@ func (en *ExecutionNode) Start() {
 	}
 
 	en.Scheduler.Start(ctx)
-	en.ReplyRouter.StartCleanup()
+	en.ReplyRouter.StartCleanup(ctx)
 	en.Dedup.StartCleanup(ctx, 30*time.Second)
 
 	en.recoverInFlight(ctx)

@@ -42,7 +42,7 @@ The **Cluster Bus** (`go/internal/cluster/`) is a gRPC-based peer-to-peer overla
 - **Topics**: in-memory per-node routing tables — messages published to a topic are delivered to all subscribers across the cluster via gRPC streams
 - **No external deps**: no Kafka, no ZK, no Raft — pure gRPC p2p
 
-Kafka (`go/internal/transport/kafka.go`) remains as a legacy fallback when `FLOWRULZ_KAFKA_BROKERS` is explicitly set.
+Kafka (`go/internal/transport/kafka/`) remains as a legacy fallback when `FLOWRULZ_KAFKA_BROKERS` is explicitly set.
 
 ## Node Identity
 

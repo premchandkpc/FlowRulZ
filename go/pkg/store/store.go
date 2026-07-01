@@ -3,22 +3,7 @@ package store
 import (
 	"context"
 	"errors"
-	"time"
 )
-
-type ExecutionID string
-
-type ExecutionRecord struct {
-	ID          ExecutionID
-	PlanID      string
-	State       string
-	Body        []byte
-	Output      []byte
-	Error       string
-	CreatedAt   time.Time
-	CompletedAt time.Time
-	NodeID      string
-}
 
 type Store interface {
 	Create(ctx context.Context, record *ExecutionRecord) error

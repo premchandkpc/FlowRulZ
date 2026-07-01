@@ -6,7 +6,7 @@
 
 | File | Role |
 |------|------|
-| `go/internal/transport/kafka.go` | Sarama-backed Kafka consumer/producer |
+| `go/internal/transport/kafka/` | Sarama-backed Kafka consumer/producer (3 files) |
 | `go/internal/transport/transport.go` | `MessageConsumer`/`MessageProducer` interfaces |
 
 > **Note:** The following topics are also managed over the Cluster Bus in non-legacy mode:

@@ -3,10 +3,11 @@ package node
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
-	"math/rand"
 	"net/http"
 	"time"
 
@@ -15,7 +16,6 @@ import (
 	"github.com/premchandkpc/FlowRulZ/go/internal/execstate"
 	"github.com/premchandkpc/FlowRulZ/go/internal/observability"
 	"github.com/premchandkpc/FlowRulZ/go/internal/reliability"
-	"golang.org/x/net/context"
 )
 
 func (n *ProdNode) executePlan(ctx context.Context, plan []byte, body []byte) ([]byte, error) {
@@ -201,7 +201,7 @@ func (n *ProdNode) handleIncomingMessage(ctx context.Context, msg []byte) ([]byt
 	if _, err := rand.Read(msgID); err != nil {
 		return nil, fmt.Errorf("message id generation failed: %w", err)
 	}
-	msgIDStr := fmt.Sprintf("%x", msgID)
+	msgIDStr := hex.EncodeToString(msgID)
 
 	if n.Dedup.Seen(msgIDStr) {
 		observability.RecordExec("dedup_skipped")

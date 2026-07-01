@@ -23,7 +23,7 @@ func (en *ExecutionNode) recoverInFlight(ctx context.Context) {
 		return
 	}
 
-	inflight, err := en.StateStore.List(ctx, execstate.StatusRunning, execstate.StatusWaitingForService)
+	inflight, err := en.StateStore.ListByStatus(ctx, execstate.StatusRunning, execstate.StatusWaitingForService)
 	if err != nil {
 		slog.Error("recovery: list error", "error", err)
 		return

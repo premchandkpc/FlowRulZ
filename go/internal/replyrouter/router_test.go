@@ -1,34 +1,29 @@
 package replyrouter
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/premchandkpc/FlowRulZ/go/pkg/transport"
 )
 
-func TestSendAndRoute(t *testing.T) {
+func TestRegisterAndDeliver(t *testing.T) {
 	rr := New()
-	rr.StartCleanup()
+	rr.StartCleanup(context.Background())
 	defer rr.StopCleanup()
 
-	ch, err := rr.Send("corr-1", 5*time.Second)
+	ch := make(chan<- *transport.Message, 1)
+	err := rr.Register(context.Background(), "corr-1", ch, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	expected := []byte("hello")
-	err = rr.Route("corr-1", expected)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	select {
-	case resp := <-ch:
-		if string(resp) != string(expected) {
-			t.Fatalf("expected %s, got %s", expected, resp)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("timeout waiting for reply")
+	expected := &transport.Message{Body: []byte("hello")}
+	ok := rr.Deliver(context.Background(), "corr-1", expected)
+	if !ok {
+		t.Fatal("expected Deliver to return true")
 	}
 
 	if rr.PendingCount() != 0 {
@@ -36,34 +31,36 @@ func TestSendAndRoute(t *testing.T) {
 	}
 }
 
-func TestRouteNonExistent(t *testing.T) {
+func TestDeliverNonExistent(t *testing.T) {
 	rr := New()
-	err := rr.Route("nonexistent", []byte("data"))
-	if err != ErrPendingNotFound {
-		t.Fatalf("expected ErrPendingNotFound, got %v", err)
+	ok := rr.Deliver(context.Background(), "nonexistent", &transport.Message{Body: []byte("data")})
+	if ok {
+		t.Fatal("expected Deliver to return false for non-existent correlation ID")
 	}
 }
 
 func TestDuplicateCorrelationID(t *testing.T) {
 	rr := New()
 
-	_, err := rr.Send("corr-1", 5*time.Second)
+	ch := make(chan<- *transport.Message, 1)
+	err := rr.Register(context.Background(), "corr-1", ch, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = rr.Send("corr-1", 5*time.Second)
+	err = rr.Register(context.Background(), "corr-1", make(chan<- *transport.Message, 1), 5*time.Second)
 	if err != ErrDuplicateCorrID {
 		t.Fatalf("expected ErrDuplicateCorrID, got %v", err)
 	}
 }
 
 func TestExpiredCleanup(t *testing.T) {
-	rr := New(WithCleanupInterval(50 * time.Millisecond), WithMaxPending(100))
-	rr.StartCleanup()
+	rr := New(WithCleanupInterval(50*time.Millisecond), WithMaxPending(100))
+	rr.StartCleanup(context.Background())
 	defer rr.StopCleanup()
 
-	ch, err := rr.Send("corr-1", 10*time.Millisecond)
+	ch := make(chan *transport.Message, 1)
+	err := rr.Register(context.Background(), "corr-1", ch, 10*time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,20 +79,20 @@ func TestExpiredCleanup(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("timeout waiting for channel close")
 	}
-
 }
 
 func TestMaxPending(t *testing.T) {
 	rr := New(WithMaxPending(3))
 
+	ctx := context.Background()
 	for i := 0; i < 3; i++ {
-		_, err := rr.Send(string(rune('a'+i)), 5*time.Second)
+		err := rr.Register(ctx, string(rune('a'+i)), make(chan<- *transport.Message, 1), 5*time.Second)
 		if err != nil {
-			t.Fatalf("unexpected error on send %d: %v", i, err)
+			t.Fatalf("unexpected error on register %d: %v", i, err)
 		}
 	}
 
-	_, err := rr.Send("overflow", 5*time.Second)
+	err := rr.Register(ctx, "overflow", make(chan<- *transport.Message, 1), 5*time.Second)
 	if err != ErrPendingLimit {
 		t.Fatalf("expected ErrPendingLimit, got %v", err)
 	}
@@ -103,7 +100,7 @@ func TestMaxPending(t *testing.T) {
 
 func TestConcurrentAccess(t *testing.T) {
 	rr := New()
-	rr.StartCleanup()
+	rr.StartCleanup(context.Background())
 	defer rr.StopCleanup()
 
 	var wg sync.WaitGroup
@@ -114,7 +111,8 @@ func TestConcurrentAccess(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			corrID := string(rune('a' + idx%26))
-			ch, err := rr.Send(corrID, 100*time.Millisecond)
+			ch := make(chan *transport.Message, 1)
+			err := rr.Register(context.Background(), corrID, ch, 100*time.Millisecond)
 			if err != nil {
 				return
 			}
@@ -130,7 +128,7 @@ func TestConcurrentAccess(t *testing.T) {
 		defer wg.Done()
 		for i := 0; i < n; i++ {
 			corrID := string(rune('a' + i%26))
-			rr.Route(corrID, []byte("response"))
+			rr.Deliver(context.Background(), corrID, &transport.Message{Body: []byte("response")})
 		}
 	}()
 
@@ -139,7 +137,7 @@ func TestConcurrentAccess(t *testing.T) {
 
 func TestEmptyCorrelationID(t *testing.T) {
 	rr := New()
-	_, err := rr.Send("", 5*time.Second)
+	err := rr.Register(context.Background(), "", make(chan<- *transport.Message, 1), 5*time.Second)
 	if err == nil {
 		t.Fatal("expected error for empty correlation ID")
 	}
@@ -152,28 +150,57 @@ func TestPendingCount(t *testing.T) {
 		t.Fatalf("expected 0, got %d", rr.PendingCount())
 	}
 
-	rr.Send("corr-1", 5*time.Second)
+	rr.Register(context.Background(), "corr-1", make(chan<- *transport.Message, 1), 5*time.Second)
 	if rr.PendingCount() != 1 {
 		t.Fatalf("expected 1, got %d", rr.PendingCount())
 	}
 
-	rr.Route("corr-1", []byte("ok"))
+	rr.Deliver(context.Background(), "corr-1", &transport.Message{Body: []byte("ok")})
 	if rr.PendingCount() != 0 {
-		t.Fatalf("expected 0 after route, got %d", rr.PendingCount())
+		t.Fatalf("expected 0 after deliver, got %d", rr.PendingCount())
+	}
+}
+
+func TestCancel(t *testing.T) {
+	rr := New()
+
+	ch := make(chan *transport.Message, 1)
+	err := rr.Register(context.Background(), "corr-1", ch, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if rr.PendingCount() != 1 {
+		t.Fatalf("expected 1 pending, got %d", rr.PendingCount())
+	}
+
+	rr.Cancel("corr-1")
+	if rr.PendingCount() != 0 {
+		t.Fatalf("expected 0 after cancel, got %d", rr.PendingCount())
+	}
+
+	select {
+	case _, ok := <-ch:
+		if ok {
+			t.Fatal("expected closed channel after cancel")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for channel close")
 	}
 }
 
 func TestMultipleReplies(t *testing.T) {
 	rr := New()
 
-	ch, err := rr.Send("corr-1", 5*time.Second)
+	ch := make(chan *transport.Message, 1)
+	err := rr.Register(context.Background(), "corr-1", ch, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = rr.Route("corr-1", []byte("first"))
-	if err != nil {
-		t.Fatal(err)
+	ok := rr.Deliver(context.Background(), "corr-1", &transport.Message{Body: []byte("first")})
+	if !ok {
+		t.Fatal("expected Deliver to return true")
 	}
 
 	select {
@@ -181,8 +208,8 @@ func TestMultipleReplies(t *testing.T) {
 		if !ok {
 			t.Fatal("channel should be open for first read")
 		}
-		if string(resp) != "first" {
-			t.Fatalf("expected 'first', got %s", resp)
+		if string(resp.Body) != "first" {
+			t.Fatalf("expected 'first', got %s", resp.Body)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timeout")
@@ -191,7 +218,7 @@ func TestMultipleReplies(t *testing.T) {
 	select {
 	case _, ok := <-ch:
 		if ok {
-			t.Fatal("expected closed channel after route")
+			t.Fatal("expected closed channel after deliver")
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timeout waiting for close")

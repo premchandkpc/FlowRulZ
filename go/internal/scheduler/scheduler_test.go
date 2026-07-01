@@ -25,7 +25,7 @@ func TestEnqueueAndExecute(t *testing.T) {
 		},
 	}
 
-	err := s.Enqueue(task)
+	err := s.EnqueueTask(task)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,17 +84,17 @@ func TestPriorityOrdering(t *testing.T) {
 			return nil, nil
 		},
 	}
-	s.Enqueue(task)
+	s.EnqueueTask(task)
 
-	s.Enqueue(&Task{ID: "heavy", Priority: PriorityHeavy, Execute: func(ctx context.Context, task *Task) ([]byte, error) {
+	s.EnqueueTask(&Task{ID: "heavy", Priority: PriorityHeavy, Execute: func(ctx context.Context, task *Task) ([]byte, error) {
 		execOrder = append(execOrder, "heavy")
 		return nil, nil
 	}})
-	s.Enqueue(&Task{ID: "normal", Priority: PriorityNormal, Execute: func(ctx context.Context, task *Task) ([]byte, error) {
+	s.EnqueueTask(&Task{ID: "normal", Priority: PriorityNormal, Execute: func(ctx context.Context, task *Task) ([]byte, error) {
 		execOrder = append(execOrder, "normal")
 		return nil, nil
 	}})
-	s.Enqueue(&Task{ID: "fast", Priority: PriorityFast, Execute: func(ctx context.Context, task *Task) ([]byte, error) {
+	s.EnqueueTask(&Task{ID: "fast", Priority: PriorityFast, Execute: func(ctx context.Context, task *Task) ([]byte, error) {
 		execOrder = append(execOrder, "fast")
 		return nil, nil
 	}})
@@ -121,7 +121,7 @@ func TestQueueFull(t *testing.T) {
 	// Fill semaphore with a long-running task
 	started := make(chan struct{})
 	block := make(chan struct{})
-	s.Enqueue(&Task{ID: "blocker", Priority: PriorityFast,
+	s.EnqueueTask(&Task{ID: "blocker", Priority: PriorityFast,
 		Execute: func(ctx context.Context, task *Task) ([]byte, error) {
 			close(started)
 			<-block
@@ -132,13 +132,13 @@ func TestQueueFull(t *testing.T) {
 	// At this point, sem is full (1/1). Queue is empty because worker already dequeued.
 
 	// Fill the queue (size 1) with one more task
-	s.Enqueue(&Task{ID: "fill", Priority: PriorityFast,
+	s.EnqueueTask(&Task{ID: "fill", Priority: PriorityFast,
 		Execute: func(ctx context.Context, task *Task) ([]byte, error) {
 			return nil, nil
 		},
 	})
 	// Queue is now full. Next enqueue should reject.
-	err := s.Enqueue(&Task{ID: "reject", Priority: PriorityFast,
+	err := s.EnqueueTask(&Task{ID: "reject", Priority: PriorityFast,
 		Execute: func(ctx context.Context, task *Task) ([]byte, error) {
 			return nil, nil
 		},
@@ -164,7 +164,7 @@ func TestConcurrencyLimit(t *testing.T) {
 	var maxConcurrent atomic.Int32
 
 	for i := 0; i < 10; i++ {
-		s.Enqueue(&Task{
+		s.EnqueueTask(&Task{
 			ID:       string(rune('0' + i)),
 			Priority: PriorityFast,
 			Execute: func(ctx context.Context, task *Task) ([]byte, error) {
@@ -187,7 +187,7 @@ func TestConcurrencyLimit(t *testing.T) {
 
 func TestNilTask(t *testing.T) {
 	s := New(nil)
-	err := s.Enqueue(nil)
+	err := s.EnqueueTask(nil)
 	if err == nil {
 		t.Fatal("expected error for nil task")
 	}

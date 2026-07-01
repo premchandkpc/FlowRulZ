@@ -33,6 +33,7 @@ type Config struct {
 	PlanWeights     []int
 	Duration        time.Duration
 	MaxConcurrent   int
+	BodyFunc        func() []byte
 }
 
 func DefaultConfig() Config {
@@ -54,6 +55,15 @@ type Generator struct {
 	totalSent   atomic.Int64
 	totalFailed atomic.Int64
 	concurrent  atomic.Int64
+	planFunc    func() *execution.Plan
+}
+
+func (g *Generator) SetPlanFunc(fn func() *execution.Plan) {
+	g.planFunc = fn
+}
+
+func (g *Generator) SetBodyFunc(fn func() []byte) {
+	g.cfg.BodyFunc = fn
 }
 
 func New(cfg Config, d *dispatcher.Dispatcher, m *metrics.Collector) *Generator {
@@ -118,8 +128,18 @@ func (g *Generator) selectPlan() *execution.Plan {
 }
 
 func (g *Generator) sendOne() {
-	plan := g.selectPlan()
-	body := []byte(fmt.Sprintf(`{"type":"%s"}`, plan.ID))
+	var plan *execution.Plan
+	if g.planFunc != nil {
+		plan = g.planFunc()
+	} else {
+		plan = g.selectPlan()
+	}
+	var body []byte
+	if g.cfg.BodyFunc != nil {
+		body = g.cfg.BodyFunc()
+	} else {
+		body = []byte(fmt.Sprintf(`{"type":"%s"}`, plan.ID))
+	}
 	ctx := execution.NewContext(plan, body)
 	g.dispatcher.Dispatch(ctx)
 	g.totalSent.Add(1)

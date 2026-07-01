@@ -9,10 +9,21 @@ import (
 	"github.com/premchandkpc/FlowRulZ/simulator/services"
 )
 
+// ScenarioClient is the minimal interface needed for scenario setup.
+// Implemented by simulator.Client.
+type ScenarioClient interface {
+	AddRule(id, dsl string) error
+	RegisterService(svc *services.MockService)
+	Plan(id string) *execution.Plan
+	SetLoadGenPlan(plan *execution.Plan)
+	SetLoadGenBodyFunc(fn func() []byte)
+}
+
 type Scenario struct {
 	Name        string
 	Description string
 	Apply       func(r *services.ServiceRegistry) (network.Config, loadgen.Config)
+	Setup       func(client ScenarioClient) error
 }
 
 var BlackFriday = Scenario{
@@ -118,7 +129,7 @@ var RampUp = Scenario{
 	},
 }
 
-var All = []Scenario{BlackFriday, PaymentOutage, SpikeTest, ChaosMonkey, RampUp}
+var All = []Scenario{BlackFriday, PaymentOutage, SpikeTest, ChaosMonkey, RampUp, OrderRouting}
 
 func ByName(name string) *Scenario {
 	for _, s := range All {

@@ -160,7 +160,7 @@ func New(cfg config.SimConfig) *Simulator {
 		node.SubscribeBus()
 	}
 
-	return &Simulator{
+	sim := &Simulator{
 		cfg:        cfg,
 		Services:   svcs,
 		Network:    net,
@@ -173,6 +173,14 @@ func New(cfg config.SimConfig) *Simulator {
 		Dashboard:  dash,
 		Scenario:   scenario,
 	}
+
+	if scenario != nil && scenario.Setup != nil {
+		if err := scenario.Setup(sim.Client()); err != nil {
+			log.Printf("scenario setup error: %v", err)
+		}
+	}
+
+	return sim
 }
 
 func (s *Simulator) Run() error {

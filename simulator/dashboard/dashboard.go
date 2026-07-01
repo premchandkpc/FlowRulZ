@@ -606,7 +606,7 @@ function renderLatency(m) {
     return '<div class="latency-card"><h4>'+esc(name)+'</h4>'+
       '<div class="latency-val">'+fmt(s.avg_ms)+' avg</div>'+
       '<div style="display:flex;gap:8px;margin-top:4px;font-size:11px;color:#8b949e">'+
-      '<span>p50 '+fmt(s.p50_ms)+'</span><span>p95 '+fmt(s.p95_ms)+'</span><span>err '+err+'%</span></div>'+
+      '<span>p50 '+fmt(s.p50_ms)+'</span><span>p95 '+fmt(s.p95_ms)+'</span><span>calls '+s.count+'</span><span>err '+err+'%</span></div>'+
       '<div class="latency-bar-wrap"><div class="latency-bar" style="width:'+pct+'%;background:'+(err>5?'#f85149':'#3fb950')+'"></div></div></div>';
   }).join('');
 }

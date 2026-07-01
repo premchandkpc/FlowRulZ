@@ -123,6 +123,16 @@ type ServiceInfo struct {
 	MaxConcurrent int                   `json:"max_concurrent,omitempty"`
 }
 
+func (c *Client) SetLoadGenPlan(plan *execution.Plan) {
+	c.sim.LoadGen.SetPlanFunc(func() *execution.Plan { return plan })
+}
+
+func (c *Client) SetLoadGenBodyFunc(fn func() []byte) {
+	if c.sim.LoadGen != nil {
+		c.sim.LoadGen.SetBodyFunc(fn)
+	}
+}
+
 func (c *Client) Services() []ServiceInfo {
 	svcs := c.sim.Services.All()
 	info := make([]ServiceInfo, len(svcs))

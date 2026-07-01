@@ -273,7 +273,7 @@ Client                  Control Plane                Data Plane
 
 | Step | File | What It Does |
 |------|------|-------------|
-| HTTP handler | `go/internal/admin/server.go` | Parses JSON, calls `engine.Deploy(id, dsl)` |
+| HTTP handler | `go/internal/admin/admin.go` | Parses JSON, calls `engine.Deploy(id, dsl)` |
 | Engine | `go/internal/engine/engine.go` | `Deploy()`: compile, assign lane, persist |
 | Plan Distribution | `go/internal/plandist/plandist.go` | Leader publishes plan to `_flowrulz_plans`, waits for ACK quorum on `_flowrulz_acks` |
 | Bridge | `go/bridge/bridge.go` | `Compile()`: C FFI call to `flowrulz_compile()` |
@@ -474,8 +474,7 @@ pub struct Span {
 
 | File | What It Does |
 |------|-------------|
-| `rust/src/tracing/mod.rs` | `Span` struct, `emit_span()` |
-| `rust/src/tracing/ring_buffer.rs` | Lock-free ring buffer |
+| `rust/src/tracing/mod.rs` | `Span` struct, `emit_span()`, inline `SpanRingBuffer` |
 | `rust/src/ffi.rs` | `flowrulz_get_spans()` drains buffer |
 | `go/bridge/bridge.go` | `GetSpans()` calls `C.flowrulz_get_spans` |
 
@@ -507,7 +506,7 @@ All endpoints (except `/health`, `/metrics`) require `Authorization: Bearer <FLO
 
 | File | What It Does |
 |------|-------------|
-| `go/internal/admin/server.go` | Route handlers, `auth()` middleware, DLQ endpoints |
+| `go/internal/admin/admin.go` | Route handlers, `auth()` middleware, DLQ endpoints |
 | `go/internal/execnode/execnode.go` | Mounts admin + metrics + health handlers |
 | `go/internal/reliability/dlq.go` | `DLQ`: Send, Replay, ReplayAll, Clear |
 
@@ -611,8 +610,8 @@ pub struct ExecutionContext {
 | `rust/src/executor/expr.rs` | 5 |
 | `rust/src/dsl/compiler.rs` | 1, 5 |
 | `rust/src/bytecode/resolved_type.rs` | 5 |
-| `rust/src/tracing/` | 6 |
-| `go/internal/admin/server.go` | 1, 7 |
+| `rust/src/tracing/mod.rs` | 6 |
+| `go/internal/admin/admin.go` | 1, 7 |
 | `go/internal/engine/engine.go` | 1, 2, 8 |
 | `go/bridge/bridge.go` | 1, 2, 3 |
 | `go/internal/execnode/execnode.go` | 2 |

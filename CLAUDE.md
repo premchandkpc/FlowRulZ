@@ -121,7 +121,7 @@ make clean     # cargo clean + remove binary
 - `Mode` enum: `Publish`, `Request`, `Reply`, `Stream`, `Workflow`, `Internal` — determines delivery semantics per event
 - Client SDK at `go/flow/` — `Publish()`, `Request()`, `Execute()`, `Stream()` — all operations go through the same runtime
 
-## Expression Builtins
+## Expression Builtins (31 total)
 
 `to_string`, `parse_int`, `parse_float`, `parse_bool`, `coalesce`, `default`, `contains`, `keys`, `merge`, `epoch`, `hash`, `uuid`, `now`, `lower`, `upper`, `trim`, `length`, `concat`, `base64`, `base64_decode`, `json`, `substring`, `replace`, `split`, `abs`, `round`, `ceil`, `floor`, `min`, `max`, `typeof`
 
@@ -176,7 +176,9 @@ All endpoints (except `/health`) require `Authorization: Bearer <FLOWRULZ_API_KE
 - `fmt()` JS helper properly converts Go nanosecond durations to human-readable ms/µs/s
 - `handleExecutions` endpoint groups timeline events by execution, extracts service list and status
 - Both `sim` (in-memory EventBus based simulator) and `flowrulz` (Cluster Bus + Rust VM production node) binaries build and work independently
-- 140 Rust tests + 20 Go test suites pass; `go vet` clean
+- 154 Rust tests + 20+ Go test suites pass; `go vet` clean
+- All docs rewritten and verified against actual codebase — every file path, type, function, enum variant, and export is documented correctly across all 12 .md files
+- Cluster Bus benchmark: ~12K msg/s publish, ~44µs latency, ~92µs request/reply (Apple M5)
 
 ### Phase 1–3: Rust cleanup (complete)
 - Deleted 3 dead files: `bytecode/mapexpr.rs`, `executor/context.rs`, `memory/slab.rs`
@@ -216,16 +218,12 @@ All endpoints (except `/health`) require `Authorization: Bearer <FLOWRULZ_API_KE
 - Updated `k8s/flowrulz.yaml` to StatefulSet with gRPC port + cluster seeds
 - Cleaned `k8s/configmap.yaml` of Kafka env vars
 - Removed `kafka-transport` skill
-- Build clean, `go vet` clean, all 140 Rust + all Go tests pass
-
-### Done
-All 4 cleanup phases + Cluster Bus replacement complete.
+- Build clean, `go vet` clean, all 154 Rust + all Go tests pass
 
 ### Next Steps
 1. Cluster Bus: real peer-to-peer gossip, quorum-based ACK counting
 2. Cluster Bus: partition rebalancing on node join/leave
 3. E2E tests with 3-node docker-compose cluster
-4. Update `docs/` for Cluster Bus architecture
 
 ## Env Vars
 

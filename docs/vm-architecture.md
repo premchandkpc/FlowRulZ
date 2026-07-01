@@ -256,7 +256,7 @@ pub struct Span {
 }
 ```
 
-- Thread-local `RefCell<RingBuffer>` (1024 spans per thread)
+- Thread-local `RefCell<SpanRingBuffer>` (1024 spans per thread)
 - Atomic head/tail for lock-free push and drain
 - Drained via `flowrulz_get_spans(out_ptr, out_cap) -> size_t` from Go
 

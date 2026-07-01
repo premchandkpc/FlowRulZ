@@ -4,42 +4,14 @@ Every source file in the project, grouped by package, with its purpose and key e
 
 ---
 
-## Go (21 source files + 18 simulator files)
+## Go (30 source files + 19 simulator files)
 
 ### `go/cmd/flowrulz/main.go`
 **Package:** `main`
 
-Entry point — reads env vars (`FLOWRULZ_PERSIST_PATH`, `FLOWRULZ_HTTP_ADDR`, `FLOWRULZ_TOPIC`), creates `execnode.Config`, and calls `execnode.New(cfg).Start()`.
+Entry point — reads env vars (`NODE_ID`, `HTTP_ADDR`, `GRPC_ADDR`, `SEEDS`, `PERSIST_PATH`, `TOPIC`, `API_KEY`, `KAFKA_BROKERS`, `COMPILER_ADDR`, `PLUGIN_DIR`, `EXEC_STATE_DIR`, `KAFKA_GROUP_ID`, `KAFKA_ACKS`, `KAFKA_IDEMPOTENT`, `LIST_SCENARIOS`), builds `execnode.Config`, calls `execnode.New(cfg).Start()`.
 
----
-
-### `go/flow/client.go`
-**Package:** `flow`
-
-Public client SDK. Provides four communication models: `Publish` (async), `Request` (sync), `Execute` (rule), `Stream` (subscription). All operations are methods on the `Client` struct, configured with `Config{Address, APIKey, HTTPClient}`.
-
-**Exports:** `Client`, `Config`, `Event`, `Mode` constants, `Publish()`, `Request()`, `Execute()`, `Stream()`, `ExecuteOption`, `WithExecuteTimeout()`, `WithExecuteHeaders()`
-
----
-
-### `go/internal/flow/flow.go`
-**Package:** `flow` (internal)
-
-Internal workflow state machine. Tracks execution state (`Pending`/`Running`/`Completed`/`Failed`) and collects per-service responses. The `Orchestrator` manages concurrent workflow instances by ID.
-
-File-based checkpointing: `NewOrchestratorWithCheckpointDir(dir)` persists each flow as `<id>.json` after state transitions (Start, StoreResponse, Complete, Fail). Atomic write via `.tmp` + `Rename`. `loadCheckpoints()` scans `dir` on creation and restores all flows.
-
-**Exports:** `FlowState`, `Flow`, `Orchestrator`, `NewOrchestrator()`, `NewOrchestratorWithCheckpointDir()`, `Start()`, `Get()`, `StoreResponse()`, `Complete()`, `Fail()`, `Remove()`, `List()`
-
----
-
-### `go/internal/admin/server.go`
-**Package:** `admin`
-
-HTTP admin server. Serves rule CRUD, validation, promote/rollback, lane listing, DLQ management, health check, and metrics. API key auth via `Authorization: Bearer <key>` header on all endpoints except `/health` and `/metrics`.
-
-**Exports:** `Server`, `New()`, `RegisterDLQ()`, `Handler()`
-**Endpoints:** `POST/DELETE/GET /rules`, `GET /rules/{id}/versions`, `POST /rules/{id}/validate`, `POST /rules/{id}/promote`, `POST /rules/{id}/rollback`, `GET /lanes`, `GET /health`, `GET /dlq`, `POST /dlq/replay/{id}`, `POST /dlq/replay`, `DELETE /dlq`
+**Exports:** `func main()`
 
 ---
 
@@ -47,293 +19,545 @@ HTTP admin server. Serves rule CRUD, validation, promote/rollback, lane listing,
 **Package:** `bridge`
 
 CGo FFI bridge to the Rust shared library. Functions map 1:1 to `extern "C"` calls:
-- `Compile` → `flowrulz_compile` — DSL string → bytecode plan
-- `Execute` → `flowrulz_execute` — plan + body → result (synchronous, callback-based)
-- `ExecuteStep` → `flowrulz_execute_step` — cooperative single-step execution (plan + serialized ctx + optional response → StepOutput)
-- `PlanComplexity` → `flowrulz_plan_complexity`
-- `PlanServices` → `flowrulz_plan_services` — extract service IDs from plan
-- `GetSpans` → `flowrulz_get_spans` — drain span ring buffer
-- `MsgAlloc` / `MsgRelease` — C-heap memory management
-- `Intern` / `InternLookup` — string interning via Rust `InternTable`
+- `Compile(dsl, ruleID)` → `flowrulz_compile` — DSL string → bytecode plan
+- `ExecuteStep(plan, ctxBytes, respBytes, extra)` → `flowrulz_execute_step` — cooperative single-step execution
+- `PlanServices(plan)` → `flowrulz_plan_services` — extract service IDs from plan
+- `GetSpans()` → `flowrulz_get_spans` — drain span ring buffer
+- `SpanSize()` — returns Rust `Span` struct size
+- `RegisterPlugin(name, wasm)` → `flowrulz_register_plugin`
 
-The Go-side service caller bridge uses `sync.Map` (callerMap) + `atomic.Uint64` (nextExecID) — no mutex in hot path.
+Go-side service caller uses `sync.Map` (callerMap) + `atomic.Uint64` (nextExecID) — no mutex in hot path.
 
-**Exports:** `ServiceCaller` func type, `ExecContext`, `StepResult` (Done/Pending/Continue), `StepOutput`, `ServiceEntry`, `Compile()`, `Execute()`, `ExecuteStep()`, `MsgAlloc()`, `MsgRelease()`, `Intern()`, `InternLookup()`, `GetSpans()`, `PlanServices()`, `PlanComplexity()`
+**Exports:** `StepResult`, `StepOut`, `ServiceEntry`, `Compile()`, `ExecuteStep()`, `PlanServices()`, `GetSpans()`, `SpanSize()`, `RegisterPlugin()`, `ParseServiceMethod()`, `ParseCompensation()`
 
 ---
 
-### `go/bridge/caller_bridge.c`
-**Language:** C
+### `go/bridge/bridge_test.go`
+**Package:** `bridge`
 
-Static C function bridging the Rust `caller_cb_t` function pointer to the Go-exported `goServiceCaller`. Provides `getCallerBridgePtr()` which returns a function pointer the Rust FFI layer registers as the service call callback.
+Tests: `TestParseServiceMethod`, `TestParseServiceMethodNoMethod`, `TestParseCompensation`, `TestParseCompensationNoComp`, `TestServiceEntryRoundTrip`, `TestCompileAndPlanServices`, `TestStepResults`, `TestGetSpans`, `TestCgoEnabled`
 
-**Exports:** `callerBridge()`, `getCallerBridgePtr()`
+---
+
+### `go/flow/client.go`
+**Package:** `flow` (SDK)
+
+Public client SDK. Provides four communication models: `Publish` (async), `Request` (sync), `Execute` (rule), `Stream` (subscription). Also: `DeployRule`, `RemoveRule`, `ListRules`, `GetRule`, `ValidateRule`, `GetLanes`, `GetHealth`, `RegisterService`, `ListServices`.
+
+**Exports:** `Client`, `RuleConfig`, `RuleStatus`, `ServiceInstance`, `SendResult`, `RequestResult`, `New()`, `WithAPIKey()`, `Publish()`, `Request()`, `Execute()`, `Stream()`, `DeployRule()`, `RemoveRule()`, `ListRules()`, `GetRule()`, `ValidateRule()`, `GetLanes()`, `GetHealth()`, `RegisterService()`, `ListServices()`
+
+---
+
+### `go/flow/client_test.go`
+**Package:** `flow`
+
+Tests: `TestPublish`, `TestRequest`, `TestExecute`, `TestDeployRule`, `TestRemoveRule`, `TestListRules`, `TestValidateRule`, `TestGetLanes`, `TestRegisterService`, `TestListServices`, `TestStream`, `TestHealth`, `TestWithAPIKey`
+
+---
+
+### `go/pkg/transport/eventbus.go`
+**Package:** `transport` (public)
+
+Canonical pub/sub abstraction. `EventBus` interface defines `Publish`, `Subscribe`, `Request`, `Reply`, `Broadcast`, `Unsubscribe`, `Close` — the single contract consumed by both production code and the simulator.
+
+Also defines `Message`, `Handler`, `Subscription` types. Constants: `TypePublish`, `TypeRequest`, `TypeReply`, `TypeBroadcast`, `TypeStream`, `TypeStreamData`, `TypeStreamComplete`.
+
+**Exports:** `EventBus`, `Message`, `Handler`, `Subscription`, all type constants
+
+---
+
+### `go/internal/admin/admin.go`
+**Package:** `admin`
+
+HTTP admin API server. Serves rule CRUD, validation, promote/rollback, lane listing, DLQ management, health check, metrics. API key auth via `Authorization: Bearer <key>` on all endpoints except `/health`.
+
+**Exports:** `Server`, `New()`, `NewWithCompiler()`, `RegisterDLQ()`, `Handler()`
+**Endpoints:** `POST /rules`, `DELETE /rules/{id}`, `GET /rules`, `GET /rules/{id}`, `GET /rules/{id}/versions`, `POST /rules/{id}/validate`, `POST /rules/{id}/promote`, `POST /rules/{id}/rollback`, `GET /lanes`, `GET /dlq`, `POST /dlq/replay/{id}`, `POST /dlq/replay`, `DELETE /dlq`, `GET /health`
+
+---
+
+### `go/internal/admin/admin_test.go`
+**Package:** `admin_test` (external)
+
+Tests: `TestPostAndGetRule`, `TestPostAndListRules`, `TestDeleteRule`, `TestGetVersions`, `TestPromote`, `TestAuth`, `TestAuthSkippedForHealth`
+
+---
+
+### `go/internal/admin/admin_lanes_test.go`
+**Package:** `admin`
+
+Test: `TestHandleGetLanes`
 
 ---
 
 ### `go/internal/engine/engine.go`
 **Package:** `engine`
 
-Core rule engine. Maintains a `map[string]*Rule` of versioned plans in memory. Each `Rule` holds a slice of `VersionedPlan`s with an `ActiveVersion` index. `Deploy()` compiles DSL via bridge, assigns a lane (fast/normal/heavy) by `PlanComplexity` score, persists to disk, and returns. `AddVersion()` stores a pre-compiled plan (used by followers receiving plans via PlanDistributor) without auto-activating. `Promote()` activates a specific version.
+Core rule engine. Maintains `map[string]*Rule` of versioned plans. Each `Rule` holds `[]*VersionedPlan` with an `ActiveVersion` index. `Deploy()` compiles DSL via bridge, assigns lane by complexity score, persists to disk. `AddVersion()` stores a pre-compiled plan without auto-activating. `Promote()` activates a version.
 
-Callback hooks: `AfterDeploy` and `AfterPromote` are set by execnode to trigger plan distribution on the leader. After a successful deploy, `AfterDeploy(id, dsl, plan, version)` is called (leader spawns `distributePlan`). After promote, `AfterPromote(id, version)` is called (leader spawns `distributeActivate`).
+Callback hooks: `AfterDeploy`, `AfterPromote` — set by execnode for plan distribution. Persistence: atomic write via `.tmp` + `os.Rename`.
 
-Persistence: atomic write via `os.WriteFile(path.tmp)` + `os.Rename(path.tmp, path)`.
-
-**Exports:** `Lane`, `LaneConfig`, `DefaultLanes`, `VersionedPlan`, `Rule`, `Engine`, `New()`, `Deploy()`, `AddVersion()`, `Promote()`, `Drain()`, `Remove()`, `Rules()`, `ExecuteAll()`, `ActivePlanBytes()`, `LaneForScore()`
+**Exports:** `VersionedPlan`, `Rule`, `Engine`, `New()`, `NewWithCompiler()`, `Deploy()`, `AddVersion()`, `Promote()`, `Rollback()`, `Remove()`, `ActivePlanBytes()`, `ActivePlan()`, `LaneForScore()`, `GetRule()`, `Rules()`, `ExecuteAll()`
 
 ---
 
-### `go/internal/execnode/execnode.go`
-**Package:** `execnode`
+### `go/internal/engine/engine_test.go`
+**Package:** `engine`
 
-Data-plane process. `New()` wires together: Engine, PlanDistributor (with plan/ack producers), Scheduler, ReplyRouter, DLQ, RateLimiter, CircuitBreakers (per-svcID), MetricsCollector, Admin server, and `httpClient`. Sets `Engine.AfterDeploy` and `Engine.AfterPromote` callbacks that trigger plan distribution when the node is leader.
-
-Leader/follower role managed by `SetLeader()`/`IsLeader()`. `SetLeader(true)` marks the node as leader; `SetTerm(n)` synchronizes the cluster term to both the node and PlanDistributor.
-
-`Start()`:
-1. Creates the ingress `MessageHandler` — rate-limits, dedup by MessageID, calls `executeAll(msg)` which iterates active plans from `Engine.ActivePlanBytes()`
-2. `executeAll()` delegates to `executePlan(plan, body)` per active rule — a cooperative loop using `bridge.ExecuteStep()`:
-   - `StepDone` → return output
-   - `StepPending` → `callService(svcID, body)` which checks circuit breaker, resolves via `ServiceResolver`, makes HTTP call, records metrics
-   - `StepContinue` → advance to next instruction
-3. Creates plan/ack consumers via `mkConsumer()` (real Sarama or stub depending on `KafkaBrokers` config) that listen on `_flowrulz_plans`/`_flowrulz_acks`:
-   - `handlePlanMessage` deserializes `PlanMessage`, rejects stale terms, calls `Engine.AddVersion()` for "plan" type (and sends ACK) or `Engine.Promote()` for "activate" type
-   - `handleAckMessage` deserializes `AckMessage` and calls `PlanDist.RecordAck()`
-4. Creates producers via `mkProducer()` (real Sarama `SyncProducer` or stub)
-5. Starts `PlanDistributor`
-6. Starts the HTTP server (admin + health + metrics)
-7. Blocks on SIGINT/SIGTERM
-
-`Shutdown()`: stops consumers → stops PlanDistributor → stops scheduler → stops reply router cleanup → closes producers → shuts down HTTP server.
-
-Leader-only distribution flow:
-- After `Engine.Deploy()` → `AfterDeploy` callback → spawns `distributePlan()` goroutine:
-  1. Increments cluster term
-  2. `PlanDist.PublishPlan()` → `PlanDist.WaitForAcks()` → `PlanDist.ActivatePlan()`
-- After `Engine.Promote()` → `AfterPromote` callback → spawns `distributeActivate()` goroutine:
-  1. `PlanDist.ActivatePlan()` publishes activate message
-
-**Exports:** `Config`, `NewConfig()`, `ExecutionNode`, `New()`, `Start()`, `Shutdown()`, `SetLeader()`, `IsLeader()`, `SetTerm()`, `CurrentTerm()`, `callService()`, `executePlan()`, `executeAll()`
+Tests: `TestDeployAndActive`, `TestAddVersionAndPromote`, `TestRollback`, `TestRemove`, `TestLaneForScore`, `TestPersistence`, `TestRulesSnapshot`, `TestExecuteAll`, `TestCompileError`, `TestAfterDeployHook`, `TestAfterPromoteHook`, `TestMultipleRules`, `TestActivePlanBytesEmpty`
 
 ---
 
-### `go/internal/observability/metrics.go`
-**Package:** `observability`
+### `go/internal/compiler/compiler.go`
+**Package:** `compiler`
 
-Thread-safe metrics collection. `Counter` (atomic int64), `Gauge` (atomic int64), `Histogram` (sorted buckets + atomic counters). Per-name dedup via `sync.RWMutex`-guarded maps. A package-level `defaultCollector` provides global shortcut functions.
+DSL compiler abstraction — local (CGo bridge) or remote (HTTP) compilation. `NewLocal()` returns nil (local is default via bridge). `NewRemote(endpoint)` creates HTTP client that POSTs to `{endpoint}/compile`.
 
-Histogram `Observe()`: linear scan of sorted bucket bounds, increments the first matching bucket or the overflow bucket. Not lock-protected (atomic counts are sufficient; total and bucket increments are not atomic together — acceptable skew for metrics).
-
-**Exports:** `Counter`, `Gauge`, `Histogram`, `MetricsCollector`, `MetricSnapshot`, `NewMetricsCollector()`, `GetCounter()`, `GetGauge()`, `RecordExec()`, `RecordError()`
+**Exports:** `Client`, `Local`, `NewLocal()`, `NewRemote()`, `Compile()`
 
 ---
 
-### `go/internal/plandist/plandist.go`
-**Package:** `plandist`
+### `go/internal/compiler/compiler_test.go`
+**Package:** `compiler`
 
-Plan distribution across the cluster. The leader publishes `PlanMessage{type:"plan"}` with compiled bytecode to `_flowrulz_plans`, then waits for ACKs from a quorum of followers on `_flowrulz_acks`. Once quorum is reached, publishes `PlanMessage{type:"activate"}`.
-
-Wired in execnode: `handlePlanMessage` deserializes `PlanMessage`, rejects plans with stale terms (lower than current cluster term), calls `Engine.AddVersion()` for "plan" type (and sends ACK via `PlanDist.SendAck()`) or `Engine.Promote()` for "activate" type. `handleAckMessage` deserializes `AckMessage` and calls `PlanDist.RecordAck()`.
-
-Plan/ACK consumers listen on `_flowrulz_plans`/`_flowrulz_acks` respectively, registered in `execnode.Start()`.
-
-`WaitForAcks()`: creates a `pendingAck` entry in a `sync.Map`, blocks on a `done` channel with timeout. `RecordAck()` (called by the ACK consumer handler) increments the atomic counter and signals the channel when quorum is met.
-
-**Exports:** `PlanMessage`, `AckMessage`, `PlanHandler`, `AckHandler`, `PlanDistributor`, `New()`, `Start()`, `Stop()`, `PublishPlan()`, `ActivatePlan()`, `SendAck()`, `WaitForAcks()`, `RecordAck()`, `PlanMessageFromBytes()`, `AckMessageFromBytes()`
+Tests: `TestLocalCompile`, `TestRemoteCompileError`
 
 ---
 
-### `go/internal/plugins/loader.go`
-**Package:** `plugins`
-
-WASM plugin loader. `LoadDir(dir)` scans a directory for `.wasm` files, reads each file, and registers it via `bridge.RegisterPlugin()`. The filename without extension becomes the plugin name. Skips non-existent directories with a log message.
-
-Configured via `execnode.Config.PluginDir` or `FLOWRULZ_PLUGIN_DIR` env var. Registered plugins become available in DSL as `w:<name>.<func>()`.
-
-**Exports:** `LoadDir()`
-
----
-
-### `go/internal/registry/registry.go`
-**Package:** `registry`
-
-Service registry mapping service names → healthy endpoints. Supports four load-balancing strategies: `Random`, `RoundRobin` (atomic counter), `LocalPrefer` (same node first), `LeastLoaded` (lowest load value).
-
-`Register()` defaults `Protocol` to HTTP and `NodeID` to local node ID. `Pick()` returns a single healthy endpoint per the configured strategy. `Snapshot()` deep-copies the entire registry for leader aggregation.
-
-**Exports:** `Protocol`, `LBStrategy`, `Endpoint`, `ServiceInfo`, `ServiceRegistry`, `New()`, `Register()`, `Lookup()`, `Pick()`, `PickWithStrategy()`, `MarkUnhealthy()`, `MarkHealthy()`, `ListServices()`, `ListEndpoints()`, `Snapshot()`
-
----
-
-### `go/internal/reliability/dedup.go`
-**Package:** `reliability`
-
-Bounded in-memory dedup tracker. `Mark(id)` stores an entry; `Seen(id)` checks if already processed. Evicts oldest when at capacity (default 10k). Background cleanup goroutine removes entries past TTL (default 5min). Wired in `execnode` handler by MessageID.
-
-**Exports:** `DedupEntry`, `DedupTracker`, `NewDedupTracker()`, `Seen()`, `Mark()`, `StartCleanup()`, `Len()`, `Clear()`
-
----
-
-### `go/internal/reliability/circuitbreaker.go`
-**Package:** `reliability`
-
-Circuit breaker with three states: `Closed` (normal), `Open` (rejecting all), `HalfOpen` (probing). Transitions: `Closed` → `Open` when failure count reaches threshold; `Open` → `HalfOpen` after recovery timeout; `HalfOpen` → `Closed` on success, or → `Open` on failure.
-
-Allows up to `halfOpenMaxReqs` (default 3) concurrent probing requests. State and half-open counter use atomics for lock-free reads in the hot path.
-
-**Wiring:** `execnode/execnode.go` creates per-svcID instances in `callService()` (threshold=5, recovery=30s). Before calling the service, `Allow()` is checked — returns "circuit breaker open" error if tripped. On success `Success()` resets the breaker; on error `Failure()` advances the failure count.
-
-**Exports:** `State`, `CircuitBreaker`, `NewCircuitBreaker()`, `Allow()`, `Success()`, `Failure()`
-
----
-
-### `go/internal/reliability/dlq.go`
-**Package:** `reliability`
-
-Bounded dead-letter queue with Kafka persistence. `Send()` appends to an in-memory slice (oldest evicted FIFO at capacity, default 10k) and, when a `transport.MessageProducer` is configured via `WithDLQProducer()`, also produces to `_flowrulz_dlq`. Always succeeds (no-fail design).
-
-`Replay()`: removes entry from DLQ by ID, calls `replayFn`. `ReplayAll()`: drains all entries, replays each, re-enqueues any that fail again. `ToJSON()` serializes all entries for export. `SetReplayFn()` configures the callback (set by execnode to re-run `executeAll`).
-
-**Exports:** `DeadLetterEntry`, `DLQ`, `NewDLQ()`, `DLQOption`, `WithDLQProducer()`, `WithDLQTopic()`, `DefaultDLQTopic`, `SetReplayFn()`, `Send()`, `LoadFromTopic()`, `Replay()`, `ReplayAll()`, `List()`, `Len()`, `Clear()`, `ToJSON()`
-
----
-
-### `go/internal/reliability/ratelimit.go`
-**Package:** `reliability`
-
-Token-bucket rate limiter. Per-name buckets with configurable rate (tokens/sec) and burst cap. Lazy refill: `AllowN()` computes elapsed time since last refill, adds `elapsed * rate` tokens (capped at burst), then subtracts `n`.
-
-`Bucket()` uses double-checked locking — first `RLock` to check if bucket exists, fallback to `Lock` + create with defaults (rate=100, burst=100). `SetBucket()` replaces the bucket for a name entirely.
-
-**Exports:** `TokenBucket`, `RateLimiter`, `NewRateLimiter()`, `NewTokenBucket()`, `Bucket()`, `SetBucket()`, `Allow()`, `AllowN()`
-
----
-
-### `go/internal/replyrouter/router.go`
-**Package:** `replyrouter`
-
-Per-node reply router for request/reply pattern. `Send(corrID, timeout)` registers a `PendingRequest` in a `map[string]*PendingRequest` and returns a buffered `chan []byte`. The caller waits on the channel for the reply.
-
-`Route(corrID, response)` looks up the entry, deletes it, sends the response on the channel, and closes it.
-
-Cleanup goroutine runs every 1s, evicting expired entries (past `Deadline`) and closing their channels. Duplicate correlation IDs and capacity limits (default 10,000) are rejected with typed errors.
-
-**Exports:** `PendingRequest`, `ReplyRouter`, `New()`, `Send()`, `Route()`, `PendingCount()`, `StartCleanup()`, `StopCleanup()`, `ErrPendingNotFound`, `ErrPendingExpired`, `ErrPendingLimit`, `ErrDuplicateCorrID`
-
----
-
-### `go/internal/scheduler/scheduler.go`
-**Package:** `scheduler`
-
-Lane-based priority scheduler. Three lanes: `Fast` (50 concurrent, 5k queue), `Normal` (20, 2k), `Heavy` (5, 500, reject-on-full). Each lane has a buffered channel as its queue and a semaphore channel for concurrency limiting.
-
-`Enqueue()`: Fast/Normal lanes block on the queue channel (backpressure propagates to the consumer). Heavy lane uses non-blocking send + `ErrQueueFull` on capacity.
-
-Lane workers: one goroutine per lane, each acquires a semaphore slot, dequeues a task, and spawns `execTask` as a goroutine (which releases the semaphore on completion). `PriorityForScore()` maps complexity scores to lanes.
-
-**Exports:** `Priority`, `Task`, `TaskResult`, `LaneConfig`, `Scheduler`, `New()`, `Start()`, `Stop()`, `Enqueue()`, `EnqueueAndWait()`, `QueuedCount()`, `RunningCount()`, `TotalEnqueued()`, `TotalDequeued()`, `TotalRejected()`, `DefaultLanes`, `PriorityForScore()`, `ErrQueueFull`
-
----
-
-### `go/pkg/transport/eventbus.go`
+### `go/internal/transport/transport.go`
 **Package:** `transport`
 
-Canonical pub/sub abstraction. `EventBus` interface defines `Publish`, `PublishToPartition`, `Subscribe`, `Request`, `Reply`, `Broadcast`, `Unsubscribe`, `TopicStats`, `Close` — the single contract consumed by both production code and the simulator. Lives in `go/pkg/` (not `go/internal/`) so it can be imported by both `go/...` and `simulator/...` packages. The in-memory implementation is at `simulator/eventbus/`; production Kafka/HTTP implementations at `go/internal/transport/`.
+Core transport interfaces. `MessageHandler` func type, `MessageConsumer`/`MessageProducer` interfaces, in-memory `Producer`/`Consumer` implementations with `Inject()` for testing. `KafkaConfig` struct for legacy Kafka transport.
 
-Also defines `Message` — universal message type with ID, Type, Topic, Body, Headers, CorrelationID, CreatedAt, Delay, PartitionKey, Metadata, and `Handler` callback type + `Subscription` struct.
-
-**Exports:** `EventBus`, `Message`, `MessageType` (`TypePublish`, `TypeRequest`, `TypeReply`, `TypeBroadcast`, `TypeExecution`), `Handler`, `Subscription`
-
----
-
-### `go/internal/transport/consumer.go`
-**Package:** `transport`
-
-In-memory message consumer. Accepts injected messages via `Inject(msg)`, dispatches to a `MessageHandler` in a `Start()` loop. Stops via `Stop()` closing `stopCh`. Buffered channel of 100 messages between inject and handler.
-
-**Exports:** `Consumer`, `NewConsumer()`, `Topic()`, `Start()`, `Inject()`, `Stop()`
-
----
-
-### `go/internal/transport/producer.go`
-**Package:** `transport`
-
-In-memory/log-only message producer. `Send()` logs the topic/key/size and returns nil. `Close()` is a no-op. Stub for development and testing.
-
-**Exports:** `Producer`, `NewProducer()`, `Send()`, `Close()`
-
----
-
-### `go/internal/transport/types.go`
-**Package:** `transport`
-
-Core transport interfaces. `MessageHandler` func type and `MessageConsumer`/`MessageProducer` interfaces used by all transport implementations.
-
-**Exports:** `MessageHandler`, `MessageConsumer`, `MessageProducer`
-
----
-
-### `go/internal/cluster/node.go`
-**Package:** `cluster`
-
-gRPC-based peer-to-peer cluster overlay. `ClusterNode` manages Publish/Subscribe, peer membership (AddPeer/RemovePeer), and topic handler registration. Publish sends messages to all peers subscribed to the topic. Subscribe/Unsubscribe manage topic handler lifecycle.
-
-**Exports:** `SubscribeHandler`, `Peer`, `ClusterNode`, `NewClusterNode()`, `Start()`, `Stop()`, `Publish()`, `Subscribe()`, `Unsubscribe()`, `AddPeer()`, `RemovePeer()`, `Peers()`
-
----
-
-### `go/internal/cluster/transport.go`
-**Package:** `cluster`
-
-Transport adapters implementing `transport.MessageProducer`/`transport.MessageConsumer` for the Cluster Bus. `ClusterProducer` wraps `ClusterNode.Publish()`. `ClusterConsumer` subscribes a `transport.MessageHandler` to a cluster topic with lifecycle management.
-
-**Exports:** `ClusterProducer`, `NewClusterProducer()`, `ClusterConsumer`, `NewClusterConsumer()`
+**Exports:** `MessageHandler`, `MessageConsumer`, `MessageProducer`, `Producer`, `Consumer`, `KafkaConfig`, `KafkaAcksLevel`
 
 ---
 
 ### `go/internal/transport/kafka.go`
 **Package:** `transport`
 
-Legacy Kafka transport (Sarama-backed). Only active when `FLOWRULZ_KAFKA_BROKERS` is explicitly set. Default transport is Cluster Bus.
+Legacy Kafka transport (Sarama-backed). Only active when `FLOWRULZ_KAFKA_BROKERS` is explicitly set. Default is Cluster Bus.
 
-**Exports:** `KafkaConfig`, `KafkaConsumer`, `KafkaProducer`, `NewKafkaConsumer()`, `NewKafkaProducer()`, `Topic()`, `Start()`, `Stop()`, `Inject()`, `Send()`, `Close()`
+**Exports:** `KafkaProducer`, `KafkaConsumer`, `NewKafkaProducer()`, `NewKafkaConsumer()`, `AcksLevelFromString()`
 
 ---
 
+### `go/internal/transport/kafka_test.go`
+**Package:** `transport`
 
+Tests: `TestKafkaProducerSend`, `TestKafkaConsumerConsume`
+
+---
+
+### `go/internal/transport/grpc/bus.go`
+**Package:** `grpctransport`
+
+Low-level gRPC transport used by Cluster Bus. `GRPCBus` manages gRPC server with topic-based publish/subscribe. `GRPCClient` connects as subscriber. `BusMessage` carries Id, Topic, Body, PartitionKey, Headers.
+
+**Exports:** `GRPCBus`, `GRPCClient`, `BusMessage`, `PublishRequest`, `PublishResponse`, `SubscribeRequest`, `NewGRPCBus()`, `NewGRPCClient()`, `Start()`, `Stop()`, `Publish()`, `PublishRaw()`, `Connect()`, `Close()`
+
+---
+
+### `go/internal/transport/grpc/bus_test.go`
+**Package:** `grpctransport`
+
+Tests: `TestGRPCPublishSubscribe`, `TestGRPCRequestReply`, `TestGRPCBroadcast`, `TestGRPCUnsubscribe`
+
+### `go/internal/transport/grpc/bench_test.go`
+**Package:** `grpctransport`
+
+Benchmarks: `BenchmarkPublishThroughput` (~12K msg/s), `BenchmarkPublishLatency` (~44µs), `BenchmarkRequestReply` (~92µs)
+
+---
+
+### `go/internal/replyrouter/replyrouter.go`
+**Package:** `replyrouter`
+
+Per-node pending request tracker by correlation_id. `Register(corrID)` creates pending entry, returns receive channel. `Route(corrID, msg)` delivers to pending channel. Timeout cleanup goroutine. Max pending limit.
+
+**Exports:** `ReplyRouter`, `New()`, `WithCleanupInterval()`, `WithMaxPending()`, `Register()`, `Route()`, `PendingCount()`, `StartCleanup()`, `StopCleanup()`
+
+---
+
+### `go/internal/replyrouter/replyrouter_test.go`
+**Package:** `replyrouter`
+
+Tests: `TestRegisterAndRoute`, `TestRouteNonExistent`, `TestCleanupTimeout`, `TestMaxPendingRejection`, `TestStartStopCleanup`, `TestDuplicateCleanup`
+
+---
+
+### `go/internal/registry/registry.go`
+**Package:** `registry`
+
+Service registry mapping service names → healthy endpoints. `RegisterInstance(inst)` for rich registration (methods, capabilities, zone, weight, tags, metadata). `LookupInstance(name, method)` for method-aware instance selection. Heartbeat expiry (default 30s) marks unhealthy. HTTP handlers for `POST /register`, `POST /heartbeat`, `GET /services`.
+
+**Exports:** `ServiceInstance`, `Endpoint`, `ServiceRegistry`, `New()`, `Register()`, `RegisterInstance()`, `Heartbeat()`, `MarkUnhealthy()`, `LookupInstance()`, `LookupAll()`, `SetHeartbeatTimeout()`, `StartHeartbeatChecker()`, `RegisterHTTPHandler()`, `HeartbeatHTTPHandler()`, `ListServicesHTTPHandler()`
+
+---
+
+### `go/internal/registry/registry_test.go`
+**Package:** `registry`
+
+Tests: `TestRegisterAndLookup`, `TestHeartbeat`, `TestHeartbeatTimeout`, `TestMarkUnhealthy`, `TestLoadBalancerRandom`, `TestHTTPRegister`, `TestHTTPHeartbeat`
+
+---
+
+### `go/internal/registry/loadbalancer.go`
+**Package:** `registry`
+
+Load balancing strategies: `StrategyRandom`, `StrategyRoundRobin`, `StrategyLeastLoaded`, `StrategyLocalPrefer`. Thread-safe round-robin via `sync.Map` counters.
+
+**Exports:** `Strategy`, `LoadBalancer`, `NewLoadBalancer()`, `Select()`, `SetStrategy()`
+
+---
+
+### `go/internal/registry/endpoint.go`
+**Package:** `registry`
+
+Endpoint URL construction from `ServiceInstance`. `URL()` builds `{protocol}://{address}:{port}`. `ParseEndpoint()` parses `host:port` or `protocol://host:port`.
+
+**Exports:** `Endpoint.URL()`, `ParseEndpoint()`
+
+---
+
+### `go/internal/partition/partition.go`
+**Package:** `partition`
+
+Partition management — assignments, rebalancing, ownership tracking. Default 64 partitions. Round-robin assignment across alive nodes. FNV-32a key routing. `RebalanceNotifier` triggers on membership changes. HTTP endpoints: `GET /partitions`, `POST /partitions/rebalance`.
+
+**Exports:** `Manager`, `RebalanceNotifier`, `AssignmentMessage`, `New()`, `SetProducer()`, `OnLeaderChange()`, `HandleAssignmentMessage()`, `Rebalance()`, `Assignments()`, `PartitionsForNode()`, `NumPartitions()`, `PublishAssignments()`, `NewRebalanceNotifier()`, `CheckAndRebalance()`
+
+---
+
+### `go/internal/partition/partition_test.go`
+**Package:** `partition`
+
+Tests: `TestRebalance`, `TestPartitionsForNode`, `TestLeaderChangeResets`, `TestHandleAssignment`, `TestRebalanceNotifier`
+
+---
+
+### `go/internal/scheduler/scheduler.go`
+**Package:** `scheduler`
+
+Lane-based priority scheduler: `Fast` (50 concurrent, 5k queue), `Normal` (20, 2k), `Heavy` (5, 500, reject-on-full). Each lane has a buffered channel as queue and semaphore for concurrency limiting.
+
+**Exports:** `LaneConfig`, `Scheduler`, `Task`, `TaskResult`, `New()`, `Start()`, `Stop()`, `Enqueue()`, `LaneNames()`, `LaneConfigs()`, `SetLaneConfig()`
+
+---
+
+### `go/internal/execstate/execstate.go`
+**Package:** `execstate`
+
+Execution state types and `Store` interface for persisting in-flight executions. `State` holds `ID`, `RuleID`, `Version`, `PlanBytes`, `CtxBytes`, `Status`, `PendingSvc`, `PendingBody`, `Error`, `Output`, timestamps. `Status` enum: `Created`, `Running`, `WaitingForService`, `Completed`, `Failed`.
+
+**Exports:** `Status`, `State`, `Store` (interface: `Create`, `Save`, `Load`, `List`, `Delete`, `Close`)
+
+---
+
+### `go/internal/execstate/filestore.go`
+**Package:** `execstate`
+
+File-based `Store` implementation. Atomic write-to-temp-then-rename per state file. Directory created on `NewFileStore()`.
+
+**Exports:** `FileStore`, `NewFileStore()`
+
+---
+
+### `go/internal/execstate/execstate_test.go`
+**Package:** `execstate`
+
+Tests: `TestFileStoreCreateLoad`, `TestFileStoreList`, `TestFileStoreSaveDelete`, `TestFileStoreDuplicate`, `TestFileStoreAtomicity`
+
+---
+
+### `go/internal/membership/membership.go`
+**Package:** `membership`
+
+Cluster membership tracking with heartbeat-based leader election (lowest-ID wins). `AliveCount()`, `AliveNodes()`, `LeaderID()`. Lease expiry detection with `LeaderLease` (default 8s). `StartEviction()` goroutine evicts stale heartbeats. `OnLeaseExpiry()` callback.
+
+**Exports:** `NodeInfo`, `LeaseCallback`, `Membership`, `New()`, `SetLeaderLease()`, `OnLeaseExpiry()`, `Add()`, `Remove()`, `MarkDead()`, `MarkAlive()`, `Heartbeat()`, `AliveCount()`, `AliveNodes()`, `LeaderID()`, `Snapshot()`, `Lookup()`, `LeaderLastSeen()`, `StartLeaderLeaseChecker()`, `StartEviction()`
+
+---
+
+### `go/internal/membership/membership_test.go`
+**Package:** `membership`
+
+Tests (13): `TestNew`, `TestAdd`, `TestRemove`, `TestMarkDead`, `TestAliveNodes`, `TestSnapshot`, `TestLookup`, `TestLeaderID`, `TestLeaderIDPicksLowestAlive`, `TestHeartbeatAutoAdds`, `TestEvictStaleWithLeaseCallback`, `TestStartEviction`, `TestStartLeaderLeaseCheckerExpires`
+
+---
+
+### `go/internal/cluster/node.go`
+**Package:** `cluster`
+
+gRPC-based peer-to-peer cluster overlay. `ClusterNode` manages Publish/Subscribe, peer membership (AddPeer/RemovePeer), and topic handlers. `Publish()` sends to local bus + all peers (goroutine per peer). Default transport for execnode.
+
+**Exports:** `Peer`, `ClusterNode`, `SubscribeHandler`, `NewClusterNode()`, `Start()`, `Stop()`, `Publish()`, `Subscribe()`, `Unsubscribe()`, `AddPeer()`, `RemovePeer()`
+
+---
+
+### `go/internal/cluster/gossip.go`
+**Package:** `cluster`
+
+Epidemic gossip protocol for membership propagation. Push (every 2s, fanout=2) + Pull anti-entropy (every 10s, 1 random peer). Conflict resolution: higher epoch wins. `GossipState` per node with `Term`/`Epoch`.
+
+**Exports:** `GossipState`, `GossipMessage`, `Gossiper`, `NewGossiper()`, `SetState()`, `UpdateState()`, `GetState()`, `AllStates()`, `GetMyState()`, `Start()`, `Stop()`, `HandleGossipMessage()`
+
+---
+
+### `go/internal/cluster/transport.go`
+**Package:** `cluster`
+
+Transport adapters implementing `transport.MessageProducer`/`transport.MessageConsumer` for the Cluster Bus.
+
+**Exports:** `ClusterProducer`, `ClusterConsumer`, `NewClusterProducer()`, `NewClusterConsumer()`
+
+---
+
+### `go/internal/execnode/execnode.go`
+**Package:** `execnode`
+
+Main data plane process. Wires together: Engine, PlanDistributor, Scheduler, ReplyRouter, DLQ, RateLimiter, CircuitBreakers, Dedup, MetricsCollector, Admin, Registry, Membership, Saga tracker, State store, Cluster node, Partitions, Rebalancer, TermStore, GRPCBus, OTel exporter.
+
+`Start()`: starts cluster bus, consumers, heartbeat, plan distribution, eviction, lease checker, scheduler, cleanup goroutines, recovery, HTTP server. `Shutdown()`: orderly teardown.
+
+`executePlan()`: cooperative step loop via `bridge.ExecuteStep`, handles `StepDone`/`StepPending`/`StepContinue`. `callService()`: circuit breaker + registry lookup + HTTP call. Leader-only: `distributePlan()`/`distributeActivate()`.
+
+**Exports:** `Config`, `ExecutionNode`, `NewConfig()`, `New()`, `SetLeader()`, `IsLeader()`, `SetTerm()`, `CurrentTerm()`, `Start()`, `Shutdown()`
+
+---
+
+### `go/internal/execnode/exec_registry.go`
+**Package:** `execnode`
+
+In-memory registry for tracking in-flight executions with cancellation support.
+
+**Exports:** `ExecRegistry`, `NewExecRegistry()`, `Register()`, `Unregister()`, `Cancel()`, `CancelAll()`, `List()`, `Len()`
+
+---
+
+### `go/internal/execnode/term_store.go`
+**Package:** `execnode`
+
+Disk-persisted cluster term and leader ID storage with atomic writes.
+
+**Exports:** `TermStore`, `NewTermStore()`, `Load()`, `Save()`
+
+---
+
+### `go/internal/execnode/execnode_internal_test.go`
+**Package:** `execnode`
+
+Tests: `TestTermStoreSaveAndLoad`, `TestTermStoreLoadEmpty`, `TestTermStoreOverwrite`, `TestTermStoreLoadFromFile`, `TestTermStoreCorruptFile`, `TestExecRegistryRegister`, `TestExecRegistryUnregister`, `TestExecRegistryCancel`, `TestExecRegistryCancelNotFound`, `TestExecRegistryCancelAll`, `TestExecRegistryList`, `TestExecRegistryCancelAllEmpty`, `TestSetLeader`, `TestSetTerm`, `TestSetTermAlsoUpdatesPlanDist`, `TestDefaultNodeID`
+
+---
+
+### `go/internal/plandist/plandist.go`
+**Package:** `plandist`
+
+Plan distribution across cluster. Leader publishes `PlanMessage{type:"plan"}` with compiled bytecode to `_flowrulz_plans`, waits for ACKs from quorum on `_flowrulz_acks`, then publishes `PlanMessage{type:"activate"}`. Term-based rejection prevents stale plans. `WaitForAcks()` blocks with timeout. `QuorumProvider` interface for membership counting.
+
+**Exports:** `PlanMessage`, `AckMessage`, `PlanHandler`, `AckHandler`, `QuorumProvider`, `PlanDistributor`, `New()`, `Start()`, `Stop()`, `SetTerm()`, `CurrentTerm()`, `PublishPlan()`, `ActivatePlan()`, `SendAck()`, `WaitForAcks()`, `RecordAck()`, `PlanMessageFromBytes()`, `AckMessageFromBytes()`
+
+---
+
+### `go/internal/plandist/plandist_test.go`
+**Package:** `plandist`
+
+Tests: `TestPublishAndReceivePlan`, `TestSendAndReceiveAck`, `TestWaitForAcks`, `TestWaitForAcksTimeout`, `TestQuorumZeroWithMajority`, `TestQuorumNegativeAll`, `TestQuorumZeroSingleNode`, `TestSetTerm`, `TestHandleAckNoPending`, `TestHandleAckDuplicate`, `TestPublishPlanNoProducer`, `TestActivatePlan`
+
+---
+
+### `go/internal/observability/metrics.go`
+**Package:** `observability`
+
+In-memory metrics collector. `Counter` (atomic int64), `Gauge` (atomic int64), `Histogram` (sorted buckets + atomic counters). Per-name dedup via `sync.RWMutex`. Global shortcuts: `GetCounter()`, `GetGauge()`, `RecordExec()`, `RecordError()`.
+
+**Exports:** `Counter`, `Gauge`, `Histogram`, `MetricsCollector`, `MetricSnapshot`, `NewMetricsCollector()`, `Snapshot()`, global shortcuts
+
+---
+
+### `go/internal/observability/metrics_test.go`
+**Package:** `observability`
+
+Tests: `TestCounter`, `TestCounterDedup`, `TestGauge`, `TestHistogram`, `TestSnapshot`, `TestGlobalShortcuts`
+
+---
+
+### `go/internal/observability/tracer.go`
+**Package:** `observability`
+
+OpenTelemetry span exporter. Reads raw span bytes from `bridge.GetSpans()`, parses `Span` struct (opcode, service_id, layer, duration_ns, status), creates OTLP spans. Ticker loop every 5s.
+
+**Exports:** `SpanExporter`, `NewSpanExporter()`, `Start()`, `Stop()`
+
+---
+
+### `go/internal/observability/tracer_test.go`
+**Package:** `observability`
+
+Tests: `TestSpanExporterNilWhenEmptyEndpoint`, `TestSpanExporterStartStop`, `TestSpanSize`
+
+---
+
+### `go/internal/reliability/circuitbreaker.go`
+**Package:** `reliability`
+
+Three-state circuit breaker per service: `Closed` → `Open` (threshold=5 failures) → `HalfOpen` (recovery=30s). Lock-free state via atomics. Wired in execnode `callService()`.
+
+**Exports:** `State`, `CircuitBreaker`, `NewCircuitBreaker()`, `Allow()`, `Success()`, `Failure()`
+
+---
+
+### `go/internal/reliability/circuitbreaker_test.go`
+**Package:** `reliability`
+
+Tests: `TestInitiallyClosed`, `TestTripsAfterThreshold`, `TestSuccessResets`, `TestHalfOpenRecovery`, `TestHalfOpenLimitsRequests`, `TestSuccessClosesFromHalfOpen`
+
+---
+
+### `go/internal/reliability/dlq.go`
+**Package:** `reliability`
+
+Dead-letter queue. Bounded in-memory cache (default 10k, FIFO evict). Optional Kafka producer via `WithDLQProducer()`. Per-entry replay, bulk `ReplayAll()`, JSON export, file persistence via `WithDLQDir()`. No-fail design: `Send()` always succeeds.
+
+**Exports:** `DeadLetterEntry`, `DLQ`, `DLQOption`, `NewDLQ()`, `SetReplayFn()`, `Send()`, `Replay()`, `ReplayAll()`, `List()`, `Len()`, `Clear()`, `ToJSON()`
+
+---
+
+### `go/internal/reliability/dlq_test.go`
+**Package:** `reliability`
+
+Tests: `TestDLQSendAndList`, `TestDLQMaxSize`, `TestDLQReplay`, `TestDLQReplayAll`, `TestDLQClear`, `TestDLQToJSON`
+
+---
+
+### `go/internal/reliability/dedup.go`
+**Package:** `reliability`
+
+Bounded in-memory dedup tracker. `Mark(id)`, `Seen(id)`. Default 10k entries, 5min TTL. Evicts oldest at capacity. Background cleanup goroutine. Wired in execnode handler by MessageID.
+
+**Exports:** `DedupEntry`, `DedupTracker`, `NewDedupTracker()`, `Seen()`, `Mark()`, `StartCleanup()`, `Len()`, `Clear()`
+
+---
+
+### `go/internal/reliability/dedup_test.go`
+**Package:** `reliability`
+
+Tests: `TestDedupSeenUnseen`, `TestDedupMarkAndSeen`, `TestDedupMaxSize`, `TestDedupClear`, `TestDedupCleanupExpired`, `TestDedupDefaults`, `TestDedupEvictsOldest`
+
+---
+
+### `go/internal/reliability/ratelimit.go`
+**Package:** `reliability`
+
+Token bucket rate limiter per name. Configurable rate/burst. Double-checked locking for bucket creation. Default: rate=100, burst=100.
+
+**Exports:** `TokenBucket`, `RateLimiter`, `NewRateLimiter()`, `NewTokenBucket()`, `Bucket()`, `SetBucket()`, `Allow()`, `AllowN()`
+
+---
+
+### `go/internal/reliability/ratelimit_test.go`
+**Package:** `reliability`
+
+Tests: `TestTokenBucketBasic`, `TestTokenBucketRefill`, `TestAllowN`, `TestRateLimiter`, `TestRateLimiterDefaultBucket`, `TestRateLimiterIsolation`
+
+---
+
+### `go/internal/reliability/saga.go`
+**Package:** `reliability`
+
+Saga pattern tracker for compensating transactions. `RegisterStep(execID, step)` appends step with compensator info. `Compensate(execID)` calls compensators in reverse order. Optional disk persistence.
+
+**Exports:** `SagaStep`, `CompensatorFunc`, `SagaTracker`, `NewSagaTracker()`, `NewSagaTrackerWithDir()`, `RegisterStep()`, `Compensate()`, `StepsFor()`, `Clear()`
+
+---
+
+### `go/internal/reliability/saga_test.go`
+**Package:** `reliability`
+
+Tests: `TestSagaTrackerRegisterCompensate`, `TestSagaTrackerNoCompensator`, `TestSagaTrackerCompensateError`, `TestSagaTrackerClear`
+
+---
+
+### `go/internal/flow/flow.go`
+**Package:** `flow` (internal workflow)
+
+Workflow orchestration with file-based checkpointing. `FlowState`: `Pending`, `Running`, `Completed`, `Failed`. `Orchestrator` manages flows by ID, persists checkpoints as `<id>.json`. Atomic write via `.tmp` + rename.
+
+**Exports:** `FlowState`, `Flow`, `Orchestrator`, `NewOrchestrator()`, `NewOrchestratorWithCheckpointDir()`, `Start()`, `Get()`, `StoreResponse()`, `Complete()`, `Fail()`, `Remove()`, `List()`
+
+---
+
+### `go/internal/flow/flow_test.go`
+**Package:** `flow`
+
+Tests: `TestStartFlow`, `TestGetFlow`, `TestStoreResponse`, `TestStoreResponseNonexistentFlow`
+
+---
+
+### `go/internal/plugins/loader.go`
+**Package:** `plugins`
+
+WASM plugin loader. `LoadDir(dir)` scans for `.wasm` files, registers each via `bridge.RegisterPlugin()`. Filename without extension becomes plugin name.
+
+**Exports:** `LoadDir()`
+
+---
+
+## Simulator (19 files)
 
 ### `simulator/simulator.go`
 **Package:** `simulator`
 
-Top-level orchestrator. Creates ServiceRegistry, Timeline, Metrics, Network, Nodes (Scheduler instances), Dispatcher, LoadGen, Dashboard. `New()` compiles default plans via bridge.Compile, assigns compiled bytecode to per-node plan copies. `Run()` starts all components, runs for configured duration, prints results. `Stop()` tears down orderly.
+Top-level orchestrator. Creates ServiceRegistry, Timeline, Metrics, Network, Scheduler Nodes, Dispatcher, LoadGen, Dashboard. Compiles plans via `bridge.Compile`. `Run()` starts all components, runs for duration, prints results.
 
 **Exports:** `Simulator`, `New()`, `Run()`, `Stop()`, `Client()`
+
+---
+
+### `simulator/simulator_test.go`
+**Package:** `simulator`
+
+Tests: `TestOrderFlowExecution`, `TestSuspensionResume`, `TestServiceFailure`, `TestMultiNodeDispatch`, `TestFullSimulatorRun`, `TestPaymentOutageAllFail`
 
 ---
 
 ### `simulator/client.go`
 **Package:** `simulator`
 
-Client for programmatic interaction. `Send(ruleID, body)` dispatches a message via the Dispatcher and blocks until the execution completes, returning the output body and duration. `RegisterService(svc)` adds a mock service. `AddRule(id, dsl)` compiles a DSL rule and registers on all nodes. `Plans()`/`Services()` list registered items.
+Programmatic client. `Send(ruleID, body)` dispatches via EventBus or direct dispatch, returns output + duration. `RegisterService(svc)`, `AddRule(id, dsl)`, `Plans()`, `Services()`.
 
-**Exports:** `Client`, `SendResult`, `Send()`, `RegisterService()`, `AddRule()`, `Plans()`, `Services()`
+**Exports:** `Client`, `SendResult`, `ServiceInfo`, `Send()`, `RegisterService()`, `AddRule()`, `Plans()`, `Plan()`, `RemoveRule()`, `Services()`
+
+---
+
+### `simulator/client_test.go`
+**Package:** `simulator`
+
+Tests: `TestClientSendBridgeRule`, `TestClientSendRuleNotFound`, `TestClientAddRule`, `TestClientRegisterService`
 
 ---
 
 ### `simulator/admin.go`
 **Package:** `simulator`
 
-Admin HTTP handlers for interactive mode. Registered on the dashboard mux via `RegisterAdminHandlers()`. Provides `POST /api/admin/send` (dispatch message to rule), `GET/POST /api/admin/rules` (list/add rules), `GET/POST /api/admin/services` (list/add services).
+Admin HTTP handlers for interactive mode. Registered on dashboard mux. Endpoints: `/api/admin/send`, `/api/admin/rules`, `/api/admin/services`, `/api/admin/lanes`, `/api/admin/validate`, `/api/admin/health`, `/api/admin/partitions`.
 
 **Exports:** `RegisterAdminHandlers()`
+
+---
+
+### `simulator/cmd/simulator/main.go`
+**Package:** `main`
+
+CLI entry point. Flags: `--nodes`, `--workers`, `--scenario`, `--rate`, `--duration`, `--speed`, `--dashboard`, `--dashboard-addr`, `--drop`, `--slow`, `--scenarios`, `--verbose`, `--interactive`.
 
 ---
 
 ### `simulator/config/config.go`
 **Package:** `config`
 
-Configuration structs for the simulator. `SimConfig` holds Nodes count, Workers per node, Scenario name, Duration, Rate, Speed multiplier, Dashboard address, Chaos settings. `ChaosConfig` configures packet drop, slow network, duplication.
+`SimConfig` holds Nodes, Workers, Scenario, Duration, Rate, Speed, Dashboard, DashboardAddr, Chaos config, Plans. `ChaosConfig`: drop probability, slow factor, duplicate percentage.
 
 **Exports:** `SimConfig`, `ChaosConfig`
 
@@ -342,7 +566,7 @@ Configuration structs for the simulator. `SimConfig` holds Nodes count, Workers 
 ### `simulator/dashboard/dashboard.go`
 **Package:** `dashboard`
 
-HTTP dashboard + admin API server. Serves real-time metrics, event timeline, node status, and execution detail. Uses `ServeMux` with JSON API endpoints. Admin endpoints can be injected via `AddHandler()`. Serves an HTML/JS SPA at `/`.
+HTTP dashboard server with embedded HTML/CSS/JS SPA. Real-time metrics, service DAG graph, latency cards, node queues, execution table, event timeline, rule creation form, send request form. API endpoints: `/api/metrics`, `/api/nodes`, `/api/events`, `/api/executions/`, `/api/executions/{id}`, `/api/stats`. Refresh interval 1s.
 
 **Exports:** `Dashboard`, `New()`, `Start()`, `Stop()`, `AddHandler()`
 
@@ -351,34 +575,50 @@ HTTP dashboard + admin API server. Serves real-time metrics, event timeline, nod
 ### `simulator/dispatcher/dispatcher.go`
 **Package:** `dispatcher`
 
-Hash-based message dispatcher. Maps execution context ID to a node via FNV-32a hash, enqueues on the target node's Scheduler. `DispatchByKey()` allows routing by explicit key.
+Hash-based message dispatcher. Maps exec ID to node via FNV-32a. `Dispatch(ctx)` records EventCreated, enqueues on target node's Scheduler.
 
-**Exports:** `Dispatcher`, `New()`, `Dispatch()`, `DispatchByKey()`, `StartAll()`, `StopAll()`
+**Exports:** `Dispatcher`, `New()`, `Dispatch()`, `StartAll()`, `StopAll()`
 
 ---
 
-### `simulator/execution/context.go`
-**Package:** `execution`
+### `simulator/eventbus/eventbus.go`
+**Package:** `eventbus`
 
-`ExecutionContext` — state object flowing through the simulator. Holds Plan, IP (instruction pointer), State (Created/Ready/Running/WaitingForService/Completed/Failed), Variables map, IncomingBody, Output, WaitingService, ResultCh for client delivery. `Transition()` records state changes, `MarkDone()`/`MarkFailed()` set final state.
+In-memory EventBus with Go channels. Publish, Subscribe, Request/Reply, Broadcast, Delay, Drop, Duplicate semantics. Fan-out to all handlers per topic.
 
-**Exports:** `State`, `Result`, `ExecutionContext`, `StateChange`, `NewContext()`, `Transition()`, `MarkDone()`, `MarkFailed()`, `AddEvent()`
+**Exports:** `EventBus`, `New()`, `Publish()`, `PublishToPartition()`, `Subscribe()`, `Request()`, `Reply()`, `Broadcast()`, `Unsubscribe()`, `Close()`, `TopicStats()`
+
+---
+
+### `simulator/eventbus/eventbus_test.go`
+**Package:** `eventbus`
+
+Tests (12): `TestPublishSubscribe`, `TestPublishMultipleSubscribers`, `TestPublishToNoSubscribers`, `TestRequestReply`, `TestRequestTimeout`, `TestUnsubscribe`, `TestDelayedMessage`, `TestCloseRejectsPublish`, `TestMultipleTopics`, `TestMessageIDAutoAssign`, `TestTopicStats`
 
 ---
 
 ### `simulator/execution/plan.go`
 **Package:** `execution`
 
-Plan and Instruction types for the simulator's instruction-based execution path. Defines OpCodes: OpNop, OpCallService, OpValidate, OpBranch, OpPublish, OpReturn. Also holds `PlanBytes` (compiled bytecode for real VM) and `ServiceNames` map. Provides built-in flows: OrderFlow, OrderFlowAlt, PaymentFlow, RefundFlow.
+Plan and Instruction types for simulator's instruction-based execution path. `OpCode`: `Nop`, `CallService`, `Validate`, `Branch`, `Publish`, `Return`. Also holds `PlanBytes` (compiled bytecode) and `ServiceNames`.
 
-**Exports:** `OpCode`, `Instruction`, `Plan`, `NewPlan()`, builtin plan vars
+**Exports:** `OpCode`, `Instruction`, `Plan`, `NewPlan()`
+
+---
+
+### `simulator/execution/context.go`
+**Package:** `execution`
+
+`ExecutionContext` flowing through simulator. Holds Plan, IP, State (Created/Ready/Running/Waiting/Completed/Failed), Variables, IncomingBody, Output, WaitingService, ResultCh.
+
+**Exports:** `State`, `Result`, `ExecutionContext`, `StateChange`, `NewContext()`, `Transition()`, `MarkDone()`, `MarkFailed()`, `AddEvent()`
 
 ---
 
 ### `simulator/execution/queue.go`
 **Package:** `execution`
 
-ReadyQueue (FIFO with mutex, signaled via channel) and WaitingQueue (map of correlation ID → ExecutionContext). Used by Scheduler for execution management and suspension.
+`ReadyQueue` (FIFO with mutex + channel signal) and `WaitingQueue` (map correlationID → ExecutionContext).
 
 **Exports:** `ReadyQueue`, `WaitingQueue`, `NewReadyQueue()`, `NewWaitingQueue()`
 
@@ -387,7 +627,7 @@ ReadyQueue (FIFO with mutex, signaled via channel) and WaitingQueue (map of corr
 ### `simulator/loadgen/loadgen.go`
 **Package:** `loadgen`
 
-Traffic generator. `Config` holds RequestsPerSec, Duration, Pattern. `Generator` dispatches messages at the configured rate using ticker-based pacing. Supports pattern-based message selection (0=random, 1=sequential, 2=weighted by service).
+Traffic generator. Ticker-based pacing at configured rate. Supports patterns: random, sequential, weighted.
 
 **Exports:** `Config`, `Generator`, `DefaultConfig()`, `New()`, `Start()`, `Stop()`
 
@@ -396,7 +636,7 @@ Traffic generator. `Config` holds RequestsPerSec, Duration, Pattern. `Generator`
 ### `simulator/metrics/metrics.go`
 **Package:** `metrics`
 
-Metrics collector. Tracks completed/failed/dropped counts, throughput, latency percentiles (P50/P95/P99), and per-service latency/error rates. `Snapshot()` returns all current values for dashboard display.
+Metrics collector. Tracks completed/failed/dropped counts, throughput, latency percentiles (P50/P95/P99), per-service stats.
 
 **Exports:** `Collector`, `Snapshot`, `NodeStats`, `ServiceStats`, `NewCollector()`, `RecordCompleted()`, `RecordFailed()`, `RecordDropped()`, `RecordServiceCall()`, `Snapshot()`
 
@@ -405,7 +645,7 @@ Metrics collector. Tracks completed/failed/dropped counts, throughput, latency p
 ### `simulator/network/network.go`
 **Package:** `network`
 
-Simulated network layer. `CallService()` applies configurable latency (min/max jitter), optional chaos (packet drop, slow network, duplication). ChaosConfig controls drop probability, slow factor, duplicate percentage.
+Simulated network layer. `CallService()` applies configurable latency (min/max jitter), chaos (drop, slow, duplicate).
 
 **Exports:** `Config`, `ChaosConfig`, `Network`, `New()`, `SetChaos()`, `CallService()`
 
@@ -414,11 +654,7 @@ Simulated network layer. `CallService()` applies configurable latency (min/max j
 ### `simulator/scheduler/scheduler.go`
 **Package:** `scheduler`
 
-Per-node execution scheduler. Uses worker pool (goroutines) pulling from a ReadyQueue. Two execution paths:
-- **Instruction-based**: loops over `Plan.Instructions`, dispatches OpCodes (CallService, Validate, Branch, Publish, Return)
-- **Bridge-based** (PlanBytes != nil): cooperative loop calling `bridge.ExecuteStep()`, handles StepPending (service call via Network) and StepDone (captures output, records metrics)
-
-`PlanCache` maps rule IDs to Plans. `sendResult()` delivers completion/failure to `ctx.ResultCh` for client integration.
+Per-node execution scheduler. Worker pool pulling from ReadyQueue. Two paths: instruction-based (loop over Plan.Instructions) and bridge-based (cooperative `ExecuteStep` loop). `PlanCache` maps rule IDs to Plans.
 
 **Exports:** `Result`, `Scheduler`, `PlanCache`, `New()`, `NewPlanCache()`, `Start()`, `Stop()`, `Enqueue()`, `Snapshot()`
 
@@ -427,7 +663,7 @@ Per-node execution scheduler. Uses worker pool (goroutines) pulling from a Ready
 ### `simulator/scenarios/scenarios.go`
 **Package:** `scenarios`
 
-Built-in test scenarios. Each scenario defines a network config and loadgen config. Available: ramp-up (gradual load increase), black-friday (high rate spike), payment-outage (payment 100% failure), spike-test (intermittent bursts), chaos-monkey (random failures + slow network).
+Built-in scenarios: ramp-up, black-friday, payment-outage, spike-test, chaos-monkey.
 
 **Exports:** `Scenario`, `All`, `ByName()`, `DefaultPlans()`
 
@@ -436,7 +672,7 @@ Built-in test scenarios. Each scenario defines a network config and loadgen conf
 ### `simulator/services/service.go`
 **Package:** `services`
 
-Mock service with configurable behavior. `MockService` has BaseLatency, LatencyJitter, FailureRate, MaxConcurrent. `Call()` applies latency then returns `{"status":"ok"}` or fails based on failure rate. `ServiceRegistry` maps names to services. `DefaultServices()` pre-populates 9 common services (validate, inventory, fraud, payment, email, loyalty, invoice, shipping, notification).
+Mock services with configurable latency, failure rate, max concurrent. `DefaultServices()` pre-populates 9 services.
 
 **Exports:** `MockService`, `CallRecord`, `CallResult`, `ServiceRegistry`, `NewRegistry()`, `Register()`, `Get()`, `Names()`, `DefaultServices()`
 
@@ -445,355 +681,309 @@ Mock service with configurable behavior. `MockService` has BaseLatency, LatencyJ
 ### `simulator/timeline/timeline.go`
 **Package:** `timeline`
 
-Event timeline store. Records all execution events (created, instruction, service call, response, completion, failure) with timestamps. Supports `Recent(n)`, `ForExec(id)`, and aggregate `Stats()`.
+Event timeline store. Records all execution events with timestamps. `Recent(n)`, `ForExec(id)`, `Stats()`.
 
-**Exports:** `Event`, `Store`, `EventType` constants, `NewStore()`, `Record()`, `Recent()`, `ForExec()`, `Stats()`
+**Exports:** `Event`, `Store`, `NewStore()`, `Record()`, `Recent()`, `ForExec()`, `Stats()`
 
 ---
 
-## Rust (34 source files)
+## Rust (26 source files)
 
 ### `rust/src/lib.rs`
 **Package:** `flowrulz_core`
 
-Crate root. Declares all modules: `bytecode`, `dsl`, `executor`, `memory`, `tracing`. Exports the top-level types used by the FFI boundary.
+Crate root. Declares modules: `bytecode`, `dsl`, `error`, `executor`, `ffi`, `memory`, `tracing`. Re-exports `ExecutionPlan` and `VM`.
 
 **Exports:** `ExecutionPlan`, `VM`
 
 ---
 
-### `rust/src/ffi.rs`
-**Package:** `flowrulz_core`
+### `rust/src/error.rs`
+**Package:** `flowrulz_core::error`
 
-C FFI boundary. All functions use `#[no_mangle] pub unsafe extern "C"` with the `flowrulz_` prefix:
-- `flowrulz_compile(dsl, rule_id)` — DSL string → `Vec<u8>` plan bytes (bincode serialized)
-- `flowrulz_execute(plan, body, caller_cb, ctx)` — deserialize plan, create `VM`, run, return `ctx.body`
-- `flowrulz_execute_step(plan, ctx_bytes, resp, caller_cb)` — cooperative single-step execution
-- `flowrulz_get_spans(buf, len)` — drain the thread-local span ring buffer into the given buffer
-- `flowrulz_version()` — return semver string
-- `flowrulz_plan_complexity(plan)` — count instructions for lane assignment
-- `flowrulz_plan_services(plan)` — extract service IDs from plan
-- `flowrulz_intern(string)` / `flowrulz_intern_lookup(id)` — string interning
-- `flowrulz_register_plugin(name, wasm_bytes)` — register a WASM plugin module by name
-- `flowrulz_msg_alloc(size)` / `flowrulz_msg_release(ptr)` — allocate/free via `std::alloc`
+`FfiError` enum: `NullPointer=-1`, `InvalidUtf8=-2`, `Lex=-3`, `Parse=-4`, `Compile=-5`, `Serialize=-6`, `BufferTooSmall=-7`, `Deserialize=-8`, `Exec=-9`. Implements `Display`.
 
-The service call caller registers the C function pointer via `caller_cb_t` signature.
-
-**Exports:** All `flowrulz_*` extern C functions
+**Exports:** `FfiError`, `FfiError::code()`
 
 ---
 
-### `rust/src/error.rs`
-**Package:** `flowrulz_core`
+### `rust/src/ffi.rs`
+**Package:** `flowrulz_core::ffi`
 
-FFI error codes. `FfiError` enum covers null pointer, buffer too small, lex/parse/compile/serialize/deserialize/execution errors. Implements `Display`.
+All `#[no_mangle] pub unsafe extern "C"` functions:
+- `flowrulz_compile(dsl, rule_id)` — DSL string → bincode-serialized `ExecutionPlan`
+- `flowrulz_execute(ctx_id, plan, body, caller_cb, out, err, msg_id, corr_id, trace_id, partition, offset)` — synchronous, callback-based
+- `flowrulz_execute_step(ctx_id, plan, ctx_bytes, resp, caller_cb, out, err, pending_svc, pending_body, ctx_out)` — cooperative step-based
+- `flowrulz_msg_alloc(size)` / `flowrulz_msg_release(ptr)` — `std::alloc` directly
+- `flowrulz_intern(s)` / `flowrulz_intern_lookup(id)` — string interning
+- `flowrulz_get_spans(out, cap)` — drain thread-local span ring buffer
+- `flowrulz_register_plugin(name, wasm_bytes)` — WASM plugin registration
+- `flowrulz_plan_services(plan)` — extract service ID→name map as JSON
+- `flowrulz_plan_complexity(plan)` — returns `complexity_score`
 
-**Exports:** `FfiError`
+**Global statics:** `INTERN_TABLE: Lazy<InternTable>` (prefilled with 7 standard headers)
 
 ---
 
 ### `rust/src/bytecode/mod.rs`
 **Package:** `flowrulz_core::bytecode`
 
-Module declaration. Re-exports all bytecode sub-module types with `pub use *`.
+Re-exports all sub-modules: `consts`, `dag_table`, `event`, `execution`, `instruction`, `opcode`, `plan`, `resolved_type`, `services`.
 
 ---
 
 ### `rust/src/bytecode/opcode.rs`
-**Package:** `flowrulz_core::bytecode`
+**Package:** `flowrulz_core::bytecode::opcode`
 
-Opcode enum (25 variants: 0–24). Also defines `GateOp` (comparison operators), `ChunkMode`, and `RetryStrategy` enums used by instruction operands.
+`OpCode` enum (25 variants: 0=Next..24=Delay). `GateOp` (Eq/Ne/Gt/Lt/Gte/Lte/Contains). `ChunkMode` (Sequential/Parallel). `RetryStrategy` (Exponential/Linear/Fixed).
 
 **Exports:** `OpCode`, `GateOp`, `ChunkMode`, `RetryStrategy`
 
 ---
 
 ### `rust/src/bytecode/instruction.rs`
-**Package:** `flowrulz_core::bytecode`
+**Package:** `flowrulz_core::bytecode::instruction`
 
-The 8-byte `Instruction` struct: `{op: u8, flags: u8, a: u16, b: u16, c: u16}`. Provides named constructors for every opcode (`op_next()`, `op_gate()`, `op_dag()`, etc.) and accessor methods (`svc_id()`, `timeout_ms()`, `has_retry()`, `label()`).
+8-byte `Instruction` struct: `{op: OpCode, flags: u8, a: u16, b: u16, c: u16}`. Factory methods for every opcode: `next()`, `parallel()`, `gate()`, `dag()`, `emit()`, etc. Accessors: `delay_ms()`, `has_retry()`, `gate_op()`, `timeout_ms()`.
 
 **Exports:** `Instruction`
 
 ---
 
 ### `rust/src/bytecode/event.rs`
-**Package:** `flowrulz_core::bytecode`
+**Package:** `flowrulz_core::bytecode::event`
 
-Universal message type. `Event` holds `id`, `topic`, `payload`, `headers`, `metadata`. `Mode` enum with 6 variants. `EventMetadata` contains `mode`, `reply_to`, `correlation_id`, `trace_id`, `content_type`, `schema_name`, `schema_version`, `partition`, `offset`. `Mode` enum with 6 variants.
+`Event` with `id`, `topic`, `payload`, `headers`, `metadata`. `EventMetadata` with `mode`, `reply_to`, `correlation_id`, `trace_id`, `content_type`, `schema_name`, `schema_version`, `partition`, `offset`. `Mode` enum: `Publish=0`, `Request=1`, `Reply=2`, `Stream=3`, `Workflow=4`, `Internal=5`.
 
 **Exports:** `Event`, `EventMetadata`, `Mode`
 
 ---
 
 ### `rust/src/bytecode/execution.rs`
-**Package:** `flowrulz_core::bytecode`
+**Package:** `flowrulz_core::bytecode::execution`
 
-`ExecutionContext` — the state object flowing through the VM. Holds `event`, `body` (current working payload), `variables` (intermediate state), `outputs` (service call results keyed by service name), `failed` flag, `errors` vec, `hop_count`, `retry_count`, and `deadline_ms`.
+`ExecutionContext`: `event`, `body`, `variables`, `outputs`, `headers`, `failed`, `errors`, `hop_count`, `retry_count`, `deadline_ms`. Services enrich context via `set_service_output()`.
 
 **Exports:** `ExecutionContext`
 
 ---
 
 ### `rust/src/bytecode/plan.rs`
-**Package:** `flowrulz_core::bytecode`
+**Package:** `flowrulz_core::bytecode::plan`
 
-`ExecutionPlan` — the compiled output of the DSL compiler. Contains: `instructions` (flat vec), `constant_pool`, `service_table`, `dag_tables`, `retry_configs`, `chunk_configs`, `schema`, version metadata.
-
-Also holds helper types: `RetryConfig` (max_attempts, strategy, fixed_ms), `ChunkConfig` (mode, count).
+`ExecutionPlan`: `rule_id`, `version`, `instr_count`, `complexity_score`, `instructions`, `const_pool`, `services`, `dag_tables`, `retry_configs`, `chunk_configs`, `schema`. `RetryConfig` (max_attempts, strategy, fixed_ms). `ChunkConfig` (count, mode).
 
 **Exports:** `ExecutionPlan`, `RetryConfig`, `ChunkConfig`
 
 ---
 
-### `rust/src/bytecode/consts.rs`
-**Package:** `flowrulz_core::bytecode`
-
-`ConstantPool` — interned string table mapping `String → u16` IDs. Used by instructions to reference field names, values, and labels. Provides `intern()`, `lookup()`, `get_or_intern()`, and iterators.
-
-**Exports:** `ConstantPool`
-
----
-
 ### `rust/src/bytecode/services.rs`
-**Package:** `flowrulz_core::bytecode`
+**Package:** `flowrulz_core::bytecode::services`
 
-`ServiceTable` — maps `String` service names to `u16` numeric IDs and holds `ServiceEntry` metadata (name, id, endpoint info). Generated at compile time from the DSL service declarations.
+`ServiceTable`: `entries: Vec<ServiceEntry>`, `index: HashMap<String, u16>`. `ServiceEntry`: `id`, `name`.
 
 **Exports:** `ServiceTable`, `ServiceEntry`
 
 ---
 
+### `rust/src/bytecode/consts.rs`
+**Package:** `flowrulz_core::bytecode::consts`
+
+`ConstantPool`: `entries: Vec<String>`, `index: HashMap<String, u16>`. Methods: `add()`, `get()`, `len()`, `entries()`.
+
+**Exports:** `ConstantPool`
+
+---
+
 ### `rust/src/bytecode/resolved_type.rs`
-**Package:** `flowrulz_core::bytecode`
+**Package:** `flowrulz_core::bytecode::resolved_type`
 
-Type system for schema validation. `ResolvedType` enum: `String`, `Integer`, `Float`, `Boolean`, `Object`, `Array`, `Enum(Vec<String>)`, `Null`, `Any`. `FieldSchema` holds field name, type, and required flag. `Schema` is a map of field names to `FieldSchema`, with `is_valid()` that validates a JSON value against the schema.
-
-Enum syntax in DSL: `enum[val1|val2|...]`.
+`ResolvedType` enum: `String`, `Integer`, `Float`, `Boolean`, `Object`, `Array`, `Null`, `Any`, `Enum(Vec<String>)`. `FieldSchema`: `name`, `type`, `required`. `Schema`: `fields: Vec<FieldSchema>`. Methods: `field_type()`, `is_valid()`, `check()`, `supports_ordering()`, `supports_contains()`, `is_numeric()`.
 
 **Exports:** `ResolvedType`, `FieldSchema`, `Schema`
 
 ---
 
-
-
 ### `rust/src/bytecode/dag_table.rs`
-**Package:** `flowrulz_core::bytecode`
+**Package:** `flowrulz_core::bytecode::dag_table`
 
-DAG execution metadata. `DAGTable` holds: `nodes` (service IDs + parent IDs), `layers` (topologically sorted by level), `terminal_nodes`, `failure_policy`, `node_timeouts`, `merge_strategy`, `distributed` flag.
+`DAGNode`: `service_id`, `layer`, `parent_ids`. `DAGTable`: `nodes`, `layers`, `terminal_nodes`, `failure_policy`, `node_timeouts`, `merge_strategy`, `distributed`. `DAGFailurePolicy`: `AbortAll`, `ContinueOthers`, `SkipDependents`. `MergeStrategy`: `LastWins`, `ArrayConcat`, `DeepMerge`, `ExplicitMap`.
 
-`DAGFailurePolicy`: `AbortAll`, `ContinueOthers`, `SkipDependents`.
-`MergeStrategy`: `LastWins` (keyed JSON object), `ArrayConcat` (JSON array), `DeepMerge` (recursive), `ExplicitMap` (not yet implemented — falls back to LastWins).
-
-**Exports:** `DAGTable`, `DAGNode`, `DAGFailurePolicy`, `MergeStrategy`
+**Exports:** `DAGNode`, `DAGTable`, `DAGFailurePolicy`, `MergeStrategy`
 
 ---
 
 ### `rust/src/dsl/mod.rs`
 **Package:** `flowrulz_core::dsl`
 
-Module declaration. Re-exports all DSL sub-module types.
+Re-exports sub-modules: `compiler`, `lexer`, `optimizer`, `parser`.
 
 ---
 
 ### `rust/src/dsl/lexer.rs`
-**Package:** `flowrulz_core::dsl`
+**Package:** `flowrulz_core::dsl::lexer`
 
-Lexer — converts DSL source text to a stream of `Token` values. Handles: pipeline operators (`|`, `>`, `~`), labels (`n:` / `m:` / `p:` / `e:`), strings (single/double quoted), numbers, keys, gate conditions, schema definitions, retry configs, DAG blocks, and comments.
-
-Emits `LexError` on invalid input with position info.
+`Token` enum (22 variants), `LexError` (17 variants). `pub fn lex(input) -> Result<Vec<Token>, LexError>`.
 
 **Exports:** `Token`, `LexError`, `lex()`
 
 ---
 
 ### `rust/src/dsl/parser.rs`
-**Package:** `flowrulz_core::dsl`
+**Package:** `flowrulz_core::dsl::parser`
 
-Parser — consumes `Token` stream, produces an `ASTNode`-based `Pipeline`. Validates structural rules: retry must follow a service call, collect after parallel, etc. Each DS L step is one `ASTNode` in the pipeline.
+`ASTNode` enum (same variants as Token), `Pipeline` (nodes: Vec<ASTNode>), `ParseError` (18 variants). `pub fn parse(tokens) -> Result<Pipeline, ParseError>`.
 
 **Exports:** `ASTNode`, `Pipeline`, `ParseError`, `parse()`
 
 ---
 
 ### `rust/src/dsl/optimizer.rs`
-**Package:** `flowrulz_core::dsl`
+**Package:** `flowrulz_core::dsl::optimizer`
 
-Optimizer — transforms `Pipeline` → `OptimizedPipeline`. Performs: timeout hoisting (push timeouts down to individual service calls), emit merging (combine adjacent emits), dead code elimination, NOP removal, and retry merging.
+`Optimizer` (unit struct). `OptimizedPipeline`. Passes: simplify gates, hoist timeouts, merge emits, remove dead code, merge retries, remove unused labels, eliminate redundant jumps, remove nops.
 
-**Exports:** `OptimizedPipeline`, `Optimizer`, `Optimizer::optimize()`
+**Exports:** `Optimizer`, `OptimizedPipeline`, `Optimizer::new()`, `optimize()`
 
 ---
 
 ### `rust/src/dsl/compiler.rs`
-**Package:** `flowrulz_core::dsl`
+**Package:** `flowrulz_core::dsl::compiler`
 
-Compiler — consumes `OptimizedPipeline`, produces `ExecutionPlan`. `Compiler::new()` takes no arguments (was `new(&[])`). Handles: schema parsing from DSL, compile-time type checking (Gate conditions and Map expressions against declared field types), label resolution for jumps, DAG compilation (node/layer generation from DAG blocks), service table construction, constant pool population.
+`Compiler` (unit struct). `CompileError` (10 variants). `compile()` converts `OptimizedPipeline` → `ExecutionPlan`. `new()` is no-arg (was `new(&[])`). Internal: `type_check_gate()`, `type_check_map()`, `compile_dag()` (cycle detection, topological sort), `compile_schema()` (parses `{name:string,!age:int}`, `enum[val1|val2|...]`). Free function: `calc_complexity()`.
 
-Emits `CompileError` with span information for all DSL-level errors.
-
-**Exports:** `Compiler`, `CompileError`, `Compiler::compile()`
+**Exports:** `Compiler`, `CompileError`, `Compiler::compile()`, `calc_complexity()`
 
 ---
 
 ### `rust/src/executor/mod.rs`
 **Package:** `flowrulz_core::executor`
 
-The `VM` struct — main execution engine. `VM::run()` loops over `plan.instructions`, calling `dispatch()` on each. Dispatch matches `OpCode` to handler functions: `Next` → `exec_next`, `Gate` → `exec_jmp_if_false`, `Dag` → `exec_dag`, `Map` → `exec_map` (delegates `w:` prefix to plugin runtime), `Emit` → `exec_emit`, `Drop` → halt, `Jmp` → jump, `TypeGuard` → schema validation, etc.
+`VM` struct: `plan`, `arena`, `caller`, `ctx`. `StepResult` enum: `Done`, `Continue`, `Pending{svc_id,body,timeout_ms}`, `Delay(u64)`. `VM::run()` — dispatch loop. `VM::step(response)` — cooperative single-step. Modules: `chunk`, `dag`, `emit`, `expr`, `gate`, `helpers`, `map`, `next`, `plugin`, `parallel`, `runtime`.
 
-Module declarations: declares `pub mod plugin;` for WASM plugin runtime.
-
-After each dispatch, emits a `Span` (opcode, service_id, duration, status) via `crate::tracing::emit_span()`.
-
-**Exports:** `VM`, `VM::new()`, `VM::run()`
-
----
-
-### `rust/src/executor/runtime.rs`
-**Package:** `flowrulz_core::executor`
-
-`ExecutionRuntime` — higher-level wrapper around `VM`. Handles Chunk (split and execute) and Buffer (accumulate) opcodes at runtime level.
-
-**Exports:** `ExecutionRuntime`
+**Exports:** `VM`, `StepResult`, `VM::new()`, `VM::run()`, `VM::step()`
 
 ---
 
 ### `rust/src/executor/next.rs`
-**Package:** `flowrulz_core::executor`
+**Package:** `flowrulz_core::executor::next`
 
-`exec_next()` — service call handler for the `Next` and `Async` opcodes. Extracts `svc_id` and `timeout` from the instruction. If retry is configured (`has_retry()`), delegates to `exec_with_retry()` which loops up to `max_attempts` with delay (exponential/linear/fixed) and jitter.
+`exec_next()` — service call with optional retry (exponential/linear/fixed backoff). `exec_with_retry()`, `find_retry_config()`.
 
-`find_retry_config()` reads from `plan.retry_configs[instr.c]`, defaulting to 3 attempts with exponential backoff.
+**Exports:** `exec_next()`
 
-**Exports:** `exec_next()`, `exec_with_retry()`, `find_retry_config()`
+---
+
+### `rust/src/executor/parallel.rs`
+**Package:** `flowrulz_core::executor::parallel`
+
+`exec_parallel()` — fan-out to multiple services in parallel, store results under `_parallel` key. `exec_collect()` — extract `_parallel` key.
+
+**Exports:** `exec_parallel()`, `exec_collect()`
 
 ---
 
 ### `rust/src/executor/gate.rs`
-**Package:** `flowrulz_core::executor`
+**Package:** `flowrulz_core::executor::gate`
 
-`exec_jmp_if_false()` — gate/conditional opcode. Extracts a JSON field from `ctx.body` via dot-path, compares against a value using `GateOp` (eq, neq, gt, gte, lt, lte, contains, exists, !exists). If condition is false, sets the skip offset to jump over the gated block.
+`exec_jmp_if_false()` — field extraction + comparison using GateOp; skip instructions if false.
 
 **Exports:** `exec_jmp_if_false()`
 
 ---
 
 ### `rust/src/executor/map.rs`
-**Package:** `flowrulz_core::executor`
+**Package:** `flowrulz_core::executor::map`
 
-`exec_map()` — map/transform opcode. If the expression starts with `w:`, delegates to `plugin::call_plugin()` for WASM plugin execution. Otherwise evaluates `MapExpr` against `ctx.body`, producing a new JSON body. Handles field extraction (dot-path), key=value rewrites, constant assignments, and expression evaluation.
+`exec_map()` — field transformation. Supports `w:` prefix for WASM plugin dispatch, expression evaluation, field extraction by dot-path.
 
 **Exports:** `exec_map()`
 
 ---
 
-### `rust/src/executor/plugin.rs`
-**Package:** `flowrulz_core::executor`
-
-WASM plugin runtime. Maintains two global registries: `PLUGIN_BYTES` (name → raw WASM bytes) and `MODULE_CACHE` (name → compiled wasmtime `Engine`+`Module`). Plugins are lazily compiled on first `call()` invocation.
-
-`register(name, wasm_bytes)`: stores raw bytes for later compilation.
-`call(name, func_name, input)`: compiles (or loads from cache), instantiates, writes input at end of linear memory, calls the exported function with `(input_offset, input_len)` params, reads output from returned `(output_ptr << 32) | output_len` packed i64.
-`call_plugin(expr, body)`: parses `w:plugin.func()` expression, extracts plugin name and function name, delegates to `call()`.
-
-Calling convention: plugin exports `memory` + `process(ptr: i32, len: i32) → i64`. Fuel limit: 100k instructions.
-
-**Exports:** `register()`, `call()`, `call_plugin()`
-
----
-
-### `rust/src/executor/parallel.rs`
-**Package:** `flowrulz_core::executor`
-
-`exec_parallel()` — fan-out to multiple services concurrently. Calls each target service via the caller callback, collects all results, and merges them into a JSON array. `exec_collect()` simply increments `hop_count` as a synchronization marker.
-
-**Exports:** `exec_parallel()`, `exec_collect()`
-
----
-
 ### `rust/src/executor/emit.rs`
-**Package:** `flowrulz_core::executor`
+**Package:** `flowrulz_core::executor::emit`
 
-`exec_emit()` — fire-and-forget output opcode. Calls the caller callback for each target service but discards the return value. Used to produce events to output topics as a side effect.
+`exec_emit()` — fire-and-forget calls to multiple services, discarding results.
 
 **Exports:** `exec_emit()`
 
 ---
 
-
-
 ### `rust/src/executor/expr.rs`
-**Package:** `flowrulz_core::executor`
+**Package:** `flowrulz_core::executor::expr`
 
-Expression evaluator for `Map` expressions. Parses and evaluates: field references (`@.field.subfield`), string concatenation, and builtin function calls. ~30+ builtins: `to_string`, `parse_int`, `parse_float`, `coalesce`, `default`, `contains`, `keys`, `merge`, `epoch`, `hash`, `uuid`, `now`, `lower`, `upper`, `trim`, `length`, `concat`, `base64`, `json`, `substring`, `replace`.
+Expression evaluator for map transformations. `eval_map_expression()` parses and evaluates expressions. **31 builtins**: `to_string`, `parse_int`, `parse_float`, `parse_bool`, `coalesce`, `default`, `contains`, `keys`, `merge`, `epoch`, `hash`, `uuid`, `now`, `lower`, `upper`, `trim`, `length`, `concat`, `base64`, `base64_decode`, `json`, `substring`, `replace`, `split`, `abs`, `round`, `ceil`, `floor`, `min`, `max`, `typeof`. Quote-aware `parse_args()`.
 
-`call_builtin(name, &[Value])` dispatches by name.
-
-**Exports:** `eval_map_expression()`, `call_builtin()`
+**Exports:** `eval_map_expression()`
 
 ---
 
 ### `rust/src/executor/helpers.rs`
-**Package:** `flowrulz_core::executor`
+**Package:** `flowrulz_core::executor::helpers`
 
-Utility functions: `extract_json_field()` (dot-path field lookup on `serde_json::Value`), `compare_values()` (type-coercing comparison for Gate opcodes). JSON merge logic consolidated in `dag::deep_merge`.
+`extract_json_field()` — dot-path field extraction. `compare_values()` — type-coercing comparison for gates.
 
 **Exports:** `extract_json_field()`, `compare_values()`
 
 ---
 
 ### `rust/src/executor/dag.rs`
-**Package:** `flowrulz_core::executor`
+**Package:** `flowrulz_core::executor::dag`
 
-`exec_dag()` — DAG execution handler. Iterates layers in topological order. For each node:
-1. **SkipDependents check**: if any parent is in the failed set, skip.
-2. **Build input body**: merge parent results via `deep_merge()`.
-3. **Service call**: `caller(svc_id, merged_body, timeout)`.
-4. **Failure handling**: `AbortAll` → return Err immediately; `ContinueOthers` → record failure, continue; `SkipDependents` → same as ContinueOthers (downstream skip handled at step 1).
+`exec_dag()` — layer-by-layer DAG execution. Parent merging via `deep_merge()`. Failure policies: `AbortAll`, `ContinueOthers`, `SkipDependents`. Merge strategies: `LastWins`, `ArrayConcat`, `DeepMerge`, `ExplicitMap`.
 
-After all layers, calls `merge_dag_results()` with the configured `MergeStrategy`:
-- **LastWins**: `{"svc_name": result}` JSON object
-- **ArrayConcat**: `[result, result]` JSON array
-- **DeepMerge**: recursive JSON object merge of all terminal node results
-- **ExplicitMap**: falls back to LastWins
-
-Results are allocated on the `Arena` bump allocator and returned as `&mut [u8]`.
-
-**Exports:** `exec_dag()`
+**Exports:** `exec_dag()`, `deep_merge()`
 
 ---
 
 ### `rust/src/executor/chunk.rs`
-**Package:** `flowrulz_core::executor`
+**Package:** `flowrulz_core::executor::chunk`
 
-`split_chunks()` — splits a body into N roughly equal chunks by byte length. Chunked execution is handled at the `ExecutionRuntime` level (not `chunk.rs`).
+`split_chunks()` — split body into N chunks by byte length.
 
 **Exports:** `split_chunks()`
+
+---
+
+### `rust/src/executor/plugin.rs`
+**Package:** `flowrulz_core::executor::plugin`
+
+WASM plugin runtime via wasmtime. Global registries: `PLUGIN_BYTES` (name → raw bytes), `MODULE_CACHE` (name → compiled Engine+Module). Calling convention: `process(ptr: i32, len: i32) → i64` packed `(output_ptr << 32) | output_len`. 100k fuel limit.
+
+**Exports:** `register()`, `call()`, `call_plugin()`
+
+---
+
+### `rust/src/executor/runtime.rs`
+**Package:** `flowrulz_core::executor::runtime`
+
+`ExecutionRuntime` — high-level orchestration wrapping VM. Handles Buffer (accumulate) and Chunk (split+execute) at runtime level. Methods: `execute()`, `buffer_push()`, `buffer_flush()`, `buffer_remaining()`.
+
+**Exports:** `ExecutionRuntime`
 
 ---
 
 ### `rust/src/memory/mod.rs`
 **Package:** `flowrulz_core::memory`
 
-Module declaration. Re-exports all memory sub-module types.
+Re-exports: `arena`, `intern`.
 
 ---
 
 ### `rust/src/memory/arena.rs`
-**Package:** `flowrulz_core::memory`
+**Package:** `flowrulz_core::memory::arena`
 
-`Arena` — wrapper around `bumpalo::Bump`, a bump allocator for fast temporary allocations during execution. Used primarily in `exec_dag()` for merge results.
+`Arena` — bump allocator wrapping `bumpalo::Bump`. Methods: `alloc()`, `alloc_copy()`, `reset()`, `allocated_bytes()`.
 
 **Exports:** `Arena`
 
 ---
 
-
-
 ### `rust/src/memory/intern.rs`
-**Package:** `flowrulz_core::memory`
+**Package:** `flowrulz_core::memory::intern`
 
-`InternTable` — concurrent string interner. Forward map: `RwLock<HashMap<String, u16>>`. Reverse map: `boxcar::Vec` (lock-free append-only). ID generation via `AtomicU16`. Used by both the DSL compiler and the runtime for string dedup.
+`InternTable` — concurrent string interning. Forward map: `RwLock<HashMap<String, u16>>`. Reverse: `boxcar::Vec` (lock-free). AtomicU16 ID generation. Methods: `prefill()`, `intern()`, `lookup()`, `len()`.
 
 **Exports:** `InternTable`
 
@@ -802,68 +992,44 @@ Module declaration. Re-exports all memory sub-module types.
 ### `rust/src/tracing/mod.rs`
 **Package:** `flowrulz_core::tracing`
 
-Lock-free span tracing. `SpanRingBuffer` is a thread-local fixed-size ring buffer (1024 entries) with atomic `head`/`tail` counters.
+Lock-free thread-local span tracing. `Span` (repr(C)): `opcode: u8`, `service_id: u16`, `layer: u8`, `duration_ns: u64`, `status: u8`. `SpanRingBuffer`: 1024-entry ring buffer with atomic head/tail. `emit_span()` pushes to thread-local buffer. `drain()` copies to output.
 
-`push(span)`: loads head/tail (Relaxed/Acquire), computes index `head % 1024`, writes span, stores `head+1` (Release). Drops if buffer full.
-
-`drain(out)`: loops loading tail (Acquire) and head (Relaxed), reads span at `tail % 1024`, copies to output buffer, stores `tail+1` (Release). Returns bytes written.
-
-`emit_span()`: the `thread_local!` convenience — called from `VM::dispatch()` after every opcode.
-
-**Exports:** `Span`, `SpanRingBuffer`, `SPAN_BUFFER`, `emit_span()`
+**Exports:** `Span`, `SpanRingBuffer`, `SPAN_BUFFER`, `emit_span()`, `SPAN_BUFFER_CAPACITY`
 
 ---
 
 ## Build & Config
 
 ### `Makefile`
-**Location:** project root
 
-Top-level build orchestration. Targets:
-- `make all` — builds Rust release + Go binary
-- `make test` — runs all Rust tests + Go tests
-- `make bench` — runs Criterion benchmarks
-- `make vet` — runs `go vet`
-- `make clean` — `cargo clean` + removes binary
+Top-level build orchestration:
+- `make all` — `cargo build --release` + `go build`
+- `make test` — all Rust tests (`cargo test`) + all Go tests + `go vet`
+- `make bench` — Criterion benchmarks
+- `make vet` — `go vet ./go/... ./simulator/...`
+- `make clean` — `cargo clean` + remove Go binary
+- `make go` — Go build only (requires prebuilt Rust cdylib)
+- `make e2e` — docker-compose up + e2e tests
 
 ### `go.mod`
-**Location:** project root
 **Module:** `github.com/premchandkpc/FlowRulZ`
 
-Go module definition. Standard dependencies.
+Dependencies: Sarama (Kafka), OTel gRPC, gRPC, wasmtime-go, etc.
 
 ### `Cargo.toml`
-**Location:** `rust/`
 **Crate:** `flowrulz_core`
 
-Rust crate definition with dependencies: `bumpalo`, `serde`, `serde_json`, `boxcar`, `criterion` (dev).
+Dependencies: `bumpalo` (arena), `boxcar` (lock-free vec), `serde`/`serde_json`, `uuid`, `rand`, `once_cell`, `bincode`, `wasmtime` (plugins). Dev: `criterion`, `wat`.
 
 ---
 
-## Doc Index
-
-| File | Summary |
-|------|---------|
-| `docs/README.md` | Project overview, directory layout, features table, quick start |
-| `docs/development.md` | Dev setup, package tree, adding opcodes, benchmarks |
-| `docs/flow-architecture.md` | Distributed Event Runtime — architecture, Event model, ExecutionContext, flows |
-| `docs/dsl-syntax.md` | DSL language specification |
-| `docs/bytecode-format.md` | ExecutionPlan, Instruction, opcodes, types |
-| `docs/vm-architecture.md` | VM dispatch, opcode handlers, ExecutionContext |
-| `docs/memory-management.md` | Arena, interning, message lifecycle |
-| `docs/ffi-api.md` | C FFI surface for Go bridge |
-| `docs/kafka-semantics.md` | Legacy Kafka transport reference |
-| `docs/cluster-model.md` | Single-leader cluster, membership, plan distribution, service registry |
-| `docs/flows.md` | Every data path: membership → deployment → execution → DLQ → metrics |
-| `docs/file-index.md` | This file |
-
 ## Summary
 
-| Layer | Files | Lines |
-|-------|-------|-------|
-| Go source (prod) | 22 | ~2,600 |
-| Go source (simulator) | 18 | ~2,100 |
-| Rust source | 34 | ~6,100 |
-| C source | 1 | 14 |
-| Build/config | 3 | — |
-| Docs | 12 | — |
+| Layer | Source Files | Tests | Lines |
+|-------|-------------|-------|-------|
+| Go production | 30 | ~130 tests | ~3,500 |
+| Go simulator | 19 | ~25 tests | ~2,200 |
+| Rust core | 26 | 154 tests | ~6,100 |
+| C bridge | — | — | ~15 |
+| Build/config | 3 | — | ~200 |
+| Docs | 12 | — | ~3,500 |

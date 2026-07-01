@@ -197,6 +197,16 @@ Evaluates an expression and transforms the message. Expressions use dots for fie
 | `keys(obj)` | Object key extraction |
 | `merge(a, b)` | Deep merge two objects |
 | `hash(s)` | Consistent hash (u64) |
+| `abs(n)` | Absolute value |
+| `round(n)` | Round to nearest integer |
+| `ceil(n)` | Ceiling |
+| `floor(n)` | Floor |
+| `min(a, b)` | Minimum of two numbers |
+| `max(a, b)` | Maximum of two numbers |
+| `base64_decode(s)` | Base64 decode |
+| `parse_bool(s)` | Parse string → bool ("true"/"false"/"1"/"0") |
+| `split(s, delim)` | Split string by delimiter into array |
+| `typeof(v)` | Runtime type name ("null"/"bool"/"int"/"float"/"string"/"array"/"object") |
 
 `call_builtin` takes `&[serde_json::Value]` (not `&[&str]`).
 

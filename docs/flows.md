@@ -157,7 +157,7 @@ Client                              Admin Server
   │                                      │       ActivatePlan(...)
 ```
 
-**Files:** `go/internal/admin/server.go`, `go/internal/engine/engine.go`,
+**Files:** `go/internal/admin/admin.go`, `go/internal/engine/engine.go`,
 `go/bridge/bridge.go`, `rust/src/dsl/compiler.rs`, `rust/src/ffi.rs`
 
 ---
@@ -505,7 +505,7 @@ merge_dag_results(terminal_nodes, results, failed, plan, arena, strategy)
     ├── DeepMerge:    recursive merge of all terminal node JSON objects
     │                 failed nodes → skipped
     │
-    └── ExplicitMap:  same as LastWins (explicit map config not implemented)
+    └── ExplicitMap:  `{"svc_name": result, ...}` — same as LastWins currently; reserved for future explicit field mapping
     │
     ▼
 Result written to arena, returned as &mut [u8]

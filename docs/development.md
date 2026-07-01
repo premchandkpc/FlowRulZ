@@ -24,7 +24,7 @@ The Rust library is built as both `cdylib` and `rlib`. The `cdylib` (`libflowrul
 ## Test
 
 ```bash
-# All tests (Rust 119 + Go all packages)
+# All tests (Rust 154 + Go all packages)
 make test
 
 # Rust only
@@ -86,8 +86,8 @@ rust/src/
 ├── ffi.rs              # extern "C" exports for Go bridge
 ├── tracing/            # Span ring buffer
 │   ├── mod.rs          # Span struct + thread_local buffer + emit_span
-│   └── ring_buffer.rs  # Lock-free ring buffer (atomic head/tail)
-    └── memory/             # Memory management
+│   # (ring buffer implemented inline in mod.rs — no separate file)
+└── memory/             # Memory management
     ├── mod.rs
     ├── arena.rs        # Bump allocator
     └── intern.rs       # String interning

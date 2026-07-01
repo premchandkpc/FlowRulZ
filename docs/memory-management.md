@@ -58,7 +58,7 @@ Per-thread lock-free ring buffer for VM tracing spans (1024 entries):
 
 ```rust
 thread_local! {
-    pub static SPAN_BUFFER: RefCell<RingBuffer> = ...;
+    pub static SPAN_BUFFER: RefCell<SpanRingBuffer> = ...;
 }
 ```
 

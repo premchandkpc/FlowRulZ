@@ -9,12 +9,13 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -43,11 +44,9 @@ const (
 	DefaultMembersTopic = "_flowrulz_members"
 )
 
-type HeartbeatMessage struct {
-	NodeID    string    `json:"node_id"`
-	Address   string    `json:"address"`
-	Timestamp time.Time `json:"timestamp"`
-	Term      uint64    `json:"term"`
+type NodeDiscoveryMessage struct {
+	NodeID  string `json:"node_id"`
+	Address string `json:"address"`
 }
 
 type ServiceResolver interface {
@@ -67,10 +66,11 @@ type ExecutionNode struct {
 	PlanDist     *plandist.PlanDistributor
 	Membership   *membership.Membership
 	Registry     *registry.ServiceRegistry
+	RaftCluster  *cluster.RaftCluster
 
 	serviceResolver ServiceResolver
 
-	circuitBreakers sync.Map  // svcName string → *reliability.CircuitBreaker
+	circuitBreakers sync.Map
 
 	Saga *reliability.SagaTracker
 
@@ -82,15 +82,10 @@ type ExecutionNode struct {
 	httpClient  *http.Client
 	mu          sync.Mutex
 	shutdownCh  chan struct{}
-	stopHb      chan struct{}
-	isLeader    int32  // atomic: 0 = follower, 1 = leader
-	clusterTerm uint64 // atomic: managed via LoadUint64/StoreUint64
-
-	membersProducer transport.MessageProducer
+	leaderSubID int
 
 	StateStore *execstate.FileStore
 	Execs      *ExecRegistry
-	TermStore  *TermStore
 
 	GRPCBus     *grpctransport.GRPCBus
 	OtelExporter *observability.SpanExporter
@@ -104,6 +99,9 @@ type Config struct {
 	ExecStateDir   string
 	HTTPAddr       string
 	GRPCAddr       string
+	RaftPort       int
+	RaftDir        string
+	RaftBootstrap  bool
 	CompilerAddr   string
 	PluginDir      string
 	Topic          string
@@ -120,6 +118,9 @@ func NewConfig() *Config {
 	return &Config{
 		HTTPAddr:      ":8080",
 		GRPCAddr:      ":9090",
+		RaftPort:      cluster.DefaultRaftPort,
+		RaftDir:       filepath.Join(os.TempDir(), "flowrulz-raft"),
+		RaftBootstrap: false,
 		Topic:         "flowrulz-input",
 		NodeID:        "node-1",
 		KafkaBrokers:  []string{},
@@ -139,7 +140,6 @@ func New(cfg *Config) *ExecutionNode {
 		config:     *cfg,
 		httpClient: &http.Client{Timeout: 10 * time.Second},
 		shutdownCh: make(chan struct{}),
-		stopHb:     make(chan struct{}),
 		consumers:  make([]transport.MessageConsumer, 0),
 		producers:  make([]transport.MessageProducer, 0),
 		Registry:   registry.New(),
@@ -187,7 +187,6 @@ func New(cfg *Config) *ExecutionNode {
 
 	planProducer := en.mkProducer(plandist.DefaultPlanTopic, kafkaCfg)
 	ackProducer := en.mkProducer(plandist.DefaultAckTopic, kafkaCfg)
-	en.membersProducer = en.mkProducer(DefaultMembersTopic, kafkaCfg)
 	en.Membership = membership.New()
 	en.PlanDist = plandist.New(nodeID,
 		plandist.WithPlanProducer(planProducer),
@@ -217,7 +216,13 @@ func New(cfg *Config) *ExecutionNode {
 		if !en.IsLeader() {
 			return
 		}
-		en.SetTerm(en.PlanDist.CurrentTerm() + 1)
+		term := uint64(0)
+		if en.RaftCluster != nil {
+			term = en.RaftCluster.CurrentTerm()
+		} else {
+			term = en.PlanDist.CurrentTerm() + 1
+		}
+		en.PlanDist.SetTerm(term)
 		go en.distributePlan(id, dsl, plan, version)
 	}
 	en.Engine.AfterPromote = func(id string, version uint64) {
@@ -228,7 +233,7 @@ func New(cfg *Config) *ExecutionNode {
 	}
 
 	en.mu.Lock()
-	en.producers = append(en.producers, dlqProducer, planProducer, ackProducer, en.membersProducer)
+	en.producers = append(en.producers, dlqProducer, planProducer, ackProducer)
 	en.mu.Unlock()
 
 	execDir := cfg.ExecStateDir
@@ -237,15 +242,10 @@ func New(cfg *Config) *ExecutionNode {
 	}
 	store, err := execstate.NewFileStore(execDir)
 	if err != nil {
-		log.Printf("execstate: init warning: %v", err)
+		slog.Warn("execstate: init warning", "error", err)
 	}
 	en.StateStore = store
 	en.Execs = NewExecRegistry()
-	en.TermStore = NewTermStore(execDir)
-	if term, _ := en.TermStore.Load(); term > 0 {
-		en.SetTerm(term)
-		log.Printf("term: restored term %d from disk", term)
-	}
 
 	en.Saga = reliability.NewSagaTrackerWithDir(func(svc, method string, body []byte) error {
 		_, err := en.callService(svc, method, body, 0)
@@ -253,6 +253,11 @@ func New(cfg *Config) *ExecutionNode {
 	}, execDir)
 
 	en.Registry.SetHeartbeatTimeout(30 * time.Second)
+
+	if cfg.RaftDir != "" && cfg.RaftPort > 0 {
+		raftBind := fmt.Sprintf("localhost:%d", cfg.RaftPort)
+		en.RaftCluster = cluster.NewRaftCluster(nodeID, cfg.RaftDir, raftBind)
+	}
 
 	if cfg.GRPCAddr != "" {
 		en.GRPCBus = grpctransport.NewGRPCBus(cfg.GRPCAddr)
@@ -264,36 +269,29 @@ func New(cfg *Config) *ExecutionNode {
 
 	if cfg.PluginDir != "" {
 		if err := plugins.LoadDir(cfg.PluginDir); err != nil {
-			log.Printf("[execnode] plugin load warning: %v", err)
+			slog.Warn("plugin load warning", "error", err)
 		}
 	} else if pd := os.Getenv("FLOWRULZ_PLUGIN_DIR"); pd != "" {
 		if err := plugins.LoadDir(pd); err != nil {
-			log.Printf("[execnode] plugin load warning: %v", err)
+			slog.Warn("plugin load warning", "error", err)
 		}
 	}
 
 	return en
 }
 
-func (en *ExecutionNode) SetLeader(v bool) {
-	var val int32 = 0
-	if v {
-		val = 1
-	}
-	atomic.StoreInt32(&en.isLeader, val)
-}
-
 func (en *ExecutionNode) IsLeader() bool {
-	return atomic.LoadInt32(&en.isLeader) != 0
-}
-
-func (en *ExecutionNode) SetTerm(term uint64) {
-	atomic.StoreUint64(&en.clusterTerm, term)
-	en.PlanDist.SetTerm(term)
+	if en.RaftCluster != nil {
+		return en.RaftCluster.IsLeader()
+	}
+	return true // single-node mode, always leader
 }
 
 func (en *ExecutionNode) CurrentTerm() uint64 {
-	return atomic.LoadUint64(&en.clusterTerm)
+	if en.RaftCluster != nil {
+		return en.RaftCluster.CurrentTerm()
+	}
+	return en.PlanDist.CurrentTerm()
 }
 
 func (en *ExecutionNode) httpCall(endpoint string, body []byte, cb *reliability.CircuitBreaker) ([]byte, error) {
@@ -353,16 +351,16 @@ func (en *ExecutionNode) distributePlan(id, dsl string, plan []byte, version uin
 	defer cancel()
 
 	if err := en.PlanDist.PublishPlan(ctx, id, version, plan, dsl); err != nil {
-		log.Printf("plandist: publish plan error for %s v%d: %v", id, version, err)
+		slog.Error("plandist: publish plan error", "id", id, "version", version, "error", err)
 		return
 	}
 
 	if err := en.PlanDist.WaitForAcks(ctx, id, version, 0, 10*time.Second); err != nil {
-		log.Printf("plandist: ack wait error for %s v%d: %v", id, version, err)
+		slog.Error("plandist: ack wait error", "id", id, "version", version, "error", err)
 	}
 
 	if err := en.PlanDist.ActivatePlan(ctx, id, version); err != nil {
-		log.Printf("plandist: activate error for %s v%d: %v", id, version, err)
+		slog.Error("plandist: activate error", "id", id, "version", version, "error", err)
 	}
 }
 
@@ -371,96 +369,67 @@ func (en *ExecutionNode) distributeActivate(id string, version uint64) {
 	defer cancel()
 
 	if err := en.PlanDist.ActivatePlan(ctx, id, version); err != nil {
-		log.Printf("plandist: activate error during promote %s v%d: %v", id, version, err)
+		slog.Error("plandist: activate error during promote", "id", id, "version", version, "error", err)
 	}
 }
 
-func (en *ExecutionNode) startHeartbeat(ctx context.Context) {
-	ticker := time.NewTicker(membership.DefaultHeartbeatInterval)
-	defer ticker.Stop()
+func (en *ExecutionNode) joinRaftCluster(ctx context.Context) {
+	raftAddr := fmt.Sprintf("localhost:%d", en.config.RaftPort)
 
-	log.Printf("heartbeat: starting for node %s every %v", en.nodeID, membership.DefaultHeartbeatInterval)
+	for _, seed := range en.config.Seeds {
+		seedHTTP := seed
+		if !strings.HasPrefix(seedHTTP, "http://") && !strings.HasPrefix(seedHTTP, "https://") {
+			seedHTTP = "http://" + seedHTTP
+		}
+		seedURL := seedHTTP + "/cluster/join"
+		body, _ := json.Marshal(map[string]string{
+			"node_id":   en.nodeID,
+			"raft_addr": raftAddr,
+		})
 
-	for {
-		select {
-		case <-ticker.C:
-			hb := HeartbeatMessage{
-				NodeID:    en.nodeID,
-				Address:   en.httpAddr,
-				Timestamp: time.Now(),
-				Term:      atomic.LoadUint64(&en.clusterTerm),
+		for i := 0; i < 30; i++ {
+			select {
+			case <-ctx.Done():
+				return
+			default:
 			}
-			data, err := json.Marshal(hb)
+
+			resp, err := en.httpClient.Post(seedURL, "application/json", bytes.NewReader(body))
 			if err != nil {
-				log.Printf("heartbeat: marshal error: %v", err)
+				slog.Warn("raft join: attempt failed", "attempt", i+1, "seed_url", seedURL, "error", err)
+				time.Sleep(2 * time.Second)
 				continue
 			}
-			if err := en.membersProducer.Send(ctx, []byte(en.nodeID), data); err != nil {
-				log.Printf("heartbeat: publish error: %v", err)
+			resp.Body.Close()
+			if resp.StatusCode == 200 {
+				slog.Info("raft join: successfully joined cluster", "seed_url", seedURL)
+				return
 			}
-		case <-ctx.Done():
-			log.Printf("heartbeat: stopped")
-			return
+			slog.Warn("raft join: attempt got non-200", "attempt", i+1, "seed_url", seedURL, "status_code", resp.StatusCode)
+			time.Sleep(2 * time.Second)
 		}
 	}
+	slog.Error("raft join: failed to join cluster after 30 attempts")
 }
 
-func (en *ExecutionNode) handleMembershipMessage(ctx context.Context, msg []byte) ([]byte, error) {
-	var hb HeartbeatMessage
-	if err := json.Unmarshal(msg, &hb); err != nil {
-		log.Printf("membership: unmarshal heartbeat error: %v", err)
+func (en *ExecutionNode) RaftLeaderAddr() string {
+	if en.RaftCluster == nil {
+		return ""
+	}
+	return en.RaftCluster.LeaderAddr()
+}
+
+func (en *ExecutionNode) handleNodeDiscoveryMessage(ctx context.Context, msg []byte) ([]byte, error) {
+	var nd NodeDiscoveryMessage
+	if err := json.Unmarshal(msg, &nd); err != nil {
+		slog.Error("discovery: unmarshal error", "error", err)
 		return nil, nil
 	}
-
-	if hb.NodeID == en.nodeID {
+	if nd.NodeID == en.nodeID {
 		return nil, nil
 	}
-
-	// Term-based fencing: if a non-leader heartbeat carries a higher term,
-	// a new leader has been elected — step down if we're the current leader.
-	if hb.Term > en.PlanDist.CurrentTerm() {
-		if en.IsLeader() {
-			log.Printf("fencing: stepping down from term %d due to higher term %d from %s",
-				en.PlanDist.CurrentTerm(), hb.Term, hb.NodeID)
-			en.SetLeader(false)
-		}
-		en.SetTerm(hb.Term)
-	}
-
-	en.Membership.Heartbeat(hb.NodeID, hb.Address)
-	en.runLeaderElection()
+	en.Membership.Heartbeat(nd.NodeID, nd.Address)
 	return nil, nil
-}
-
-func (en *ExecutionNode) runLeaderElection() {
-	leaderID := en.Membership.LeaderID()
-	if leaderID == "" {
-		return
-	}
-
-	shouldBeLeader := leaderID == en.nodeID
-	isCurrentlyLeader := en.IsLeader()
-
-	if shouldBeLeader && !isCurrentlyLeader {
-		en.SetLeader(true)
-		en.SetTerm(en.PlanDist.CurrentTerm() + 1)
-		if en.TermStore != nil {
-			en.TermStore.Save(en.PlanDist.CurrentTerm(), en.nodeID)
-		}
-		log.Printf("leader election: node %s promoted to leader (term %d)", en.nodeID, en.PlanDist.CurrentTerm())
-		en.Partitions.OnLeaderChange(en.nodeID)
-		en.Rebalancer.CheckAndRebalance()
-	} else if !shouldBeLeader && isCurrentlyLeader {
-		en.SetLeader(false)
-		if en.TermStore != nil {
-			en.TermStore.Save(en.PlanDist.CurrentTerm(), leaderID)
-		}
-		log.Printf("leader election: node %s stepped down (new leader: %s)", en.nodeID, leaderID)
-		en.Partitions.OnLeaderChange(leaderID)
-	}
-
-	// Rebalance check on every election run (even if no change) to catch membership changes
-	en.Rebalancer.CheckAndRebalance()
 }
 
 func (en *ExecutionNode) handlePlanMessage(ctx context.Context, msg []byte) ([]byte, error) {
@@ -471,7 +440,7 @@ func (en *ExecutionNode) handlePlanMessage(ctx context.Context, msg []byte) ([]b
 
 	// Reject plans from older terms
 	if pm.Term < en.PlanDist.CurrentTerm() {
-		log.Printf("plandist: rejected plan from term %d (current %d)", pm.Term, en.PlanDist.CurrentTerm())
+		slog.Warn("plandist: rejected plan from older term", "plan_term", pm.Term, "current_term", en.PlanDist.CurrentTerm())
 		return nil, nil
 	}
 
@@ -481,11 +450,11 @@ func (en *ExecutionNode) handlePlanMessage(ctx context.Context, msg []byte) ([]b
 			return nil, err
 		}
 		if err := en.PlanDist.SendAck(ctx, pm.RuleID, pm.Version, "ok"); err != nil {
-			log.Printf("plandist: ack send error: %v", err)
+			slog.Error("plandist: ack send error", "error", err)
 		}
 	case "activate":
 		if err := en.Engine.Promote(pm.RuleID, pm.Version); err != nil {
-			log.Printf("plandist: activate error: %v", err)
+			slog.Error("plandist: activate error", "error", err)
 		}
 	}
 	return nil, nil
@@ -502,7 +471,7 @@ func (en *ExecutionNode) handleAckMessage(ctx context.Context, msg []byte) ([]by
 
 func (en *ExecutionNode) handlePartitionMessage(ctx context.Context, msg []byte) ([]byte, error) {
 	if err := en.Partitions.HandleAssignmentMessage(msg); err != nil {
-		log.Printf("partition: handle message error: %v", err)
+		slog.Error("partition: handle message error", "error", err)
 	}
 	return nil, nil
 }
@@ -522,7 +491,7 @@ func (en *ExecutionNode) callService(svcName, method string, body []byte, timeou
 
 	if !cb.Allow() {
 		observability.RecordError("circuit_breaker_open")
-		log.Printf("circuit breaker open for service %s", svcName)
+		slog.Warn("circuit breaker open for service", "service", svcName)
 		return nil, fmt.Errorf("circuit breaker open for service %s", svcName)
 	}
 
@@ -567,7 +536,7 @@ func (en *ExecutionNode) callService(svcName, method string, body []byte, timeou
 		return en.httpCall(endpoint, body, cb)
 	}
 
-	log.Printf("service call: name=%s method=%s body=%d bytes (stub)", svcName, method, len(body))
+	slog.Info("service call", "service", svcName, "method", method, "body_bytes", len(body))
 	cb.Success()
 	return body, nil
 }
@@ -702,7 +671,7 @@ func (en *ExecutionNode) tryCompensate(execID string) {
 		return
 	}
 	if err := en.Saga.Compensate(execID); err != nil {
-		log.Printf("saga: compensation error for %s: %v", execID, err)
+		slog.Error("saga: compensation error", "exec_id", execID, "error", err)
 	}
 }
 
@@ -713,7 +682,7 @@ func (en *ExecutionNode) recoverInFlight(ctx context.Context) {
 
 	inflight, err := en.StateStore.List(ctx, execstate.StatusRunning, execstate.StatusWaitingForService)
 	if err != nil {
-		log.Printf("recovery: list error: %v", err)
+		slog.Error("recovery: list error", "error", err)
 		return
 	}
 
@@ -723,7 +692,7 @@ func (en *ExecutionNode) recoverInFlight(ctx context.Context) {
 }
 
 func (en *ExecutionNode) recoverExecution(st *execstate.State) {
-	log.Printf("recovery: resuming execution %s (status=%s, rule=%s)", st.ID, st.Status, st.RuleID)
+	slog.Info("recovery: resuming execution", "exec_id", st.ID, "status", st.Status, "rule_id", st.RuleID)
 
 	names := make(map[uint16]string)
 	if entries, err := bridge.PlanServices(st.PlanBytes); err == nil {
@@ -741,7 +710,7 @@ func (en *ExecutionNode) recoverExecution(st *execstate.State) {
 		svcName, method := bridge.ParseServiceMethod(rawName)
 		resp, err := en.callService(svcName, method, st.PendingBody, 0)
 		if err != nil {
-			log.Printf("recovery: exec %s service %s retry failed: %v", st.ID, svcName, err)
+			slog.Warn("recovery: exec retry failed", "exec_id", st.ID, "service", svcName, "error", err)
 			st.Status = execstate.StatusFailed
 			st.Error = fmt.Sprintf("recovery retry: %v", err)
 			en.StateStore.Save(context.Background(), st)
@@ -756,14 +725,14 @@ func (en *ExecutionNode) recoverExecution(st *execstate.State) {
 
 	out, err := en.runSteps(context.Background(), st.ID, st.PlanBytes, names, st.CtxBytes, startResp, st)
 	if err != nil {
-		log.Printf("recovery: exec %s failed: %v", st.ID, err)
+		slog.Error("recovery: exec failed", "exec_id", st.ID, "error", err)
 		st.Status = execstate.StatusFailed
 		st.Error = err.Error()
 		en.StateStore.Save(context.Background(), st)
 		return
 	}
 
-	log.Printf("recovery: exec %s completed (%d bytes)", st.ID, len(out))
+	slog.Info("recovery: exec completed", "exec_id", st.ID, "bytes", len(out))
 	en.StateStore.Delete(context.Background(), st.ID)
 }
 
@@ -859,7 +828,7 @@ func (en *ExecutionNode) Start() {
 
 	if en.ClusterNode != nil {
 		if err := en.ClusterNode.Start(); err != nil {
-			log.Printf("cluster: start error: %v", err)
+			slog.Error("cluster: start error", "error", err)
 		}
 		for _, seedAddr := range en.config.Seeds {
 			if seedAddr == en.config.GRPCAddr {
@@ -867,7 +836,7 @@ func (en *ExecutionNode) Start() {
 			}
 			seedID := fmt.Sprintf("seed-%s", seedAddr)
 			if err := en.ClusterNode.AddPeer(seedID, seedAddr); err != nil {
-				log.Printf("cluster: connect to seed %s: %v", seedAddr, err)
+				slog.Error("cluster: connect to seed", "seed_addr", seedAddr, "error", err)
 			}
 		}
 	}
@@ -879,7 +848,7 @@ func (en *ExecutionNode) Start() {
 		Idempotent: en.config.KafkaIdempotent,
 	}
 	inputConsumer := en.mkConsumer(en.config.Topic, handler, kafkaCfg)
-	membersConsumer := en.mkConsumer(DefaultMembersTopic, en.handleMembershipMessage, kafkaCfg)
+	membersConsumer := en.mkConsumer(DefaultMembersTopic, en.handleNodeDiscoveryMessage, kafkaCfg)
 	planConsumer := en.mkConsumer(plandist.DefaultPlanTopic, en.handlePlanMessage, kafkaCfg)
 	ackConsumer := en.mkConsumer(plandist.DefaultAckTopic, en.handleAckMessage, kafkaCfg)
 	partConsumer := en.mkConsumer(partition.PartitionTopic, en.handlePartitionMessage, kafkaCfg)
@@ -894,11 +863,6 @@ func (en *ExecutionNode) Start() {
 
 	en.PlanDist.Start(ctx)
 	en.Membership.StartEviction(ctx, membership.DefaultHeartbeatTimeout)
-	en.Membership.StartLeaderLeaseChecker(ctx, membership.DefaultHeartbeatInterval)
-	en.Membership.OnLeaseExpiry(func(leaderID string) {
-		log.Printf("lease: leader %s lost, running re-election", leaderID)
-		en.runLeaderElection()
-	})
 
 	en.Rebalancer.SetNotify(func() {
 		if !en.IsLeader() {
@@ -909,23 +873,47 @@ func (en *ExecutionNode) Start() {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			if err := en.Partitions.PublishAssignments(ctx, assignments); err != nil {
-				log.Printf("partition: publish assignments error: %v", err)
+				slog.Error("partition: publish assignments error", "error", err)
 			}
 		}
 	})
-	go en.startHeartbeat(ctx)
+
+	if en.RaftCluster != nil {
+		if err := en.RaftCluster.Start(); err != nil {
+			log.Fatalf("raft: start error: %v", err)
+		}
+		if en.config.RaftBootstrap {
+			if err := en.RaftCluster.BootstrapCluster(); err != nil {
+				slog.Warn("raft: bootstrap", "error", err)
+			}
+		}
+		en.RaftCluster.SubscribeLeaderChanges(func(isLeader bool) {
+			if isLeader {
+				term := en.RaftCluster.CurrentTerm()
+				en.PlanDist.SetTerm(term)
+				en.Partitions.OnLeaderChange(en.nodeID)
+				en.Rebalancer.CheckAndRebalance()
+				slog.Info("raft: node became leader", "node_id", en.nodeID, "term", term)
+			} else {
+				leaderAddr := en.RaftCluster.LeaderAddr()
+				slog.Info("raft: node stepped down", "node_id", en.nodeID, "leader_addr", leaderAddr)
+				en.Partitions.OnLeaderChange("")
+			}
+		})
+		if !en.config.RaftBootstrap && len(en.config.Seeds) > 0 {
+			go en.joinRaftCluster(ctx)
+		}
+	}
 
 	en.Scheduler.Start(ctx)
 	en.ReplyRouter.StartCleanup()
 	en.Dedup.StartCleanup(ctx, 30*time.Second)
 
-	en.Registry.StartHeartbeatChecker(en.stopHb)
-
 	en.recoverInFlight(ctx)
 
 	if en.GRPCBus != nil {
 		if err := en.GRPCBus.Start(); err != nil {
-			log.Printf("grpc: start error: %v", err)
+			slog.Error("grpc: start error", "error", err)
 		}
 	}
 
@@ -938,6 +926,25 @@ func (en *ExecutionNode) Start() {
 	mux.HandleFunc("/register", en.Registry.RegisterHTTPHandler)
 	mux.HandleFunc("/heartbeat", en.Registry.HeartbeatHTTPHandler)
 	mux.HandleFunc("/services", en.Registry.ListServicesHTTPHandler)
+	mux.HandleFunc("/cluster/join", func(w http.ResponseWriter, r *http.Request) {
+		if en.RaftCluster == nil {
+			http.Error(w, "raft not configured", http.StatusBadRequest)
+			return
+		}
+		var req struct {
+			NodeID   string `json:"node_id"`
+			RaftAddr string `json:"raft_addr"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if err := en.RaftCluster.Join(req.NodeID, req.RaftAddr); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{"status": "joined"})
+	})
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		status := map[string]interface{}{
 			"status":    "ok",
@@ -1007,18 +1014,18 @@ func (en *ExecutionNode) Start() {
 
 	en.HTTP = &http.Server{Addr: en.httpAddr, Handler: mux}
 	go func() {
-		log.Printf("HTTP server on %s", en.httpAddr)
+		slog.Info("HTTP server started", "addr", en.httpAddr)
 		if err := en.HTTP.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
 		}
 	}()
 
-	log.Printf("execnode %s: started", en.nodeID)
+	slog.Info("execnode started", "node_id", en.nodeID)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
-	log.Println("shutting down")
+	slog.Info("shutting down")
 	en.Shutdown()
 }
 
@@ -1026,7 +1033,7 @@ func (en *ExecutionNode) Shutdown() {
 	en.mu.Lock()
 	defer en.mu.Unlock()
 
-	log.Printf("shutdown: cancelling %d in-flight executions", en.Execs.Len())
+	slog.Info("shutdown: cancelling in-flight executions", "count", en.Execs.Len())
 	en.Execs.CancelAll()
 
 	for _, c := range en.consumers {
@@ -1034,7 +1041,6 @@ func (en *ExecutionNode) Shutdown() {
 	}
 	en.consumers = nil
 
-	close(en.stopHb)
 	en.PlanDist.Stop()
 	en.Scheduler.Stop()
 	en.ReplyRouter.StopCleanup()
@@ -1048,7 +1054,7 @@ func (en *ExecutionNode) Shutdown() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := en.HTTP.Shutdown(shutdownCtx); err != nil {
-			log.Printf("http shutdown error: %v", err)
+			slog.Error("http shutdown error", "error", err)
 		}
 	}
 
@@ -1064,12 +1070,16 @@ func (en *ExecutionNode) Shutdown() {
 		en.OtelExporter.Stop()
 	}
 
+	if en.RaftCluster != nil {
+		en.RaftCluster.Stop()
+	}
+
 	if en.StateStore != nil {
 		en.StateStore.Close()
 	}
 
 	close(en.shutdownCh)
-	log.Printf("execnode %s: shutdown complete", en.nodeID)
+	slog.Info("execnode: shutdown complete", "node_id", en.nodeID)
 }
 
 

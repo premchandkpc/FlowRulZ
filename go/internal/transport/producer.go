@@ -2,7 +2,7 @@ package transport
 
 import (
 	"context"
-	"log"
+	"log/slog"
 )
 
 type Producer struct {

@@ -182,26 +182,17 @@ func TestExecRegistryCancelAllEmpty(t *testing.T) {
 
 // ─── ExecutionNode tests ────────────────────────────────────────────────────
 
-func TestSetLeader(t *testing.T) {
+func TestIsLeaderWithoutRaft(t *testing.T) {
 	cfg := &Config{NodeID: "test-node", HTTPAddr: ":0"}
 	en := New(cfg)
 
-	if en.IsLeader() {
-		t.Fatal("expected IsLeader() == false initially")
-	}
-
-	en.SetLeader(true)
+	// Without RaftCluster, node assumes single-leader mode
 	if !en.IsLeader() {
-		t.Fatal("expected IsLeader() == true after SetLeader(true)")
-	}
-
-	en.SetLeader(false)
-	if en.IsLeader() {
-		t.Fatal("expected IsLeader() == false after SetLeader(false)")
+		t.Fatal("expected IsLeader() == true in single-node mode")
 	}
 }
 
-func TestSetTerm(t *testing.T) {
+func TestCurrentTermFallsBackToPlanDist(t *testing.T) {
 	cfg := &Config{NodeID: "test-node", HTTPAddr: ":0"}
 	en := New(cfg)
 
@@ -209,24 +200,26 @@ func TestSetTerm(t *testing.T) {
 		t.Fatalf("expected CurrentTerm() == 0 initially, got %d", en.CurrentTerm())
 	}
 
-	en.SetTerm(5)
+	en.PlanDist.SetTerm(5)
 	if en.CurrentTerm() != 5 {
 		t.Fatalf("expected CurrentTerm() == 5, got %d", en.CurrentTerm())
 	}
-
-	en.SetTerm(0)
-	if en.CurrentTerm() != 0 {
-		t.Fatalf("expected CurrentTerm() == 0 after reset, got %d", en.CurrentTerm())
-	}
 }
 
-func TestSetTermAlsoUpdatesPlanDist(t *testing.T) {
+func TestConfigureLifecycleHooks(t *testing.T) {
 	cfg := &Config{NodeID: "test-node", HTTPAddr: ":0"}
 	en := New(cfg)
 
-	en.SetTerm(42)
-	if en.PlanDist.CurrentTerm() != 42 {
-		t.Fatalf("expected PlanDist.CurrentTerm() == 42, got %d", en.PlanDist.CurrentTerm())
+	if en.Engine.AfterDeploy == nil {
+		t.Fatal("expected AfterDeploy hook to be configured")
+	}
+	if en.Engine.AfterPromote == nil {
+		t.Fatal("expected AfterPromote hook to be configured")
+	}
+
+	en.Engine.AfterDeploy("rule-1", "dsl", []byte("plan"), 1)
+	if en.PlanDist.CurrentTerm() != 1 {
+		t.Fatalf("expected deploy hook to advance term to 1, got %d", en.PlanDist.CurrentTerm())
 	}
 }
 

@@ -51,25 +51,12 @@ impl Instruction {
         Instruction::new(OpCode::SvcArg, 0, svc_id, 0, 0)
     }
 
-    pub fn retry_data(max_attempts: u8, strategy: u8, fixed_ms: u32) -> Self {
-        let hi = (fixed_ms >> 16) as u16;
-        let lo = (fixed_ms & 0xFFFF) as u16;
-        let flags = (max_attempts as u16) | ((strategy as u16) << 8);
-        Instruction::new(OpCode::RetryData, 0, flags, hi, lo)
-    }
-
     pub fn jump_offset(offset: u16) -> Self {
         Instruction::new(OpCode::JumpOffset, 0, offset, 0, 0)
     }
 
     pub fn emit(count: u8, first_svc: u16) -> Self {
         Instruction::new(OpCode::Emit, 0, u16::from(count), first_svc, 0)
-    }
-
-    pub fn timeout(ms: u64) -> Self {
-        let hi = (ms >> 16) as u16;
-        let lo = (ms & 0xFFFF) as u16;
-        Instruction::new(OpCode::Timeout, 0, hi, lo, 0)
     }
 
     pub fn map(expr_id: u16) -> Self {

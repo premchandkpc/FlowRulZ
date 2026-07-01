@@ -1,14 +1,5 @@
 package bridge
 
-import "sync"
-
-var outputBufPool = sync.Pool{
-	New: func() any {
-		b := make([]byte, 256*1024)
-		return &b
-	},
-}
-
 /*
 #cgo LDFLAGS: -L../../rust/target/release -lflowrulz_core -ldl
 #include <stdlib.h>
@@ -82,6 +73,13 @@ import (
 	"sync/atomic"
 	"unsafe"
 )
+
+var outputBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 256*1024)
+		return &b
+	},
+}
 
 type ServiceCaller func(svcID uint16, body []byte) ([]byte, error)
 
@@ -416,12 +414,21 @@ func ctxBytesPtr(b []byte) *C.uchar {
 	return (*C.uchar)(unsafe.Pointer(&b[0]))
 }
 
+// respBytesPtr converts a Go []byte response to C pointers for the Rust FFI.
+//
+// Three cases:
+//   - b == nil       → (nil, 0)           → Rust sees None (no response received, skip)
+//   - b == []byte{}  → (&sentinel, 0)     → Rust sees Some(&[]) (empty response, advance)
+//   - b == [1,2,3]   → (&b[0], 3)         → Rust sees Some(&[1,2,3]) (data response)
+//
+// The [1]byte sentinel provides a non-nil pointer for zero-length responses.
+// Without it, Rust cannot distinguish "no response" (nil pointer, don't advance)
+// from "empty response" (non-nil pointer with len=0, advance IP).
 func respBytesPtr(b []byte) (*C.uchar, C.size_t) {
 	if b == nil {
 		return nil, 0
 	}
 	if len(b) == 0 {
-		// non-nil sentinel so Rust sees a response (of zero length)
 		return (*C.uchar)(unsafe.Pointer(&emptyRespSentinel[0])), 0
 	}
 	return (*C.uchar)(unsafe.Pointer(&b[0])), C.size_t(len(b))

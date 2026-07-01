@@ -112,14 +112,12 @@ impl<'a> VM<'a> {
             OpCode::Map => self.op_map(instr),
             OpCode::Dag => self.op_dag(instr, &*caller),
             OpCode::Jmp => self.op_jmp(instr),
-            OpCode::Key | OpCode::Split => Ok(()),
-            OpCode::Retry => Ok(()),
+            OpCode::Key
+            | OpCode::Label
+            | OpCode::SvcArg
+            | OpCode::JumpOffset => Ok(()),
             OpCode::Buffer => Err("Buffer must be handled at engine level".to_string()),
-            OpCode::Timeout => Ok(()),
             OpCode::Chunk => Ok(()),
-            OpCode::Pipe => Ok(()),
-            OpCode::Label => Ok(()),
-            OpCode::SvcArg | OpCode::RetryData | OpCode::JumpOffset => Ok(()),
             OpCode::TypeGuard => self.op_type_guard(instr),
             OpCode::SvcCall => self.op_svc_call(instr, &*caller),
             OpCode::Delay => Ok(()),

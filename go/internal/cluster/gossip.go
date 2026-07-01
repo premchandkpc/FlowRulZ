@@ -3,7 +3,7 @@ package cluster
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"math/rand"
 	"sync"
 	"time"
@@ -151,7 +151,7 @@ func (g *Gossiper) doPush() {
 	msg := GossipMessage{Type: "push", Sender: g.nodeID, States: states}
 	data, err := json.Marshal(msg)
 	if err != nil {
-		log.Printf("gossip: push marshal error: %v", err)
+		slog.Error("gossip: push marshal error", "error", err)
 		return
 	}
 
@@ -178,7 +178,7 @@ func (g *Gossiper) doSync() {
 	msg := GossipMessage{Type: "pull_req", Sender: g.nodeID, Epochs: epochs}
 	data, err := json.Marshal(msg)
 	if err != nil {
-		log.Printf("gossip: pull_req marshal error: %v", err)
+		slog.Error("gossip: pull_req marshal error", "error", err)
 		return
 	}
 	g.node.Publish("_flowrulz_gossip", peerID, data)
@@ -187,7 +187,7 @@ func (g *Gossiper) doSync() {
 func (g *Gossiper) HandleGossipMessage(ctx context.Context, topic string, body []byte) {
 	var msg GossipMessage
 	if err := json.Unmarshal(body, &msg); err != nil {
-		log.Printf("gossip: unmarshal error: %v", err)
+		slog.Error("gossip: unmarshal error", "error", err)
 		return
 	}
 
@@ -199,7 +199,7 @@ func (g *Gossiper) HandleGossipMessage(ctx context.Context, topic string, body [
 			}
 			g.UpdateState(state.NodeID, state)
 		}
-		log.Printf("gossip: received push from %s (%d states)", msg.Sender, len(msg.States))
+		slog.Info("gossip: received push", "sender", msg.Sender, "states", len(msg.States))
 
 	case "pull_req":
 		g.statesMu.RLock()
@@ -221,11 +221,11 @@ func (g *Gossiper) HandleGossipMessage(ctx context.Context, topic string, body [
 		resp := GossipMessage{Type: "pull_resp", Sender: g.nodeID, States: missingStates}
 		data, err := json.Marshal(resp)
 		if err != nil {
-			log.Printf("gossip: pull_resp marshal error: %v", err)
+			slog.Error("gossip: pull_resp marshal error", "error", err)
 			return
 		}
 		g.node.Publish("_flowrulz_gossip", msg.Sender, data)
-		log.Printf("gossip: responding to pull from %s with %d states", msg.Sender, len(missingStates))
+		slog.Info("gossip: responding to pull", "sender", msg.Sender, "states", len(missingStates))
 
 	case "pull_resp":
 		for _, state := range msg.States {
@@ -234,6 +234,6 @@ func (g *Gossiper) HandleGossipMessage(ctx context.Context, topic string, body [
 			}
 			g.UpdateState(state.NodeID, state)
 		}
-		log.Printf("gossip: received pull_resp from %s (%d states)", msg.Sender, len(msg.States))
+		slog.Info("gossip: received pull_resp", "sender", msg.Sender, "states", len(msg.States))
 	}
 }

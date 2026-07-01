@@ -231,7 +231,7 @@ impl Compiler {
                         instr.c = cfg_id;
                         break;
                     }
-                    OpCode::Timeout | OpCode::RetryData => continue,
+
                     _ => break,
                 }
             }

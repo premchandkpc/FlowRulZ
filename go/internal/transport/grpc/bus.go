@@ -3,7 +3,7 @@ package grpctransport
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"sync"
 	"time"

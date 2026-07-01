@@ -168,6 +168,7 @@ func (m *Manager) PublishAssignments(ctx context.Context, assignments []Assignme
 	m.mu.RLock()
 	producer := m.producer
 	term := m.currentTerm
+	leaderID := m.leaderID
 	m.mu.RUnlock()
 
 	if producer == nil {
@@ -177,7 +178,7 @@ func (m *Manager) PublishAssignments(ctx context.Context, assignments []Assignme
 	msg := PartitionMessage{
 		Type:        "assign",
 		Assignments: assignments,
-		NodeID:      m.leaderID,
+		NodeID:      leaderID,
 		Term:        term,
 	}
 	data, err := json.Marshal(msg)

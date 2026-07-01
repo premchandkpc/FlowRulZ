@@ -192,7 +192,7 @@ func (m *Membership) evictStale() {
 func (m *Membership) LeaderLastSeen() time.Time {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	leaderID := m.LeaderID()
+	leaderID := m.leaderIDLocked()
 	if leaderID == "" {
 		return time.Time{}
 	}

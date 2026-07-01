@@ -517,12 +517,8 @@ func (en *ExecutionNode) callService(svcName, method string, body []byte, timeou
 	svcCtx, svcCancel := context.WithTimeout(context.Background(), svcTimeout)
 	defer svcCancel()
 
-	v, _ := en.circuitBreakers.Load(svcName)
-	cb, ok := v.(*reliability.CircuitBreaker)
-	if !ok {
-		cb = reliability.NewCircuitBreaker(5, 30*time.Second)
-		en.circuitBreakers.Store(svcName, cb)
-	}
+	cbI, _ := en.circuitBreakers.LoadOrStore(svcName, reliability.NewCircuitBreaker(5, 30*time.Second))
+	cb := cbI.(*reliability.CircuitBreaker)
 
 	if !cb.Allow() {
 		observability.RecordError("circuit_breaker_open")

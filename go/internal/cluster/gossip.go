@@ -120,7 +120,17 @@ func (g *Gossiper) Start(ctx context.Context) {
 			g.doSync()
 		case <-ctx.Done():
 			return
+		case <-g.stopCh:
+			return
 		}
+	}
+}
+
+func (g *Gossiper) Stop() {
+	select {
+	case <-g.stopCh:
+	default:
+		close(g.stopCh)
 	}
 }
 
@@ -141,6 +151,7 @@ func (g *Gossiper) doPush() {
 	msg := GossipMessage{Type: "push", Sender: g.nodeID, States: states}
 	data, err := json.Marshal(msg)
 	if err != nil {
+		log.Printf("gossip: push marshal error: %v", err)
 		return
 	}
 
@@ -167,6 +178,7 @@ func (g *Gossiper) doSync() {
 	msg := GossipMessage{Type: "pull_req", Sender: g.nodeID, Epochs: epochs}
 	data, err := json.Marshal(msg)
 	if err != nil {
+		log.Printf("gossip: pull_req marshal error: %v", err)
 		return
 	}
 	g.node.Publish("_flowrulz_gossip", peerID, data)
@@ -175,6 +187,7 @@ func (g *Gossiper) doSync() {
 func (g *Gossiper) HandleGossipMessage(ctx context.Context, topic string, body []byte) {
 	var msg GossipMessage
 	if err := json.Unmarshal(body, &msg); err != nil {
+		log.Printf("gossip: unmarshal error: %v", err)
 		return
 	}
 
@@ -208,6 +221,7 @@ func (g *Gossiper) HandleGossipMessage(ctx context.Context, topic string, body [
 		resp := GossipMessage{Type: "pull_resp", Sender: g.nodeID, States: missingStates}
 		data, err := json.Marshal(resp)
 		if err != nil {
+			log.Printf("gossip: pull_resp marshal error: %v", err)
 			return
 		}
 		g.node.Publish("_flowrulz_gossip", msg.Sender, data)

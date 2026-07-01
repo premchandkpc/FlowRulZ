@@ -14,6 +14,7 @@ type Peer struct {
 	ID     string
 	Addr   string
 	client *grpctransport.GRPCClient
+	mu     sync.Mutex
 }
 
 type ClusterNode struct {
@@ -27,7 +28,8 @@ type ClusterNode struct {
 	handlersMu sync.RWMutex
 	handlers   map[string]SubscribeHandler
 
-	gossiper *Gossiper
+	gossiper     *Gossiper
+	gossipCancel context.CancelFunc
 
 	started bool
 	mu      sync.Mutex
@@ -62,7 +64,9 @@ func (cn *ClusterNode) Start() error {
 
 	cn.Subscribe("_flowrulz_gossip", cn.gossiper.HandleGossipMessage)
 
-	go cn.gossiper.Start(context.Background())
+	gossipCtx, gossipCancel := context.WithCancel(context.Background())
+	cn.gossipCancel = gossipCancel
+	go cn.gossiper.Start(gossipCtx)
 
 	log.Printf("cluster node %s: listening on %s", cn.nodeID, cn.grpcAddr)
 	return nil
@@ -89,7 +93,9 @@ func (cn *ClusterNode) AddPeer(id, addr string) error {
 func (cn *ClusterNode) RemovePeer(id string) {
 	cn.peersMu.Lock()
 	if p, ok := cn.peers[id]; ok {
+		p.mu.Lock()
 		p.client.Close()
+		p.mu.Unlock()
 		delete(cn.peers, id)
 		log.Printf("cluster node %s: disconnected peer %s", cn.nodeID, id)
 	}
@@ -97,7 +103,7 @@ func (cn *ClusterNode) RemovePeer(id string) {
 }
 
 func (cn *ClusterNode) Publish(topic, key string, body []byte) error {
-	cn.bus.Publish(context.Background(), &grpctransport.PublishRequest{
+	if _, err := cn.bus.Publish(context.Background(), &grpctransport.PublishRequest{
 		Topic: topic,
 		Msg: &grpctransport.BusMessage{
 			Id:           fmt.Sprintf("%s-%d", cn.nodeID, time.Now().UnixNano()),
@@ -105,11 +111,15 @@ func (cn *ClusterNode) Publish(topic, key string, body []byte) error {
 			Body:         body,
 			PartitionKey: key,
 		},
-	})
+	}); err != nil {
+		log.Printf("cluster node: local bus publish error: %v", err)
+	}
 
 	cn.peersMu.RLock()
 	for _, p := range cn.peers {
 		go func(peer *Peer) {
+			peer.mu.Lock()
+			defer peer.mu.Unlock()
 			_, err := peer.client.PublishRaw(context.Background(), topic, key, body)
 			if err != nil {
 				log.Printf("cluster node: publish to peer %s: %v", peer.ID, err)
@@ -145,9 +155,16 @@ func (cn *ClusterNode) Stop() {
 		return
 	}
 
+	if cn.gossipCancel != nil {
+		cn.gossipCancel()
+	}
+	cn.gossiper.Stop()
+
 	cn.peersMu.Lock()
 	for _, p := range cn.peers {
+		p.mu.Lock()
 		p.client.Close()
+		p.mu.Unlock()
 	}
 	cn.peers = make(map[string]*Peer)
 	cn.peersMu.Unlock()

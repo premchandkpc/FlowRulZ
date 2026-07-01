@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"log"
+	"sync/atomic"
 
 	"github.com/premchandkpc/FlowRulZ/go/internal/transport"
 )
@@ -26,7 +27,7 @@ type ClusterConsumer struct {
 	topic   string
 	node    *ClusterNode
 	handler transport.MessageHandler
-	started bool
+	started atomic.Bool
 }
 
 func NewClusterConsumer(topic string, handler transport.MessageHandler, node *ClusterNode) *ClusterConsumer {
@@ -40,10 +41,10 @@ func NewClusterConsumer(topic string, handler transport.MessageHandler, node *Cl
 func (c *ClusterConsumer) Topic() string { return c.topic }
 
 func (c *ClusterConsumer) Start(ctx context.Context) {
-	if c.started {
+	if c.started.Load() {
 		return
 	}
-	c.started = true
+	c.started.Store(true)
 
 	c.node.Subscribe(c.topic, func(ctx context.Context, topic string, body []byte) {
 		_, err := c.handler(ctx, body)
@@ -55,11 +56,11 @@ func (c *ClusterConsumer) Start(ctx context.Context) {
 	go func() {
 		<-ctx.Done()
 		c.node.Unsubscribe(c.topic)
-		c.started = false
+		c.started.Store(false)
 	}()
 }
 
 func (c *ClusterConsumer) Stop() {
 	c.node.Unsubscribe(c.topic)
-	c.started = false
+	c.started.Store(false)
 }

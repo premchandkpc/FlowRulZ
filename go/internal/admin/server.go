@@ -3,10 +3,13 @@ package admin
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
+	"time"
 
 	"github.com/premchandkpc/FlowRulZ/go/internal/compiler"
 	"github.com/premchandkpc/FlowRulZ/go/internal/engine"
@@ -45,6 +48,8 @@ func NewWithCompiler(eng *engine.Engine, comp compiler.Compiler) *Server {
 	s.mux.HandleFunc("POST /rules/{id}/rollback", s.auth(s.rollbackVersion))
 	s.mux.HandleFunc("GET /lanes", s.auth(s.listLanes))
 	s.mux.HandleFunc("GET /health", s.health)
+	s.mux.HandleFunc("GET /metrics", s.auth(s.metrics))
+	s.mux.HandleFunc("GET /debug", s.auth(s.debug))
 	return s
 }
 
@@ -236,7 +241,62 @@ func (s *Server) listLanes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":           "ok",
+		"time":             time.Now().UTC().Format(time.RFC3339),
+		"goroutines":       runtime.NumGoroutine(),
+		"alloc_mb":         fmt.Sprintf("%.1f", float64(m.Alloc)/1024/1024),
+		"heap_objects":     m.HeapObjects,
+		"num_rules":        len(s.engine.Rules()),
+		"go_version":       runtime.Version(),
+	})
+}
+
+func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	fmt.Fprintf(w, "# HELP flowrulz_goroutines Number of goroutines\n")
+	fmt.Fprintf(w, "# TYPE flowrulz_goroutines gauge\n")
+	fmt.Fprintf(w, "flowrulz_goroutines %d\n", runtime.NumGoroutine())
+	fmt.Fprintf(w, "# HELP flowrulz_alloc_bytes Allocated heap bytes\n")
+	fmt.Fprintf(w, "# TYPE flowrulz_alloc_bytes gauge\n")
+	fmt.Fprintf(w, "flowrulz_alloc_bytes %d\n", m.Alloc)
+	fmt.Fprintf(w, "# HELP flowrulz_heap_objects Number of heap objects\n")
+	fmt.Fprintf(w, "# TYPE flowrulz_heap_objects gauge\n")
+	fmt.Fprintf(w, "flowrulz_heap_objects %d\n", m.HeapObjects)
+	fmt.Fprintf(w, "# HELP flowrulz_num_rules Number of deployed rules\n")
+	fmt.Fprintf(w, "# TYPE flowrulz_num_rules gauge\n")
+	fmt.Fprintf(w, "flowrulz_num_rules %d\n", len(s.engine.Rules()))
+	fmt.Fprintf(w, "# HELP flowrulz_next_gc_bytes Next GC target\n")
+	fmt.Fprintf(w, "# TYPE flowrulz_next_gc_bytes gauge\n")
+	fmt.Fprintf(w, "flowrulz_next_gc_bytes %d\n", m.NextGC)
+}
+
+func (s *Server) debug(w http.ResponseWriter, r *http.Request) {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"goroutines":  runtime.NumGoroutine(),
+		"cgo_calls":   runtime.NumCgoCall(),
+		"memory": map[string]interface{}{
+			"alloc":       m.Alloc,
+			"total_alloc": m.TotalAlloc,
+			"sys":         m.Sys,
+			"heap_alloc":  m.HeapAlloc,
+			"heap_sys":    m.HeapSys,
+			"heap_objects": m.HeapObjects,
+			"gc_cycles":   m.NumGC,
+			"gc_pause_ns": m.PauseNs[(m.NumGC+255)%256],
+		},
+		"num_rules":  len(s.engine.Rules()),
+		"go_version": runtime.Version(),
+	})
 }
 
 func (s *Server) listDLQ(w http.ResponseWriter, r *http.Request) {

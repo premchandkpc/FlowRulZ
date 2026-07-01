@@ -1,3 +1,7 @@
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, Mutex};
+
 use crate::bytecode::plan::ExecutionPlan;
 use crate::dsl::{compiler::Compiler, lexer, optimizer, parser};
 use crate::error::FfiError;
@@ -18,6 +22,36 @@ static INTERN_TABLE: once_cell::sync::Lazy<InternTable> = once_cell::sync::Lazy:
     ]);
     table
 });
+
+static PLAN_CACHE: once_cell::sync::Lazy<Mutex<HashMap<u64, Arc<ExecutionPlan>>>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(HashMap::new()));
+
+thread_local! {
+    static RESP_BUF: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn with_resp_buf<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut Vec<u8>) -> R,
+{
+    RESP_BUF.with(|cell| {
+        let mut buf = cell.borrow_mut();
+        buf.resize(65536, 0);
+        let r = f(&mut buf);
+        buf.clear();
+        r
+    })
+}
+
+fn check_plan_version(plan: &ExecutionPlan) -> bool {
+    plan.version == crate::bytecode::plan::BYTECODE_VERSION
+}
+
+fn hash_bytes(data: &[u8]) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    data.hash(&mut h);
+    h.finish()
+}
 
 fn write_error(ptr: *mut u8, cap: usize, len: *mut usize, msg: &str) {
     if ptr.is_null() || cap == 0 || len.is_null() {
@@ -152,11 +186,31 @@ pub unsafe extern "C" fn flowrulz_execute(
         None => return FfiError::NullPointer.code(),
     };
 
-    let plan: ExecutionPlan = match bincode::deserialize(plan_slice) {
-        Ok(p) => p,
-        Err(e) => {
-            write_error(err_ptr, err_cap, err_len, &format!("flowrulz_execute deserialize: {}", e));
-            return FfiError::Deserialize.code();
+    let plan_key = hash_bytes(plan_slice);
+    let plan: Arc<ExecutionPlan> = {
+        let mut cache = PLAN_CACHE.lock().unwrap();
+        if let Some(cached) = cache.get(&plan_key) {
+            Arc::clone(cached)
+        } else {
+            match bincode::deserialize(plan_slice) {
+                Ok(p) => {
+                    if !check_plan_version(&p) {
+                        let msg = format!("bytecode version mismatch: expected {}, got {}", crate::bytecode::plan::BYTECODE_VERSION, p.version);
+                        write_error(err_ptr, err_cap, err_len, &msg);
+                        return FfiError::VersionMismatch.code();
+                    }
+                    let arc = Arc::new(p);
+                    if cache.len() >= 64 {
+                        cache.clear();
+                    }
+                    cache.insert(plan_key, Arc::clone(&arc));
+                    arc
+                }
+                Err(e) => {
+                    write_error(err_ptr, err_cap, err_len, &format!("flowrulz_execute deserialize: {}", e));
+                    return FfiError::Deserialize.code();
+                }
+            }
         }
     };
 
@@ -167,24 +221,25 @@ pub unsafe extern "C" fn flowrulz_execute(
 
     let arena = Arena::new();
     let caller_wrapper = move |svc_id: u16, b: &[u8], _timeout: u64| -> Result<Vec<u8>, String> {
-        let mut resp_buf = vec![0u8; 65536];
-        let mut resp_len: usize = 0;
+        with_resp_buf(|resp_buf| {
+            let mut resp_len: usize = 0;
 
-        let rc = caller_cb(
-            ctx_id,
-            svc_id,
-            b.as_ptr(),
-            b.len(),
-            resp_buf.as_mut_ptr(),
-            &mut resp_len as *mut usize,
-        );
+            let rc = caller_cb(
+                ctx_id,
+                svc_id,
+                b.as_ptr(),
+                b.len(),
+                resp_buf.as_mut_ptr(),
+                &mut resp_len as *mut usize,
+            );
 
-        if rc != 0 {
-            Err(format!("caller returned {}", rc))
-        } else {
-            resp_buf.truncate(resp_len);
-            Ok(resp_buf)
-        }
+            if rc != 0 {
+                Err(format!("caller returned {}", rc))
+            } else {
+                resp_buf.truncate(resp_len);
+                Ok(std::mem::take(resp_buf))
+            }
+        })
     };
 
     let mut ctx = crate::bytecode::execution::ExecutionContext::from_body(body.to_vec());
@@ -237,16 +292,29 @@ pub unsafe extern "C" fn flowrulz_msg_alloc(size: usize) -> *mut u8 {
     if size == 0 {
         return std::ptr::null_mut();
     }
-    let layout = std::alloc::Layout::from_size_align(size, 1).unwrap();
-    std::alloc::alloc(layout)
+    // Store size in header before returned pointer so release() can reconstruct the layout
+    let header_size = std::mem::size_of::<usize>();
+    let total = header_size.checked_add(size).unwrap_or(usize::MAX);
+    let layout = std::alloc::Layout::from_size_align(total, std::mem::align_of::<usize>()).unwrap();
+    let base = std::alloc::alloc(layout) as *mut usize;
+    if base.is_null() {
+        return std::ptr::null_mut();
+    }
+    base.write(size);
+    base.add(1) as *mut u8
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn flowrulz_msg_release(ptr: *mut u8) {
-    if !ptr.is_null() {
-        let layout = std::alloc::Layout::new::<usize>();
-        std::alloc::dealloc(ptr, layout);
+    if ptr.is_null() {
+        return;
     }
+    let base = (ptr as *mut usize).sub(1);
+    let size = base.read();
+    let header_size = std::mem::size_of::<usize>();
+    let total = header_size.checked_add(size).unwrap_or(usize::MAX);
+    let layout = std::alloc::Layout::from_size_align(total, std::mem::align_of::<usize>()).unwrap();
+    std::alloc::dealloc(base as *mut u8, layout);
 }
 
 #[no_mangle]
@@ -317,9 +385,26 @@ pub unsafe extern "C" fn flowrulz_execute_step(
         Some(s) => s,
         None => return FfiError::NullPointer.code(),
     };
-    let plan: ExecutionPlan = match bincode::deserialize(plan_slice) {
-        Ok(p) => p,
-        Err(_) => return FfiError::Deserialize.code(),
+    let plan_key = hash_bytes(plan_slice);
+    let plan: Arc<ExecutionPlan> = {
+        let mut cache = PLAN_CACHE.lock().unwrap();
+        if let Some(cached) = cache.get(&plan_key) {
+            Arc::clone(cached)
+        } else {
+            let p: ExecutionPlan = match bincode::deserialize(plan_slice) {
+                Ok(p) => p,
+                Err(_) => return FfiError::Deserialize.code(),
+            };
+            if !check_plan_version(&p) {
+                return FfiError::VersionMismatch.code();
+            }
+            let arc = Arc::new(p);
+            if cache.len() >= 64 {
+                cache.clear();
+            }
+            cache.insert(plan_key, Arc::clone(&arc));
+            arc
+        }
     };
 
     let ctx: crate::bytecode::execution::ExecutionContext = if ctx_bytes_len > 0 && !ctx_bytes_ptr.is_null() {
@@ -338,22 +423,23 @@ pub unsafe extern "C" fn flowrulz_execute_step(
 
     let arena = crate::memory::arena::Arena::new();
     let caller_wrapper = move |svc_id: u16, b: &[u8], _timeout: u64| -> Result<Vec<u8>, String> {
-        let mut resp_buf = vec![0u8; 65536];
-        let mut resp_len: usize = 0;
-        let rc = caller_cb(
-            ctx_id,
-            svc_id,
-            b.as_ptr(),
-            b.len(),
-            resp_buf.as_mut_ptr(),
-            &mut resp_len as *mut usize,
-        );
-        if rc != 0 {
-            Err(format!("caller returned {}", rc))
-        } else {
-            resp_buf.truncate(resp_len);
-            Ok(resp_buf)
-        }
+        with_resp_buf(|resp_buf| {
+            let mut resp_len: usize = 0;
+            let rc = caller_cb(
+                ctx_id,
+                svc_id,
+                b.as_ptr(),
+                b.len(),
+                resp_buf.as_mut_ptr(),
+                &mut resp_len as *mut usize,
+            );
+            if rc != 0 {
+                Err(format!("caller returned {}", rc))
+            } else {
+                resp_buf.truncate(resp_len);
+                Ok(std::mem::take(resp_buf))
+            }
+        })
     };
 
     let mut vm = VM::new(&plan, ctx, arena, &caller_wrapper);
@@ -447,6 +533,40 @@ pub unsafe extern "C" fn flowrulz_execute_step(
     }
 }
 
+/// Creates an initial serialized ExecutionContext from a body payload.
+/// Returns bincode-encoded bytes in out_ptr. Caller must provide a
+/// sufficiently large buffer (usually 256KB is safe).
+#[no_mangle]
+pub unsafe extern "C" fn flowrulz_init_context(
+    body_ptr: *const u8,
+    body_len: usize,
+    out_ptr: *mut u8,
+    out_cap: usize,
+    out_len: *mut usize,
+    err_ptr: *mut u8,
+    err_cap: usize,
+    err_len: *mut usize,
+) -> i32 {
+    let body = match read_slice(body_ptr, body_len) {
+        Some(s) => s.to_vec(),
+        None => return FfiError::NullPointer.code(),
+    };
+    let ctx = crate::bytecode::execution::ExecutionContext::from_body(body);
+    let bytes = match bincode::serialize(&ctx) {
+        Ok(b) => b,
+        Err(e) => {
+            write_error(err_ptr, err_cap, err_len, &format!("serialize: {}", e));
+            return FfiError::Serialize.code();
+        }
+    };
+    let n = bytes.len().min(out_cap);
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_ptr, n);
+        *out_len = n;
+    }
+    0
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn flowrulz_register_plugin(
     name_ptr: *const u8,
@@ -485,6 +605,9 @@ pub unsafe extern "C" fn flowrulz_plan_services(
         Ok(p) => p,
         Err(_) => return FfiError::Deserialize.code(),
     };
+    if !check_plan_version(&plan) {
+        return FfiError::VersionMismatch.code();
+    }
     let json = serde_json::to_string(&plan.services.entries()).unwrap_or_default();
     let bytes = json.as_bytes();
     let n = bytes.len().min(out_cap);
@@ -502,7 +625,12 @@ pub unsafe extern "C" fn flowrulz_plan_complexity(plan_ptr: *const u8, plan_len:
         None => return 0,
     };
     match bincode::deserialize::<ExecutionPlan>(plan_slice) {
-        Ok(plan) => plan.complexity_score,
+        Ok(plan) => {
+            if !check_plan_version(&plan) {
+                return 0;
+            }
+            plan.complexity_score
+        }
         Err(_) => 0,
     }
 }

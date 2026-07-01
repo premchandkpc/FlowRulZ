@@ -19,6 +19,7 @@ Entry point — reads env vars (`NODE_ID`, `HTTP_ADDR`, `GRPC_ADDR`, `SEEDS`, `P
 **Package:** `bridge`
 
 CGo FFI bridge to the Rust shared library. Functions map 1:1 to `extern "C"` calls:
+- `InitContext(body)` → `flowrulz_init_context` — create bincode-serialized `ExecutionContext` from body bytes
 - `Compile(dsl, ruleID)` → `flowrulz_compile` — DSL string → bytecode plan
 - `ExecuteStep(plan, ctxBytes, respBytes, extra)` → `flowrulz_execute_step` — cooperative single-step execution
 - `PlanServices(plan)` → `flowrulz_plan_services` — extract service IDs from plan
@@ -28,7 +29,7 @@ CGo FFI bridge to the Rust shared library. Functions map 1:1 to `extern "C"` cal
 
 Go-side service caller uses `sync.Map` (callerMap) + `atomic.Uint64` (nextExecID) — no mutex in hot path.
 
-**Exports:** `StepResult`, `StepOut`, `ServiceEntry`, `Compile()`, `ExecuteStep()`, `PlanServices()`, `GetSpans()`, `SpanSize()`, `RegisterPlugin()`, `ParseServiceMethod()`, `ParseCompensation()`
+**Exports:** `StepResult`, `StepOut`, `ServiceEntry`, `InitContext()`, `Compile()`, `ExecuteStep()`, `PlanServices()`, `GetSpans()`, `SpanSize()`, `RegisterPlugin()`, `ParseServiceMethod()`, `ParseCompensation()`
 
 ---
 
@@ -525,9 +526,9 @@ Tests: `TestOrderFlowExecution`, `TestSuspensionResume`, `TestServiceFailure`, `
 ### `simulator/client.go`
 **Package:** `simulator`
 
-Programmatic client. `Send(ruleID, body)` dispatches via EventBus or direct dispatch, returns output + duration. `RegisterService(svc)`, `AddRule(id, dsl)`, `Plans()`, `Services()`.
+Programmatic client. `Send(ruleID, body)` dispatches via EventBus or direct dispatch, returns output + duration. `RegisterService(svc)`, `AddRule(id, dsl)`, `Plans()`, `Services()`. Also implements `ScenarioClient` interface for scenario setup: `SetLoadGenPlan(plan)`, `SetLoadGenBodyFunc(fn)`.
 
-**Exports:** `Client`, `SendResult`, `ServiceInfo`, `Send()`, `RegisterService()`, `AddRule()`, `Plans()`, `Plan()`, `RemoveRule()`, `Services()`
+**Exports:** `Client`, `SendResult`, `ServiceInfo`, `Send()`, `RegisterService()`, `AddRule()`, `Plans()`, `Plan()`, `RemoveRule()`, `Services()`, `SetLoadGenPlan()`, `SetLoadGenBodyFunc()`
 
 ---
 
@@ -627,9 +628,9 @@ Plan and Instruction types for simulator's instruction-based execution path. `Op
 ### `simulator/loadgen/loadgen.go`
 **Package:** `loadgen`
 
-Traffic generator. Ticker-based pacing at configured rate. Supports patterns: random, sequential, weighted.
+Traffic generator. Ticker-based pacing at configured rate. Supports patterns: random, sequential, weighted. Can override plan selection via `SetPlanFunc(fn)` and request body via `BodyFunc` in `Config` / `SetBodyFunc(fn)`.
 
-**Exports:** `Config`, `Generator`, `DefaultConfig()`, `New()`, `Start()`, `Stop()`
+**Exports:** `Config`, `Generator`, `DefaultConfig()`, `New()`, `Start()`, `Stop()`, `SetPlanFunc()`, `SetBodyFunc()`
 
 ---
 
@@ -654,7 +655,7 @@ Simulated network layer. `CallService()` applies configurable latency (min/max j
 ### `simulator/scheduler/scheduler.go`
 **Package:** `scheduler`
 
-Per-node execution scheduler. Worker pool pulling from ReadyQueue. Two paths: instruction-based (loop over Plan.Instructions) and bridge-based (cooperative `ExecuteStep` loop). `PlanCache` maps rule IDs to Plans.
+Per-node execution scheduler. Worker pool pulling from ReadyQueue. Two paths: instruction-based (loop over Plan.Instructions) and bridge-based (cooperative `ExecuteStep` loop, initializes VM context via `bridge.InitContext` from `ctx.IncomingBody`). `PlanCache` maps rule IDs to Plans.
 
 **Exports:** `Result`, `Scheduler`, `PlanCache`, `New()`, `NewPlanCache()`, `Start()`, `Stop()`, `Enqueue()`, `Snapshot()`
 
@@ -663,9 +664,9 @@ Per-node execution scheduler. Worker pool pulling from ReadyQueue. Two paths: in
 ### `simulator/scenarios/scenarios.go`
 **Package:** `scenarios`
 
-Built-in scenarios: ramp-up, black-friday, payment-outage, spike-test, chaos-monkey.
+Built-in scenarios: ramp-up, black-friday, payment-outage, spike-test, chaos-monkey, order-routing. `ScenarioClient` interface provides `AddRule`, `RegisterService`, `Plan`, `SetLoadGenPlan`, `SetLoadGenBodyFunc` for scenario setup. `OrderRouting` scenario demonstrates Gate-based conditional branching with dual-gate DSL pattern.
 
-**Exports:** `Scenario`, `All`, `ByName()`, `DefaultPlans()`
+**Exports:** `Scenario`, `ScenarioClient`, `All`, `ByName()`, `DefaultPlans()`
 
 ---
 
@@ -711,6 +712,7 @@ Crate root. Declares modules: `bytecode`, `dsl`, `error`, `executor`, `ffi`, `me
 **Package:** `flowrulz_core::ffi`
 
 All `#[no_mangle] pub unsafe extern "C"` functions:
+- `flowrulz_init_context(body)` — create bincode-serialized `ExecutionContext` from body bytes
 - `flowrulz_compile(dsl, rule_id)` — DSL string → bincode-serialized `ExecutionPlan`
 - `flowrulz_execute(ctx_id, plan, body, caller_cb, out, err, msg_id, corr_id, trace_id, partition, offset)` — synchronous, callback-based
 - `flowrulz_execute_step(ctx_id, plan, ctx_bytes, resp, caller_cb, out, err, pending_svc, pending_body, ctx_out)` — cooperative step-based
@@ -998,6 +1000,11 @@ Lock-free thread-local span tracing. `Span` (repr(C)): `opcode: u8`, `service_id
 
 ---
 
+### `docs/software-review.md`
+Multi-layer codebase review: architecture, component analysis, bug findings, DSL/compiler/VM assessment, security, observability, testing, distributed systems, scalability. Scorecard with 12 areas, critical findings (UB bug, panic boundary, god object), and prioritized recommendations.
+
+---
+
 ## Build & Config
 
 ### `Makefile`
@@ -1032,4 +1039,4 @@ Dependencies: `bumpalo` (arena), `boxcar` (lock-free vec), `serde`/`serde_json`,
 | Rust core | 26 | 154 tests | ~6,100 |
 | C bridge | — | — | ~15 |
 | Build/config | 3 | — | ~200 |
-| Docs | 12 | — | ~3,500 |
+| Docs | 13 | — | ~3,800 |

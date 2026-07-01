@@ -47,6 +47,18 @@ Creates an `ExecutionContext` from the body bytes and event metadata (msg_id →
 
 Optional context params (`msg_id`, `corr_id`, `trace_id`) default to empty when null.
 
+### Context Initialization
+
+```c
+int flowrulz_init_context(
+    const unsigned char* body_ptr, size_t body_len,
+    unsigned char* out_ptr, size_t out_cap, size_t* out_len,
+    unsigned char* err_ptr, size_t err_cap, size_t* err_len
+);
+```
+
+Creates a bincode-serialized `ExecutionContext` from raw body bytes. The context has the body stored in both `event.payload` and `body` fields, ready for step execution. Used by the simulator scheduler to seed the VM with the incoming event body before the first `execute_step` call. Returns 0 on success.
+
 ### Step Execution
 
 ```c
@@ -72,7 +84,7 @@ Cooperative single-step execution. Takes a serialized `ExecutionContext` (from p
 | `1` (Pending) | Service call needed; `pending_svc_id` + `pending_body` populated, context in `ctx_out_ptr` for next `execute_step` call |
 | `2` (Continue) | Non-service instruction processed; call `execute_step` again with `resp_ptr=NULL` |
 
-On first call, pass `ctx_bytes_ptr=NULL, ctx_bytes_len=0` to create a fresh context from the response (if any) in `resp_ptr`.
+On first call, pass `ctx_bytes_ptr` pointing to bytes from `flowrulz_init_context` to seed the VM with the incoming body. Passing `ctx_bytes_ptr=NULL, ctx_bytes_len=0` creates a fresh context with an empty body (body-dependent ops like Gate will not work).
 
 ### Callback Signature
 

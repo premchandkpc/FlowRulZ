@@ -1,34 +1,65 @@
+use std::sync::Mutex;
+
 use crate::bytecode::instruction::Instruction;
 use crate::bytecode::plan::ExecutionPlan;
+
+/// Service IDs to call in parallel.
+struct ParallelSvc {
+    svc_id: u16,
+}
 
 pub fn exec_parallel<'a>(
     body: &[u8],
     instr: &Instruction,
     plan: &ExecutionPlan,
-    caller: &dyn Fn(u16, &[u8], u64) -> Result<Vec<u8>, String>,
+    caller: &(dyn Fn(u16, &[u8], u64) -> Result<Vec<u8>, String> + Sync),
     arena: &'a crate::memory::arena::Arena,
 ) -> Result<&'a mut [u8], String> {
-    let count = instr.a as u8;
+    let count = instr.a as usize;
     let first_svc = instr.b as usize;
 
-    let mut results = Vec::with_capacity(count as usize);
-    for offset in 0..count as usize {
-        let svc_id = plan.services.entries()[first_svc + offset].id;
-        results.push(caller(svc_id, body, 0));
-    }
+    let svcs: Vec<ParallelSvc> = (0..count)
+        .map(|offset| ParallelSvc {
+            svc_id: plan.services.entries()[first_svc + offset].id,
+        })
+        .collect();
 
-    let mut parts = Vec::with_capacity(results.len());
-    for result in results {
-        match result {
-            Ok(resp) => parts.push(resp),
-            Err(e) => return Err(e),
+    let parts_mtx: Mutex<Vec<Option<Vec<u8>>>> = Mutex::new((0..count).map(|_| None).collect());
+    let err_mtx: Mutex<Option<String>> = Mutex::new(None);
+    let parts_ref = &parts_mtx;
+    let err_ref = &err_mtx;
+
+    std::thread::scope(|s| {
+        for (i, svc) in svcs.iter().enumerate() {
+            let svc_id = svc.svc_id;
+            s.spawn(move || {
+                if err_ref.lock().unwrap().is_some() {
+                    return;
+                }
+                match caller(svc_id, body, 0) {
+                    Ok(resp) => {
+                        parts_ref.lock().unwrap()[i] = Some(resp);
+                    }
+                    Err(e) => {
+                        *err_ref.lock().unwrap() = Some(e);
+                    }
+                }
+            });
         }
+    });
+
+    // Check for errors
+    if let Some(err) = err_mtx.into_inner().unwrap() {
+        return Err(err);
     }
 
-    // Store parallel results under _parallel key, preserving existing body fields
-    let arr: Vec<serde_json::Value> = parts
-        .iter()
-        .map(|p| serde_json::from_slice(p).unwrap_or(serde_json::Value::String(String::from_utf8_lossy(p).to_string())))
+    let parts_vec = parts_mtx.into_inner().unwrap();
+    let arr: Vec<serde_json::Value> = parts_vec
+        .into_iter()
+        .map(|opt| {
+            let p = opt.unwrap_or_default();
+            serde_json::from_slice(&p).unwrap_or(serde_json::Value::String(String::from_utf8_lossy(&p).to_string()))
+        })
         .collect();
     let parallel_val = serde_json::Value::Array(arr);
 
@@ -37,7 +68,6 @@ pub fn exec_parallel<'a>(
     if let serde_json::Value::Object(ref mut map) = merged {
         map.insert("_parallel".to_string(), parallel_val);
     } else {
-        // Non-object body: wrap in object with _parallel key
         let mut map = serde_json::Map::new();
         map.insert("_parallel".to_string(), parallel_val);
         merged = serde_json::Value::Object(map);

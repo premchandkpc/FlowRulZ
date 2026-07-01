@@ -11,6 +11,7 @@ pub enum FfiError {
     BufferTooSmall = -7,
     Deserialize = -8,
     Exec = -9,
+    VersionMismatch = -10,
 }
 
 impl FfiError {

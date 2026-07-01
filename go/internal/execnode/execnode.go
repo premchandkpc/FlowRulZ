@@ -773,15 +773,41 @@ func (en *ExecutionNode) executeAll(ctx context.Context, body []byte) ([][]byte,
 		return nil, nil
 	}
 
-	var results [][]byte
-	for _, plan := range plans {
-		res, err := en.executePlan(ctx, plan, body)
-		if err != nil {
-			return results, err
-		}
-		results = append(results, res)
+	type planResult struct {
+		index int
+		out   []byte
+		err   error
 	}
-	return results, nil
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	results := make([][]byte, len(plans))
+	ch := make(chan planResult, len(plans))
+	sem := make(chan struct{}, 10)
+
+	for i, plan := range plans {
+		sem <- struct{}{}
+		go func(idx int, p []byte) {
+			defer func() { <-sem }()
+			out, err := en.executePlan(ctx, p, body)
+			ch <- planResult{idx, out, err}
+		}(i, plan)
+	}
+
+	var firstErr error
+	for range plans {
+		r := <-ch
+		if r.err != nil && firstErr == nil {
+			firstErr = r.err
+			cancel()
+		}
+		if r.err == nil {
+			results[r.index] = r.out
+		}
+	}
+
+	return results, firstErr
 }
 
 func (en *ExecutionNode) Start() {

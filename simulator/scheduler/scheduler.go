@@ -242,6 +242,17 @@ func (s *Scheduler) executeBridge(ctx *execution.ExecutionContext) {
 	var ctxBytes, respBytes []byte
 	planBytes := ctx.Plan.PlanBytes
 
+	if len(ctx.IncomingBody) > 0 {
+		initBytes, err := bridge.InitContext(ctx.IncomingBody)
+		if err != nil {
+			ctx.MarkFailed(fmt.Errorf("init context: %v", err))
+			s.Metrics.RecordFailed()
+			s.sendResult(ctx)
+			return
+		}
+		ctxBytes = initBytes
+	}
+
 	for step := 0; step < 100; step++ {
 		select {
 		case <-s.stopCh:
@@ -268,6 +279,20 @@ func (s *Scheduler) executeBridge(ctx *execution.ExecutionContext) {
 		}
 
 		ctxBytes = out.CtxBytes
+
+		if out.Error != "" {
+			ctx.MarkFailed(fmt.Errorf("step %d: %s", step, out.Error))
+			s.Timeline.Record(timeline.Event{
+				ExecID:    ctx.ID,
+				Timestamp: time.Now(),
+				Type:      timeline.EventFailed,
+				Op:        "vm_error",
+				Meta:      out.Error,
+			})
+			s.Metrics.RecordFailed()
+			s.sendResult(ctx)
+			return
+		}
 
 		switch out.Result {
 		case bridge.StepDone:

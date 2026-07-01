@@ -2,6 +2,9 @@ use super::{
     ChunkMode, ConstantPool, DAGTable, Instruction, RetryStrategy, Schema, ServiceTable,
 };
 
+/// Current bytecode version. Bump when the serialization format changes.
+pub const BYTECODE_VERSION: u64 = 1;
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RetryConfig {
     pub max_attempts: u8,

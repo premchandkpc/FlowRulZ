@@ -51,7 +51,8 @@ FlowRulZ/
 │   ├── kafka-semantics.md    # Legacy Kafka transport reference
 │   ├── cluster-model.md      # Single-leader cluster, membership, plan distribution, service registry
 │   ├── flows.md              # Every data path: membership → deployment → execution → DLQ → metrics
-│   └── file-index.md         # Every source file: package, purpose, key exports
+│   ├── file-index.md         # Every source file: package, purpose, key exports
+│   ├── software-review.md    # Multi-layer codebase review (architecture, bugs, security, ops)
 │   ├── development.md
 │   └── README.md
 ├── CLAUDE.md

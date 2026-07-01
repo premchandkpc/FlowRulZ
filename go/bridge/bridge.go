@@ -1,5 +1,14 @@
 package bridge
 
+import "sync"
+
+var outputBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 256*1024)
+		return &b
+	},
+}
+
 /*
 #cgo LDFLAGS: -L../../rust/target/release -lflowrulz_core -ldl
 #include <stdlib.h>
@@ -34,6 +43,12 @@ void flowrulz_intern_lookup(uint16_t id, unsigned char* out_ptr, size_t* out_len
 
 size_t flowrulz_span_size(void);
 size_t flowrulz_get_spans(unsigned char* out_ptr, size_t out_cap);
+
+int flowrulz_init_context(
+    const unsigned char* body_ptr, size_t body_len,
+    unsigned char* out_ptr, size_t out_cap, size_t* out_len,
+    unsigned char* err_ptr, size_t err_cap, size_t* err_len
+);
 
 int flowrulz_execute_step(
     uint64_t ctx_id,
@@ -110,6 +125,29 @@ func goServiceCaller(ctxID C.uint64_t, svcID C.uint16_t, bodyPtr *C.uchar, bodyL
 	return 0
 }
 
+func InitContext(body []byte) ([]byte, error) {
+	outBuf := *outputBufPool.Get().(*[]byte)
+	defer outputBufPool.Put(&outBuf)
+	var outLen C.size_t
+	errBuf := make([]byte, 4096)
+	var errLen C.size_t
+
+	var bodyPtr *C.uchar
+	if len(body) > 0 {
+		bodyPtr = (*C.uchar)(unsafe.Pointer(&body[0]))
+	}
+
+	rc := C.flowrulz_init_context(
+		bodyPtr, C.size_t(len(body)),
+		(*C.uchar)(unsafe.Pointer(&outBuf[0])), C.size_t(cap(outBuf)), &outLen,
+		(*C.uchar)(unsafe.Pointer(&errBuf[0])), C.size_t(cap(errBuf)), &errLen,
+	)
+	if rc != 0 {
+		return nil, fmt.Errorf("init context failed: %s", string(errBuf[:errLen]))
+	}
+	return outBuf[:outLen], nil
+}
+
 func Compile(dsl string, ruleID string) ([]byte, error) {
 	if len(dsl) == 0 {
 		return nil, fmt.Errorf("compile: empty dsl")
@@ -117,7 +155,8 @@ func Compile(dsl string, ruleID string) ([]byte, error) {
 	dslBytes := []byte(dsl)
 	ridBytes := []byte(ruleID)
 
-	outBuf := make([]byte, 256*1024)
+	outBuf := *outputBufPool.Get().(*[]byte)
+	defer outputBufPool.Put(&outBuf)
 	var outLen C.size_t
 	errBuf := make([]byte, 4096)
 	var errLen C.size_t
@@ -174,7 +213,8 @@ func Execute(plan []byte, body []byte, caller ServiceCaller, ctx *ExecContext) (
 		offset = C.int64_t(ctx.Offset)
 	}
 
-	outBuf := make([]byte, 256*1024)
+	outBuf := *outputBufPool.Get().(*[]byte)
+	defer outputBufPool.Put(&outBuf)
 	var outLen C.size_t
 	errBuf := make([]byte, 4096)
 	var errLen C.size_t
@@ -324,15 +364,18 @@ func ExecuteStep(plan, ctxBytes, respBytes []byte, caller ServiceCaller) (*StepO
 		defer callerMap.Delete(ctxID)
 	}
 
-	outBuf := make([]byte, 256*1024)
+	outBuf := *outputBufPool.Get().(*[]byte)
+	defer outputBufPool.Put(&outBuf)
 	var outLen C.size_t
 	errBuf := make([]byte, 4096)
 	var errLen C.size_t
 	var pendingSvcID C.uint16_t
-	pendingBodyBuf := make([]byte, 256*1024)
+	pendingBodyBuf := *outputBufPool.Get().(*[]byte)
+	defer outputBufPool.Put(&pendingBodyBuf)
 	var pendingBodyLen C.size_t
 	var pendingTimeoutMs C.uint64_t
-	ctxOutBuf := make([]byte, 256*1024)
+	ctxOutBuf := *outputBufPool.Get().(*[]byte)
+	defer outputBufPool.Put(&ctxOutBuf)
 	var ctxOutLen C.size_t
 
 	respP, respLen := respBytesPtr(respBytes)

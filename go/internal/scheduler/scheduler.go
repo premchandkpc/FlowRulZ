@@ -51,10 +51,9 @@ type Scheduler struct {
 }
 
 type lane struct {
-	cfg     LaneConfig
-	queue   chan *Task
-	sem     chan struct{}
-	wg      sync.WaitGroup
+	cfg   LaneConfig
+	queue chan *Task
+	wg    sync.WaitGroup
 }
 
 var DefaultLanes = []LaneConfig{
@@ -75,7 +74,6 @@ func New(lanes []LaneConfig) *Scheduler {
 		s.lanes[lc.Name] = &lane{
 			cfg:   lc,
 			queue: make(chan *Task, lc.QueueSize),
-			sem:   make(chan struct{}, lc.MaxConcurrent),
 		}
 	}
 	return s
@@ -153,7 +151,13 @@ func (s *Scheduler) EnqueueAndWait(ctx context.Context, task *Task) ([]byte, err
 }
 
 func (s *Scheduler) laneWorker(ctx context.Context, p Priority, l *lane) {
-	l.wg.Add(1)
+	for i := 0; i < l.cfg.MaxConcurrent; i++ {
+		l.wg.Add(1)
+		go s.slotWorker(ctx, l)
+	}
+}
+
+func (s *Scheduler) slotWorker(ctx context.Context, l *lane) {
 	defer l.wg.Done()
 
 	for {
@@ -162,25 +166,14 @@ func (s *Scheduler) laneWorker(ctx context.Context, p Priority, l *lane) {
 			return
 		case <-ctx.Done():
 			return
-		case l.sem <- struct{}{}:
-			select {
-			case <-s.stopCh:
-				<-l.sem
-				return
-			case <-ctx.Done():
-				<-l.sem
-				return
-			case task := <-l.queue:
-				s.totalDeq.Add(1)
-				go s.execTask(ctx, task, l)
-			}
+		case task := <-l.queue:
+			s.totalDeq.Add(1)
+			s.execTask(ctx, task)
 		}
 	}
 }
 
-func (s *Scheduler) execTask(ctx context.Context, task *Task, l *lane) {
-	defer func() { <-l.sem }()
-
+func (s *Scheduler) execTask(ctx context.Context, task *Task) {
 	execCtx := ctx
 	if !task.Deadline.IsZero() {
 		var cancel context.CancelFunc

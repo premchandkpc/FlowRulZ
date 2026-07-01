@@ -42,7 +42,7 @@ var OrderRouting = Scenario{
 	},
 	Setup: func(client ScenarioClient) error {
 		if err := client.AddRule("order-routing",
-			"schema:{!order_id:string,!amount:float} g:amount>10000 n:service-b f:service-c",
+			"schema:{!order_id:string,!amount:float} g:amount>10000 n:service-b g:amount<=10000 n:service-c",
 		); err != nil {
 			return err
 		}

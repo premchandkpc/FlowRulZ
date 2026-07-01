@@ -166,7 +166,7 @@ impl<'a> VM<'a> {
     fn op_parallel(
         &mut self,
         instr: &Instruction,
-        caller: &dyn Fn(u16, &[u8], u64) -> Result<Vec<u8>, String>,
+        caller: &(dyn Fn(u16, &[u8], u64) -> Result<Vec<u8>, String> + Sync),
     ) -> Result<(), String> {
         let result =
             parallel::exec_parallel(&self.ctx.body, instr, self.plan, caller, &self.arena)?;
@@ -203,9 +203,10 @@ impl<'a> VM<'a> {
     }
 
     fn op_gate(&mut self, instr: &Instruction) -> Result<(), String> {
-        let mut skip = 0usize;
-        gate::exec_jmp_if_false(&self.ctx.body, instr, self.plan, &self.arena, &mut skip);
-        self.ctx.ip += skip;
+        if !gate::evaluate(&self.ctx.body, instr, self.plan, &self.arena) {
+            let skip = gate::skip_count(self.plan, self.ctx.ip);
+            self.ctx.ip += skip;
+        }
         Ok(())
     }
 
@@ -240,7 +241,11 @@ impl<'a> VM<'a> {
     }
 
     fn op_jmp(&mut self, instr: &Instruction) -> Result<(), String> {
-        self.ctx.ip = instr.a as usize;
+        let target = instr.a as usize;
+        if target >= self.plan.instructions.len() {
+            return Err(format!("Jmp target {} out of bounds ({} instructions)", target, self.plan.instructions.len()));
+        }
+        self.ctx.ip = target;
         Ok(())
     }
 

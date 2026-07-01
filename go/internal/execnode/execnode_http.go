@@ -28,6 +28,34 @@ func (en *ExecutionNode) Start() {
 		if err := en.ClusterNode.Start(); err != nil {
 			slog.Error("cluster: start error", "error", err)
 		}
+
+		en.ClusterNode.Gossiper().OnNodeJoin(func(nodeID, address string) {
+			en.Membership.Heartbeat(nodeID, address)
+			if address != "" && nodeID != en.nodeID {
+				if err := en.ClusterNode.AddPeer(nodeID, address); err != nil {
+					slog.Debug("cluster: auto-add peer from gossip", "peer", nodeID, "addr", address, "error", err)
+				}
+			}
+		})
+
+		// Publish own node info to members topic periodically for discovery
+		go func() {
+			ticker := time.NewTicker(3 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					discMsg, _ := json.Marshal(NodeDiscoveryMessage{
+						NodeID:  en.nodeID,
+						Address: en.config.GRPCAddr,
+					})
+					en.ClusterNode.Publish(DefaultMembersTopic, en.nodeID, discMsg)
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+
 		for _, seedAddr := range en.config.Seeds {
 			if seedAddr == en.config.GRPCAddr {
 				continue

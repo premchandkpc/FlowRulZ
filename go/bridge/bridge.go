@@ -65,9 +65,6 @@ caller_cb_t getCallerBridgePtr(void);
 import "C"
 
 import (
-	"encoding/binary"
-	"encoding/json"
-	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -94,7 +91,6 @@ type ExecContext struct {
 var (
 	callerMap sync.Map
 	nextExecID atomic.Uint64
-	// sentinel for "empty but present" response in ExecuteStep
 	emptyRespSentinel [1]byte
 )
 
@@ -123,151 +119,6 @@ func goServiceCaller(ctxID C.uint64_t, svcID C.uint16_t, bodyPtr *C.uchar, bodyL
 	return 0
 }
 
-func InitContext(body []byte) ([]byte, error) {
-	outBuf := *outputBufPool.Get().(*[]byte)
-	defer outputBufPool.Put(&outBuf)
-	var outLen C.size_t
-	errBuf := make([]byte, 4096)
-	var errLen C.size_t
-
-	var bodyPtr *C.uchar
-	if len(body) > 0 {
-		bodyPtr = (*C.uchar)(unsafe.Pointer(&body[0]))
-	}
-
-	rc := C.flowrulz_init_context(
-		bodyPtr, C.size_t(len(body)),
-		(*C.uchar)(unsafe.Pointer(&outBuf[0])), C.size_t(cap(outBuf)), &outLen,
-		(*C.uchar)(unsafe.Pointer(&errBuf[0])), C.size_t(cap(errBuf)), &errLen,
-	)
-	if rc != 0 {
-		return nil, fmt.Errorf("init context failed: %s", string(errBuf[:errLen]))
-	}
-	return outBuf[:outLen], nil
-}
-
-func Compile(dsl string, ruleID string) ([]byte, error) {
-	if len(dsl) == 0 {
-		return nil, fmt.Errorf("compile: empty dsl")
-	}
-	dslBytes := []byte(dsl)
-	ridBytes := []byte(ruleID)
-
-	outBuf := *outputBufPool.Get().(*[]byte)
-	defer outputBufPool.Put(&outBuf)
-	var outLen C.size_t
-	errBuf := make([]byte, 4096)
-	var errLen C.size_t
-
-	rc := C.flowrulz_compile(
-		(*C.uchar)(unsafe.Pointer(&dslBytes[0])), C.size_t(len(dslBytes)),
-		(*C.uchar)(unsafe.Pointer(&ridBytes[0])), C.size_t(len(ridBytes)),
-		(*C.uchar)(unsafe.Pointer(&outBuf[0])), C.size_t(cap(outBuf)), &outLen,
-		(*C.uchar)(unsafe.Pointer(&errBuf[0])), C.size_t(cap(errBuf)), &errLen,
-	)
-	if rc != 0 {
-		return nil, fmt.Errorf("compile failed: %s", string(errBuf[:errLen]))
-	}
-	return outBuf[:outLen], nil
-}
-
-func Execute(plan []byte, body []byte, caller ServiceCaller, ctx *ExecContext) ([]byte, error) {
-	if len(plan) == 0 {
-		return nil, fmt.Errorf("execute: empty plan")
-	}
-
-	ctxID := nextExecID.Add(1)
-	if caller != nil {
-		callerMap.Store(ctxID, caller)
-		defer callerMap.Delete(ctxID)
-	}
-
-	var msgIdPtr *C.uchar
-	var msgIdLen C.size_t
-	var corrIdPtr *C.uchar
-	var corrIdLen C.size_t
-	var traceIdPtr *C.uchar
-	var traceIdLen C.size_t
-	var partition C.uint32_t
-	var offset C.int64_t
-
-	if ctx != nil {
-		if len(ctx.MessageID) > 0 {
-			b := []byte(ctx.MessageID)
-			msgIdPtr = (*C.uchar)(unsafe.Pointer(&b[0]))
-			msgIdLen = C.size_t(len(b))
-		}
-		if len(ctx.CorrelationID) > 0 {
-			b := []byte(ctx.CorrelationID)
-			corrIdPtr = (*C.uchar)(unsafe.Pointer(&b[0]))
-			corrIdLen = C.size_t(len(b))
-		}
-		if len(ctx.TraceID) > 0 {
-			b := []byte(ctx.TraceID)
-			traceIdPtr = (*C.uchar)(unsafe.Pointer(&b[0]))
-			traceIdLen = C.size_t(len(b))
-		}
-		partition = C.uint32_t(ctx.Partition)
-		offset = C.int64_t(ctx.Offset)
-	}
-
-	outBuf := *outputBufPool.Get().(*[]byte)
-	defer outputBufPool.Put(&outBuf)
-	var outLen C.size_t
-	errBuf := make([]byte, 4096)
-	var errLen C.size_t
-
-	var bodyPtr *C.uchar
-	if len(body) > 0 {
-		bodyPtr = (*C.uchar)(unsafe.Pointer(&body[0]))
-	}
-	var planPtr *C.uchar
-	if len(plan) > 0 {
-		planPtr = (*C.uchar)(unsafe.Pointer(&plan[0]))
-	}
-
-	cb := C.getCallerBridgePtr()
-	rc := C.flowrulz_execute(
-		C.uint64_t(ctxID),
-		planPtr, C.size_t(len(plan)),
-		bodyPtr, C.size_t(len(body)),
-		cb,
-		(*C.uchar)(unsafe.Pointer(&outBuf[0])), C.size_t(cap(outBuf)), &outLen,
-		(*C.uchar)(unsafe.Pointer(&errBuf[0])), C.size_t(cap(errBuf)), &errLen,
-		msgIdPtr, msgIdLen,
-		corrIdPtr, corrIdLen,
-		traceIdPtr, traceIdLen,
-		partition, offset,
-	)
-	if rc != 0 {
-		return nil, fmt.Errorf("execute failed: %s", string(errBuf[:errLen]))
-	}
-	return outBuf[:outLen], nil
-}
-
-func MsgAlloc(size int) unsafe.Pointer {
-	return unsafe.Pointer(C.flowrulz_msg_alloc(C.size_t(size)))
-}
-
-func MsgRelease(ptr unsafe.Pointer) {
-	C.flowrulz_msg_release((*C.uchar)(ptr))
-}
-
-func Intern(s string) uint16 {
-	if len(s) == 0 {
-		return 0
-	}
-	b := []byte(s)
-	return uint16(C.flowrulz_intern((*C.uchar)(unsafe.Pointer(&b[0])), C.size_t(len(b))))
-}
-
-func InternLookup(id uint16) string {
-	buf := make([]byte, 256)
-	var outLen C.size_t
-	C.flowrulz_intern_lookup(C.uint16_t(id), (*C.uchar)(unsafe.Pointer(&buf[0])), &outLen)
-	return string(buf[:outLen])
-}
-
 func SpanSize() int {
 	return int(C.flowrulz_span_size())
 }
@@ -278,13 +129,6 @@ func GetSpans() []byte {
 	return buf[:n]
 }
 
-type ServiceEntry struct {
-	ID   uint16 `json:"id"`
-	Name string `json:"name"`
-}
-
-// ParseServiceMethod splits "service.method" into ("service", "method").
-// If no dot is present, method is empty string.
 func ParseServiceMethod(s string) (service, method string) {
 	if idx := strings.IndexByte(s, '.'); idx >= 0 {
 		return s[:idx], s[idx+1:]
@@ -292,11 +136,6 @@ func ParseServiceMethod(s string) (service, method string) {
 	return s, ""
 }
 
-// ParseCompensation splits "service.method:compensator" into
-// ("service", "method", "compensator", "compMethod").
-// If the compensator has no dot, it's a method on the same service.
-// Usage in DSL: n:payment.authorize:refund → calls payment.authorize,
-// compensates via payment.refund on failure.
 func ParseCompensation(s string) (service, method, compensator, compMethod string) {
 	colonIdx := strings.IndexByte(s, ':')
 	if colonIdx < 0 {
@@ -316,97 +155,6 @@ func ParseCompensation(s string) (service, method, compensator, compMethod strin
 	return svc, method, svc, afterColon
 }
 
-func PlanServices(plan []byte) ([]ServiceEntry, error) {
-	if len(plan) == 0 {
-		return nil, fmt.Errorf("plan services: empty plan")
-	}
-	outBuf := make([]byte, 4096)
-	var outLen C.size_t
-	rc := C.flowrulz_plan_services(
-		(*C.uchar)(unsafe.Pointer(&plan[0])), C.size_t(len(plan)),
-		(*C.uchar)(unsafe.Pointer(&outBuf[0])), C.size_t(cap(outBuf)), &outLen,
-	)
-	if rc != 0 {
-		return nil, fmt.Errorf("plan services: ffi error %d", rc)
-	}
-	var entries []ServiceEntry
-	if err := json.Unmarshal(outBuf[:outLen], &entries); err != nil {
-		return nil, fmt.Errorf("plan services: unmarshal: %w", err)
-	}
-	return entries, nil
-}
-
-type StepResult int
-
-const (
-	StepDone     StepResult = 0
-	StepPending  StepResult = 1
-	StepContinue StepResult = 2
-	StepDelay    StepResult = 3
-)
-
-type StepOutput struct {
-	Result      StepResult
-	Output      []byte
-	Error       string
-	PendingSvc  uint16
-	PendingBody []byte
-	TimeoutMs   uint64
-	CtxBytes    []byte
-}
-
-func ExecuteStep(plan, ctxBytes, respBytes []byte, caller ServiceCaller) (*StepOutput, error) {
-	ctxID := nextExecID.Add(1)
-	if caller != nil {
-		callerMap.Store(ctxID, caller)
-		defer callerMap.Delete(ctxID)
-	}
-
-	outBuf := *outputBufPool.Get().(*[]byte)
-	defer outputBufPool.Put(&outBuf)
-	var outLen C.size_t
-	errBuf := make([]byte, 4096)
-	var errLen C.size_t
-	var pendingSvcID C.uint16_t
-	pendingBodyBuf := *outputBufPool.Get().(*[]byte)
-	defer outputBufPool.Put(&pendingBodyBuf)
-	var pendingBodyLen C.size_t
-	var pendingTimeoutMs C.uint64_t
-	ctxOutBuf := *outputBufPool.Get().(*[]byte)
-	defer outputBufPool.Put(&ctxOutBuf)
-	var ctxOutLen C.size_t
-
-	respP, respLen := respBytesPtr(respBytes)
-	rc := C.flowrulz_execute_step(
-		C.uint64_t(ctxID),
-		(*C.uchar)(unsafe.Pointer(&plan[0])), C.size_t(len(plan)),
-		ctxBytesPtr(ctxBytes), C.size_t(len(ctxBytes)),
-		respP, respLen,
-		C.getCallerBridgePtr(),
-		(*C.uchar)(unsafe.Pointer(&outBuf[0])), C.size_t(cap(outBuf)), &outLen,
-		(*C.uchar)(unsafe.Pointer(&errBuf[0])), C.size_t(cap(errBuf)), &errLen,
-		&pendingSvcID,
-		(*C.uchar)(unsafe.Pointer(&pendingBodyBuf[0])), C.size_t(cap(pendingBodyBuf)), &pendingBodyLen,
-		&pendingTimeoutMs,
-		(*C.uchar)(unsafe.Pointer(&ctxOutBuf[0])), C.size_t(cap(ctxOutBuf)), &ctxOutLen,
-	)
-
-	out := &StepOutput{
-		Result:      StepResult(rc),
-		Output:      copyBytes(outBuf, int(outLen)),
-		PendingSvc:  uint16(pendingSvcID),
-		PendingBody: copyBytes(pendingBodyBuf, int(pendingBodyLen)),
-		TimeoutMs:   uint64(pendingTimeoutMs),
-		CtxBytes:    copyBytes(ctxOutBuf, int(ctxOutLen)),
-	}
-
-	if rc == -8 || rc == -1 {
-		out.Error = string(errBuf[:errLen])
-	}
-
-	return out, nil
-}
-
 func ctxBytesPtr(b []byte) *C.uchar {
 	if len(b) == 0 {
 		return nil
@@ -414,16 +162,6 @@ func ctxBytesPtr(b []byte) *C.uchar {
 	return (*C.uchar)(unsafe.Pointer(&b[0]))
 }
 
-// respBytesPtr converts a Go []byte response to C pointers for the Rust FFI.
-//
-// Three cases:
-//   - b == nil       → (nil, 0)           → Rust sees None (no response received, skip)
-//   - b == []byte{}  → (&sentinel, 0)     → Rust sees Some(&[]) (empty response, advance)
-//   - b == [1,2,3]   → (&b[0], 3)         → Rust sees Some(&[1,2,3]) (data response)
-//
-// The [1]byte sentinel provides a non-nil pointer for zero-length responses.
-// Without it, Rust cannot distinguish "no response" (nil pointer, don't advance)
-// from "empty response" (non-nil pointer with len=0, advance IP).
 func respBytesPtr(b []byte) (*C.uchar, C.size_t) {
 	if b == nil {
 		return nil, 0
@@ -441,38 +179,4 @@ func copyBytes(buf []byte, n int) []byte {
 	out := make([]byte, n)
 	copy(out, buf[:n])
 	return out
-}
-
-func RegisterPlugin(name string, wasmBytes []byte) error {
-	if len(name) == 0 {
-		return fmt.Errorf("register plugin: empty name")
-	}
-	if len(wasmBytes) == 0 {
-		return fmt.Errorf("register plugin '%s': empty wasm bytes", name)
-	}
-	nameBytes := []byte(name)
-	rc := C.flowrulz_register_plugin(
-		(*C.uchar)(unsafe.Pointer(&nameBytes[0])), C.size_t(len(nameBytes)),
-		(*C.uchar)(unsafe.Pointer(&wasmBytes[0])), C.size_t(len(wasmBytes)),
-	)
-	if rc != 0 {
-		return fmt.Errorf("register plugin '%s': ffi error %d", name, rc)
-	}
-	return nil
-}
-
-func (o *StepOutput) DelayMs() uint64 {
-	if len(o.PendingBody) < 8 {
-		return 0
-	}
-	return binary.LittleEndian.Uint64(o.PendingBody[:8])
-}
-
-func PlanComplexity(plan []byte) uint32 {
-	if len(plan) == 0 {
-		return 0
-	}
-	return uint32(C.flowrulz_plan_complexity(
-		(*C.uchar)(unsafe.Pointer(&plan[0])), C.size_t(len(plan)),
-	))
 }

@@ -34,6 +34,8 @@ type Gossiper struct {
 	pushInterval time.Duration
 	syncInterval time.Duration
 	stopCh    chan struct{}
+
+	onNodeJoin func(nodeID, address string)
 }
 
 func NewGossiper(nodeID, grpcAddr string, node *ClusterNode) *Gossiper {
@@ -49,6 +51,10 @@ func NewGossiper(nodeID, grpcAddr string, node *ClusterNode) *Gossiper {
 	}
 }
 
+func (g *Gossiper) OnNodeJoin(fn func(nodeID, address string)) {
+	g.onNodeJoin = fn
+}
+
 func (g *Gossiper) SetState(term uint64) {
 	g.statesMu.Lock()
 	defer g.statesMu.Unlock()
@@ -58,11 +64,17 @@ func (g *Gossiper) SetState(term uint64) {
 
 func (g *Gossiper) UpdateState(nodeID string, state GossipState) {
 	g.statesMu.Lock()
-	defer g.statesMu.Unlock()
 	existing, ok := g.states[nodeID]
 	if !ok || state.Epoch > existing.Epoch || (state.Epoch == existing.Epoch && state.Term > existing.Term) {
 		g.states[nodeID] = state
+		isNew := !ok
+		g.statesMu.Unlock()
+		if isNew && g.onNodeJoin != nil {
+			g.onNodeJoin(state.NodeID, state.Address)
+		}
+		return
 	}
+	g.statesMu.Unlock()
 }
 
 func (g *Gossiper) GetState(nodeID string) (GossipState, bool) {
@@ -156,7 +168,7 @@ func (g *Gossiper) doPush() {
 	}
 
 	for _, peerID := range peers {
-		g.node.Publish("_flowrulz_gossip", peerID, data)
+		g.node.PublishToPeer(peerID, "_flowrulz_gossip", data)
 	}
 }
 
@@ -181,7 +193,7 @@ func (g *Gossiper) doSync() {
 		slog.Error("gossip: pull_req marshal error", "error", err)
 		return
 	}
-	g.node.Publish("_flowrulz_gossip", peerID, data)
+	g.node.PublishToPeer(peerID, "_flowrulz_gossip", data)
 }
 
 func (g *Gossiper) HandleGossipMessage(ctx context.Context, topic string, body []byte) {
@@ -224,7 +236,7 @@ func (g *Gossiper) HandleGossipMessage(ctx context.Context, topic string, body [
 			slog.Error("gossip: pull_resp marshal error", "error", err)
 			return
 		}
-		g.node.Publish("_flowrulz_gossip", msg.Sender, data)
+		g.node.PublishToPeer(msg.Sender, "_flowrulz_gossip", data)
 		slog.Info("gossip: responding to pull", "sender", msg.Sender, "states", len(missingStates))
 
 	case "pull_resp":

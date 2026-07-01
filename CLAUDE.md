@@ -37,7 +37,8 @@ make clean     # cargo clean + remove binary
 - **Control Plane** (Go): Rule registry, DSL compiler, scheduling, leader election. Simple single-leader — no Raft. No WAL/storage beyond rules JSON file.
 - **Data Plane** (Go + Rust): Partition workers, ExecutionRuntime, service callers, span collection. Multiple nodes scale horizontally.
 - **Execution Node** (`go/internal/execnode/`): process wrapping Engine + Bridge + Runtime + Registry + PlanDistributor + cluster transport + admin HTTP. Leader/follower role via `SetLeader()`/`IsLeader()`. Leader distributes plans via `Engine.AfterDeploy`/`AfterPromote` hooks that call `PlanDist.PublishPlan()` + ACK quorum + `ActivatePlan()`.
-- **Cluster Bus** (`go/internal/cluster/`): gRPC-based peer-to-peer overlay — no Kafka, no ZK, no external deps. `ClusterNode` manages Publish/Subscribe, peer membership, topic handlers. `ClusterProducer`/`ClusterConsumer` adapters implement `transport.MessageProducer`/`transport.MessageConsumer`. Default transport; Kafka (`go/internal/transport/kafka.go`) remains as legacy fallback when `FLOWRULZ_KAFKA_BROKERS` is explicitly set.
+- **Cluster Bus** (`go/internal/cluster/`): gRPC-based peer-to-peer overlay — no Kafka, no ZK, no external deps. `ClusterNode` manages Publish/Subscribe, peer membership, topic handlers. `PublishToPeer(peerID, topic, body)` sends to a specific peer; `Publish(topic, key, body)` broadcasts to all peers. Default transport; Kafka (`go/internal/transport/kafka.go`) remains as legacy fallback when `FLOWRULZ_KAFKA_BROKERS` is explicitly set.
+- **Gossip Protocol** (`go/internal/cluster/gossip.go`): Push/pull gossip with epoch-based state management. Push to random fanout peers (default 2) every 2s, sync (pull) to random peer every 10s. Uses `PublishToPeer` for targeted delivery. `OnNodeJoin` callback feeds discovered nodes into `Membership.Heartbeat()` and auto-adds peers via `AddPeer`. Gossip state propagates to execnode's Membership module for quorum counting in `PlanDist.WaitForAcks`.
 - **Service Registry** (`go/internal/registry/`): Rich registry — services self-register with `ServiceInstance` (ID, name, version, methods, capabilities, endpoint, zone, weight, tags, metadata, heartbeat). Two registration paths: legacy `Register(name, endpoint)` and rich `RegisterInstance(inst)`. Heartbeat expiry (default 30s) marks unhealthy. LB strategies: random, round-robin, least-loaded, local-prefer. `LookupInstance(name, method)` selects method-aware healthy instance.
 - **Registration API**: `POST /register` (service announces name, version, methods, address, port, protocol, zone, weight) and `POST /heartbeat` (keeps instance alive). `GET /services` lists all registered services with full instance details.
 - **Method syntax in rules**: `n:payment.authorize` — method name embedded in service string. `bridge.ParseServiceMethod("payment.authorize")` → `("payment", "authorize")`. Rust DSL lexer captures everything after `n:` (dot included). No Rust changes needed.
@@ -100,6 +101,7 @@ make clean     # cargo clean + remove binary
 - **Service Registry**: Nodes register services in heartbeat. Leader aggregates → publishes combined registry.
 - **Reply Router**: Per-node component tracking pending request/reply by correlation_id. Replies route via cluster bus topic to origin node.
 - **Node lifecycle**: Join (announce → catch-up → consume), Drain (rebalance → drain execs → leave), Crash (rejoin with same ID → catch-up).
+- **Discovery**: Nodes publish heartbeat to `_flowrulz_members` topic every 3s. Received heartbeats trigger `Membership.Heartbeat()` and `ClusterNode.AddPeer()`. Gossip protocol provides secondary discovery path via `OnNodeJoin` callback. Seed nodes are connected on startup via `FLOWRULZ_SEEDS` env var.
 - **Scheduler**: Lane-based priority queues; Fast (50 concurrent, 5k queue), Normal (20, 2k), Heavy (5, 500). RejectOnFull for heavy lane.
 - **Plan Distribution**: `PlanDistributor` publishes `PlanMessage{type, rule_id, version, plan, dsl}` to `_flowrulz_plans`. Followers send `AckMessage{node_id, rule_id, version, status}` to `_flowrulz_acks`. `WaitForAcks(ruleID, version, quorum, timeout)` implements ACK-quorum activation. Term-based rejection prevents stale plans.
 
@@ -159,9 +161,9 @@ All endpoints (except `/health`) require `Authorization: Bearer <FLOWRULZ_API_KE
 | P1 Leader epoch | `PlanMessage.Term` field (uint64), `PlanDistributor.SetTerm()`/`CurrentTerm()`. Term-based rejection in execnode `handlePlanMessage` (rejects plans with older term) | `go/internal/plandist/plandist.go`, `go/internal/execnode/execnode.go` |
 | P1 Workflow state | File-based checkpointing (`NewOrchestratorWithCheckpointDir`). Per-flow JSON files, atomic write, restore on start | `go/internal/flow/flow.go` |
 | P1 Message dedup | Bounded in-memory `DedupTracker` (10k, 5min TTL). Wired by MessageID in handler. Cleanup goroutine every 30s | `reliability/dedup.go`, `execnode/execnode.go` |
-| P2 Leader election | Auto-elected via heartbeat on `_flowrulz_members` topic — lowest-ID alive node wins. Uses Cluster Bus transport (resolved). Quorum counting via membership tracking still pending | `execnode/execnode.go`, `membership/membership.go` |
-| P2 AckQuorum | `WaitForAcks` with quorum=0 or -1 always returns immediately. Real quorum requires membership counting | `plandist/plandist.go` |
-| P2 Plan distribution | `AfterDeploy`/`AfterPromote` callbacks wired in execnode. Uses Cluster Bus transport (resolved). Distributes + Waits + Activates | `execnode/execnode.go`, `engine/engine.go` |
+| P2 Leader election | Auto-elected via heartbeat on `_flowrulz_members` topic — lowest-ID alive node wins. Uses Cluster Bus transport (resolved). Gossip → Membership wiring complete via `OnNodeJoin` callback | `execnode/execnode.go`, `membership/membership.go`, `cluster/gossip.go` |
+| P2 AckQuorum | `WaitForAcks` with quorum=0 or -1 now correctly calculates quorum via `QuorumProvider.AliveCount()` from Membership | `plandist/plandist.go` |
+| P2 Plan distribution | `AfterDeploy`/`AfterPromote` callbacks wired in execnode. Uses Cluster Bus transport (resolved). Distributes + Waits + Activates (quorum based) | `execnode/execnode.go`, `engine/engine.go` |
 
 ## Progress
 ### Done
@@ -207,6 +209,17 @@ All endpoints (except `/health`) require `Authorization: Bearer <FLOWRULZ_API_KE
 - Removed multiple dead methods, fields, variables across simulator
 - All simulator + Go tests pass
 
+### Phase 8: Cluster Bus gossip + membership wiring (complete)
+- Added `PublishToPeer(peerID, topic, body)` to `ClusterNode` for targeted peer-to-peer messaging
+- Added `OnNodeJoin` callback to `Gossiper` — fires when a new node is discovered via gossip push/pull
+- `Gossiper.UpdateState` now propagates new nodes to the callback (non-blocking)
+- `Gossiper.doPush`/`doSync`/`HandleGossipMessage` use `PublishToPeer` instead of broadcast `Publish`
+- Execnode wires gossip → membership: `OnNodeJoin` callback calls `Membership.Heartbeat()` + `ClusterNode.AddPeer()`
+- Execnode publishes periodic heartbeat to `_flowrulz_members` topic for discovery bootstrapping
+- `handleNodeDiscoveryMessage` auto-adds discovered peers via `ClusterNode.AddPeer()`
+- `Membership.AliveCount()` now reflects real cluster peers, enabling correct quorum-based ACK counting in `PlanDist.WaitForAcks`
+- 6 gossiper unit tests covering: OnNodeJoin callback, UpdateState existing/new, AllStates, GetState, SetState epoch increment, HandleGossipMessage push
+
 ### Phase 7: Kafka removal → Cluster Bus (complete)
 - Designed and implemented **Cluster Bus** (`go/internal/cluster/`): gRPC peer-to-peer overlay
   - `ClusterNode`: Publish/Subscribe, peer management, topic handlers
@@ -221,9 +234,9 @@ All endpoints (except `/health`) require `Authorization: Bearer <FLOWRULZ_API_KE
 - Build clean, `go vet` clean, all 154 Rust + all Go tests pass
 
 ### Next Steps
-1. Cluster Bus: real peer-to-peer gossip, quorum-based ACK counting
-2. Cluster Bus: partition rebalancing on node join/leave
-3. E2E tests with 3-node docker-compose cluster
+1. E2E tests with 3-node docker-compose cluster (`make e2e`)
+2. Partition rebalancing on node join/leave (auto-trigger from membership changes via `RebalanceNotifier`)
+3. Raft-based leader election: docker-compose config for Raft port (9093) and bootstrap
 
 ## Env Vars
 

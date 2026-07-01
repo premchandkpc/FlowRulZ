@@ -41,19 +41,13 @@ type LaneConfig struct {
 }
 
 type Scheduler struct {
-	mu        sync.Mutex
-	lanes     map[Priority]*lane
-	started   bool
-	stopCh    chan struct{}
-	totalEnq  atomic.Int64
-	totalDeq  atomic.Int64
-	totalRej  atomic.Int64
-}
-
-type lane struct {
-	cfg   LaneConfig
-	queue chan *Task
-	wg    sync.WaitGroup
+	mu       sync.Mutex
+	lanes    map[Priority]*lane
+	started  bool
+	stopCh   chan struct{}
+	totalEnq atomic.Int64
+	totalDeq atomic.Int64
+	totalRej atomic.Int64
 }
 
 var DefaultLanes = []LaneConfig{
@@ -71,10 +65,7 @@ func New(lanes []LaneConfig) *Scheduler {
 		stopCh: make(chan struct{}),
 	}
 	for _, lc := range lanes {
-		s.lanes[lc.Name] = &lane{
-			cfg:   lc,
-			queue: make(chan *Task, lc.QueueSize),
-		}
+		s.lanes[lc.Name] = newLane(lc)
 	}
 	return s
 }
@@ -122,17 +113,15 @@ func (s *Scheduler) Enqueue(task *Task) error {
 	}
 
 	if l.cfg.RejectOnFull {
-		select {
-		case l.queue <- task:
-			s.totalEnq.Add(1)
-			return nil
-		default:
+		if !l.enqueue(task) {
 			s.totalRej.Add(1)
 			return ErrQueueFull
 		}
+		s.totalEnq.Add(1)
+		return nil
 	}
 
-	l.queue <- task
+	l.enqueue(task)
 	s.totalEnq.Add(1)
 	return nil
 }
@@ -186,5 +175,3 @@ func (s *Scheduler) execTask(ctx context.Context, task *Task) {
 		task.ResultCh <- TaskResult{Output: out, Error: err}
 	}
 }
-
-

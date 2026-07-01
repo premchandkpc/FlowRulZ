@@ -19,6 +19,11 @@ func (en *ExecutionNode) handleNodeDiscoveryMessage(ctx context.Context, msg []b
 		return nil, nil
 	}
 	en.Membership.Heartbeat(nd.NodeID, nd.Address)
+	if en.ClusterNode != nil && nd.Address != "" {
+		if err := en.ClusterNode.AddPeer(nd.NodeID, nd.Address); err != nil {
+			slog.Debug("cluster: auto-add peer from discovery", "peer", nd.NodeID, "addr", nd.Address, "error", err)
+		}
+	}
 	return nil, nil
 }
 

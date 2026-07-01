@@ -49,6 +49,10 @@ func NewClusterNode(nodeID, grpcAddr string) *ClusterNode {
 	return cn
 }
 
+func (cn *ClusterNode) Gossiper() *Gossiper {
+	return cn.gossiper
+}
+
 func (cn *ClusterNode) Start() error {
 	cn.mu.Lock()
 	if cn.started {
@@ -100,6 +104,22 @@ func (cn *ClusterNode) RemovePeer(id string) {
 		log.Printf("cluster node %s: disconnected peer %s", cn.nodeID, id)
 	}
 	cn.peersMu.Unlock()
+}
+
+func (cn *ClusterNode) PublishToPeer(peerID, topic string, body []byte) error {
+	cn.peersMu.RLock()
+	p, ok := cn.peers[peerID]
+	cn.peersMu.RUnlock()
+	if !ok {
+		return fmt.Errorf("peer %s not connected", peerID)
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	_, err := p.client.PublishRaw(context.Background(), topic, "", body)
+	if err != nil {
+		log.Printf("cluster node: publish to peer %s: %v", peerID, err)
+	}
+	return err
 }
 
 func (cn *ClusterNode) Publish(topic, key string, body []byte) error {

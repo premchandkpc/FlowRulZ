@@ -8,7 +8,6 @@ import (
 	"log"
 	"sort"
 	"sync"
-	"sync/atomic"
 
 	"github.com/premchandkpc/FlowRulZ/go/internal/transport"
 )
@@ -19,10 +18,10 @@ const (
 )
 
 type Assignment struct {
-	NodeID    string   `json:"node_id"`
-	Address   string   `json:"address,omitempty"`
-	Partition uint32   `json:"partition"`
-	Term      uint64   `json:"term"`
+	NodeID    string `json:"node_id"`
+	Address   string `json:"address,omitempty"`
+	Partition uint32 `json:"partition"`
+	Term      uint64 `json:"term"`
 }
 
 type PartitionMessage struct {
@@ -33,15 +32,13 @@ type PartitionMessage struct {
 }
 
 type Manager struct {
-	mu           sync.RWMutex
+	mu            sync.RWMutex
 	numPartitions uint32
-	assignments  []string          // partition → nodeID
-	nodeParts    map[string][]uint32 // nodeID → partitions
-	currentTerm  uint64
-
-	producer transport.MessageProducer
-
-	leaderID string
+	assignments   []string
+	nodeParts     map[string][]uint32
+	currentTerm   uint64
+	producer      transport.MessageProducer
+	leaderID      string
 }
 
 func New(numPartitions uint32) *Manager {
@@ -205,67 +202,3 @@ func (m *Manager) OnLeaderChange(leaderID string) {
 	defer m.mu.Unlock()
 	m.leaderID = leaderID
 }
-
-type RebalanceNotifier struct {
-	manager  *Manager
-	aliveFn  func() []string
-	termFn   func() uint64
-	notifyFn func()
-	mu       sync.Mutex
-	lastNodes []string
-}
-
-func NewRebalanceNotifier(m *Manager, aliveFn func() []string, termFn func() uint64) *RebalanceNotifier {
-	return &RebalanceNotifier{
-		manager:  m,
-		aliveFn:  aliveFn,
-		termFn:   termFn,
-	}
-}
-
-func (rn *RebalanceNotifier) SetNotify(fn func()) {
-	rn.mu.Lock()
-	defer rn.mu.Unlock()
-	rn.notifyFn = fn
-}
-
-func (rn *RebalanceNotifier) CheckAndRebalance() bool {
-	rn.mu.Lock()
-	defer rn.mu.Unlock()
-
-	nodes := rn.aliveFn()
-	if len(nodes) == 0 {
-		return false
-	}
-
-	sort.Strings(nodes)
-	same := len(nodes) == len(rn.lastNodes)
-	if same {
-		for i, n := range nodes {
-			if n != rn.lastNodes[i] {
-				same = false
-				break
-			}
-		}
-	}
-	if same {
-		return false
-	}
-
-	rn.lastNodes = make([]string, len(nodes))
-	copy(rn.lastNodes, nodes)
-	log.Printf("partition: membership changed (%d nodes), triggering rebalance", len(nodes))
-
-	rn.manager.Rebalance(nodes, rn.termFn())
-	if rn.notifyFn != nil {
-		rn.notifyFn()
-	}
-	return true
-}
-
-type atomicCounter struct {
-	v atomic.Uint64
-}
-
-func (a *atomicCounter) inc() uint64 { return a.v.Add(1) }
-func (a *atomicCounter) get() uint64 { return a.v.Load() }

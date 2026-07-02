@@ -196,7 +196,18 @@ func (d *DLQ) ReplayAll(ctx context.Context) int {
 	for _, entry := range entries {
 		if d.replayFn != nil {
 			entry.RetryCount++
-			if err := d.replayFn(ctx, entry); err != nil {
+			replayErr := func() (err error) {
+				defer func() {
+					if r := recover(); r != nil {
+						err = &replayPanicError{value: r}
+					}
+				}()
+				return d.replayFn(ctx, entry)
+			}()
+			if replayErr != nil {
+				if pe, ok := replayErr.(*replayPanicError); ok {
+					slog.Error("dlq: replay panic, re-queuing", "id", entry.ID, "panic", pe.value)
+				}
 				d.Send(entry)
 				continue
 			}
@@ -204,6 +215,14 @@ func (d *DLQ) ReplayAll(ctx context.Context) int {
 		}
 	}
 	return count
+}
+
+type replayPanicError struct {
+	value any
+}
+
+func (e *replayPanicError) Error() string {
+	return "replay panic"
 }
 
 func (d *DLQ) List() []*DeadLetterEntry {

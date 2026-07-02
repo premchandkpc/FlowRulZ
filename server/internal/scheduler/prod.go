@@ -65,7 +65,7 @@ func New(lanes []LaneConfig) *Scheduler {
 		stopCh: make(chan struct{}),
 	}
 	for _, lc := range lanes {
-		s.lanes[lc.Name] = newLane(lc)
+		s.lanes[lc.Name] = newLane(lc, s.stopCh)
 	}
 	return s
 }
@@ -114,16 +114,10 @@ func (s *Scheduler) EnqueueTask(task *Task) error {
 		return errors.New("scheduler: unknown priority")
 	}
 
-	if l.cfg.RejectOnFull {
-		if !l.enqueue(task) {
-			s.totalRej.Add(1)
-			return ErrQueueFull
-		}
-		s.totalEnq.Add(1)
-		return nil
+	if !l.enqueue(task) {
+		s.totalRej.Add(1)
+		return ErrQueueFull
 	}
-
-	l.enqueue(task)
 	s.totalEnq.Add(1)
 	return nil
 }

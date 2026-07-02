@@ -4,17 +4,17 @@
     "type": "split",
     "children": [
       {
-        "id": "a0e19dae6e413aad",
+        "id": "c9db9b02acc31dfa",
         "type": "tabs",
         "children": [
           {
-            "id": "0f4ba861ff97b1c4",
+            "id": "590cc09268958f1f",
             "type": "leaf",
             "state": {
-              "type": "graph",
+              "type": "empty",
               "state": {},
-              "icon": "lucide-git-fork",
-              "title": "Graph view"
+              "icon": "lucide-file",
+              "title": "New tab"
             }
           }
         ]
@@ -176,8 +176,9 @@
       "bases:Create new base": false
     }
   },
-  "active": "0f4ba861ff97b1c4",
+  "active": "590cc09268958f1f",
   "lastOpenFiles": [
+    "Architecture.md",
     "2026-07-02.md",
     "Untitled.canvas",
     "Server.md",
@@ -187,7 +188,6 @@
     "SDK.md",
     "Runtime.md",
     "FlowRulZ.md",
-    "Architecture.md",
     "concepts/Raft Consensus.md",
     "concepts/FlowRULZ DSL.md",
     "concepts/Message Flow.md"

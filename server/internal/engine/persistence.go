@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"log/slog"
 	"os"
 )
 
@@ -35,6 +36,7 @@ func (e *Engine) loadRules() {
 		for i, v := range r.Versions {
 			result, err := e.compiler.Compile(v.DSL, r.ID)
 			if err != nil {
+				slog.Warn("loadRules: compilation failed, skipping version", "rule", r.ID, "version", v.Version, "error", err)
 				continue
 			}
 			rule.Versions[i] = &VersionedPlan{

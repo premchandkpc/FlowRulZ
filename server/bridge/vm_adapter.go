@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/premchandkpc/FlowRulZ/go/pkg/vm"
+	"github.com/premchandkpc/FlowRulZ/server/pkg/vm"
 )
 
 type BridgeVM struct{}

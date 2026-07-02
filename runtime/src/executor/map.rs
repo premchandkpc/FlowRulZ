@@ -42,6 +42,136 @@ pub fn exec_map<'a>(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bytecode::{Schema, FieldSchema};
+
+    fn arena() -> &'static crate::memory::arena::Arena {
+        Box::leak(Box::new(crate::memory::arena::Arena::new()))
+    }
+
+    fn make_plan(expr_id: u16, expr: &str) -> ExecutionPlan {
+        let mut plan = ExecutionPlan::new("test");
+        while plan.const_pool.len() < expr_id as usize {
+            plan.const_pool.add("");
+        }
+        plan.const_pool.add(expr);
+        plan
+    }
+
+    #[test]
+    fn test_exec_map_dot_path() {
+        let plan = make_plan(0, ".x");
+        let instr = Instruction::map(0);
+        let result = exec_map(b"{\"x\":42}", &instr, &plan, &arena()).unwrap();
+        assert_eq!(result, b"42");
+    }
+
+    #[test]
+    fn test_exec_map_nested_dot_path() {
+        let plan = make_plan(0, ".user.name");
+        let instr = Instruction::map(0);
+        let result = exec_map(b"{\"user\":{\"name\":\"alice\"}}", &instr, &plan, &arena()).unwrap();
+        assert_eq!(result, b"\"alice\"");
+    }
+
+    #[test]
+    fn test_exec_map_empty_expr_returns_body() {
+        let plan = make_plan(0, "");
+        let instr = Instruction::map(0);
+        let result = exec_map(b"{\"x\":1}", &instr, &plan, &arena()).unwrap();
+        assert_eq!(result, b"{\"x\":1}");
+    }
+
+    #[test]
+    fn test_exec_map_assignment() {
+        let plan = make_plan(0, "y=x");
+        let instr = Instruction::map(0);
+        let result = exec_map(b"{\"x\":42}", &instr, &plan, &arena()).unwrap();
+        let val: serde_json::Value = serde_json::from_slice(result).unwrap();
+        assert_eq!(val["y"], 42);
+    }
+
+    #[test]
+    fn test_exec_map_non_existent_field() {
+        let plan = make_plan(0, ".nonexistent");
+        let instr = Instruction::map(0);
+        // Should return "null" string from extract_dot_path
+        let result = exec_map(b"{\"x\":1}", &instr, &plan, &arena()).unwrap();
+        assert_eq!(result, b"null");
+    }
+
+    #[test]
+    fn test_exec_map_dot_path_missing_object() {
+        let plan = make_plan(0, ".x.y");
+        let instr = Instruction::map(0);
+        let result = exec_map(b"{\"x\":\"string\"}", &instr, &plan, &arena()).unwrap();
+        assert_eq!(result, b"null");
+    }
+
+    #[test]
+    fn test_exec_map_any_type_warning() {
+        let mut plan = make_plan(0, ".x");
+        plan.schema = Some(Schema {
+            fields: vec![FieldSchema { name: "x".into(), r#type: ResolvedType::Any, required: false }],
+        });
+        let instr = Instruction::map(0);
+        let result = exec_map(b"{\"x\":42}", &instr, &plan, &arena()).unwrap();
+        assert_eq!(result, b"42");
+    }
+
+    #[test]
+    fn test_exec_map_array_index_via_dot_path() {
+        let plan = make_plan(0, ".arr.[]");
+        let instr = Instruction::map(0);
+        let result = exec_map(b"{\"arr\":[1,2,3]}", &instr, &plan, &arena()).unwrap();
+        assert_eq!(result, b"1");
+    }
+
+    #[test]
+    fn test_exec_map_wildcard_object() {
+        let plan = make_plan(0, ".obj.*");
+        let instr = Instruction::map(0);
+        let result = exec_map(b"{\"obj\":{\"a\":1,\"b\":2}}", &instr, &plan, &arena()).unwrap();
+        let s = std::str::from_utf8(result).unwrap();
+        assert!(s.starts_with('['));
+        assert!(s.contains('1'));
+        assert!(s.contains('2'));
+    }
+
+    #[test]
+    fn test_exec_map_wildcard_array() {
+        let plan = make_plan(0, ".arr.*");
+        let instr = Instruction::map(0);
+        let result = exec_map(b"{\"arr\":[10,20]}", &instr, &plan, &arena()).unwrap();
+        let s = std::str::from_utf8(result).unwrap();
+        assert!(s.starts_with('['));
+        assert!(s.contains("10"));
+        assert!(s.contains("20"));
+    }
+
+    #[test]
+    fn test_exec_map_invalid_json_error() {
+        let plan = make_plan(0, ".x");
+        let instr = Instruction::map(0);
+        let result = exec_map(b"not-json", &instr, &plan, &arena());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("json"));
+    }
+
+    #[test]
+    fn test_exec_map_invalid_utf8() {
+        let plan = make_plan(0, ".x");
+        let instr = Instruction::map(0);
+        // Invalid UTF-8 should trigger the invalid utf8 error when trying to parse
+        // But first it tries the plugin path, then the schema path, then empty, then contains '='
+        // then strip_prefix '.' which it does, then it tries from_utf8
+        let result = exec_map(b"\xff\xff", &instr, &plan, &arena());
+        assert!(result.is_err());
+    }
+}
+
 fn extract_dot_path<'a>(
     stripped: &str,
     body: &[u8],

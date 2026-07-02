@@ -10,6 +10,178 @@ use super::{
     check_plan_version, hash_bytes, read_slice, read_str, with_resp_buf, write_error, PLAN_CACHE,
 };
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dsl::{compiler::Compiler, lexer, optimizer, parser};
+
+    fn compile_to_bytes(dsl: &str) -> Vec<u8> {
+        let tokens = lexer::lex(dsl).unwrap();
+        let pipeline = parser::parse(&tokens).unwrap();
+        let opt = optimizer::Optimizer::new();
+        let optimized = opt.optimize(&pipeline);
+        let compiler = Compiler::new();
+        let plan = compiler.compile(&optimized, "test").unwrap();
+        bincode::serialize(&plan).unwrap()
+    }
+
+    extern "C" fn mock_caller_cb(
+        _ctx_id: u64,
+        _svc_id: u16,
+        body_ptr: *const u8,
+        body_len: usize,
+        resp_buf: *mut u8,
+        resp_len: *mut usize,
+    ) -> i32 {
+        if body_ptr.is_null() || resp_buf.is_null() || resp_len.is_null() {
+            return -1;
+        }
+        let body = unsafe { std::slice::from_raw_parts(body_ptr, body_len) };
+        unsafe {
+            std::ptr::copy_nonoverlapping(body.as_ptr(), resp_buf, body.len());
+            *resp_len = body.len();
+        }
+        0
+    }
+
+    extern "C" fn failing_caller_cb(
+        _ctx_id: u64,
+        _svc_id: u16,
+        _body_ptr: *const u8,
+        _body_len: usize,
+        _resp_buf: *mut u8,
+        _resp_len: *mut usize,
+    ) -> i32 {
+        1
+    }
+
+    fn run_execute(
+        plan_bytes: &[u8],
+        body: &[u8],
+        caller: extern "C" fn(u64, u16, *const u8, usize, *mut u8, *mut usize) -> i32,
+    ) -> Result<Vec<u8>, i32> {
+        let mut out_buf = vec![0u8; 65536];
+        let mut out_len: usize = 0;
+        let mut err_buf = vec![0u8; 256];
+        let mut err_len: usize = 0;
+
+        let rc = unsafe {
+            flowrulz_execute(
+                0,
+                plan_bytes.as_ptr(),
+                plan_bytes.len(),
+                body.as_ptr(),
+                body.len(),
+                caller,
+                out_buf.as_mut_ptr(),
+                out_buf.len(),
+                &mut out_len as *mut usize,
+                err_buf.as_mut_ptr(),
+                err_buf.len(),
+                &mut err_len as *mut usize,
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+                0,
+                1,
+                100,
+            )
+        };
+
+        if rc == 0 {
+            out_buf.truncate(out_len);
+            Ok(out_buf)
+        } else {
+            Err(rc)
+        }
+    }
+
+    #[test]
+    fn test_execute_simple() {
+        let plan_bytes = compile_to_bytes("n:validate");
+        let result = run_execute(&plan_bytes, b"{\"x\":1}", mock_caller_cb);
+        assert!(result.is_ok());
+        assert!(!result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_execute_empty_plan_deserialize_error() {
+        let result = run_execute(&[], b"{}", mock_caller_cb);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), -8); // Deserialize error from bincode on empty bytes
+    }
+
+    #[test]
+    fn test_execute_version_mismatch() {
+        let mut plan = ExecutionPlan::new("test");
+        plan.version = 999;
+        let plan_bytes = bincode::serialize(&plan).unwrap();
+        let result = run_execute(&plan_bytes, b"{}", mock_caller_cb);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), -10); // VersionMismatch
+    }
+
+    #[test]
+    fn test_execute_failing_caller_still_succeeds() {
+        // VM catches caller errors internally (sets ctx.failed, ctx.errors)
+        // and continues, so execute returns success
+        let plan_bytes = compile_to_bytes("n:validate");
+        let result = run_execute(&plan_bytes, b"{}", failing_caller_cb);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_execute_cache_hit() {
+        let plan_bytes = compile_to_bytes("n:svc");
+        // First call populates cache
+        assert!(run_execute(&plan_bytes, b"{}", mock_caller_cb).is_ok());
+        // Second call should hit cache (plan_key matches)
+        let result = run_execute(&plan_bytes, b"{}", mock_caller_cb);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_execute_with_metadata() {
+        let plan_bytes = compile_to_bytes("n:svc");
+        let mut out_buf = vec![0u8; 65536];
+        let mut out_len: usize = 0;
+        let mut err_buf = vec![0u8; 256];
+        let mut err_len: usize = 0;
+        let msg_id = b"msg-001";
+        let corr_id = b"corr-001";
+        let trace_id = b"trace-001";
+
+        let rc = unsafe {
+            flowrulz_execute(
+                0,
+                plan_bytes.as_ptr(),
+                plan_bytes.len(),
+                b"{}".as_ptr(),
+                2,
+                mock_caller_cb,
+                out_buf.as_mut_ptr(),
+                out_buf.len(),
+                &mut out_len as *mut usize,
+                err_buf.as_mut_ptr(),
+                err_buf.len(),
+                &mut err_len as *mut usize,
+                msg_id.as_ptr(),
+                msg_id.len(),
+                corr_id.as_ptr(),
+                corr_id.len(),
+                trace_id.as_ptr(),
+                trace_id.len(),
+                5,
+                999,
+            )
+        };
+
+        assert_eq!(rc, 0);
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn flowrulz_execute(
     ctx_id: u64,

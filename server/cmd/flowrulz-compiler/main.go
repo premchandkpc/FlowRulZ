@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/premchandkpc/FlowRulZ/go/internal/compiler"
+	"github.com/premchandkpc/FlowRulZ/server/internal/compiler"
 )
 
 func main() {

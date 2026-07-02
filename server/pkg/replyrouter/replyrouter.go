@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/premchandkpc/FlowRulZ/go/pkg/transport"
+	"github.com/premchandkpc/FlowRulZ/server/pkg/transport"
 )
 
 type ReplyRouter interface {

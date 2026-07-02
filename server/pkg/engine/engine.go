@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/premchandkpc/FlowRulZ/go/pkg/scheduler"
+	"github.com/premchandkpc/FlowRulZ/server/pkg/scheduler"
 )
 
 type Engine interface {

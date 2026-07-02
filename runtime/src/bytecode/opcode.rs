@@ -121,3 +121,84 @@ impl RetryStrategy {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_opcode_from_u8_all_variants() {
+        assert_eq!(OpCode::from_u8(0), Some(OpCode::Next));
+        assert_eq!(OpCode::from_u8(1), Some(OpCode::Parallel));
+        assert_eq!(OpCode::from_u8(2), Some(OpCode::Collect));
+        assert_eq!(OpCode::from_u8(3), Some(OpCode::Fallback));
+        assert_eq!(OpCode::from_u8(4), Some(OpCode::Gate));
+        assert_eq!(OpCode::from_u8(6), Some(OpCode::Map));
+        assert_eq!(OpCode::from_u8(7), Some(OpCode::Emit));
+        assert_eq!(OpCode::from_u8(8), Some(OpCode::Drop));
+        assert_eq!(OpCode::from_u8(9), Some(OpCode::Buffer));
+        assert_eq!(OpCode::from_u8(10), Some(OpCode::Key));
+        assert_eq!(OpCode::from_u8(14), Some(OpCode::Async));
+        assert_eq!(OpCode::from_u8(15), Some(OpCode::Chunk));
+        assert_eq!(OpCode::from_u8(16), Some(OpCode::Dag));
+        assert_eq!(OpCode::from_u8(17), Some(OpCode::Jmp));
+        assert_eq!(OpCode::from_u8(18), Some(OpCode::Label));
+        assert_eq!(OpCode::from_u8(19), Some(OpCode::SvcArg));
+        assert_eq!(OpCode::from_u8(21), Some(OpCode::JumpOffset));
+        assert_eq!(OpCode::from_u8(22), Some(OpCode::TypeGuard));
+        assert_eq!(OpCode::from_u8(23), Some(OpCode::SvcCall));
+        assert_eq!(OpCode::from_u8(24), Some(OpCode::Delay));
+        assert_eq!(OpCode::from_u8(255), None);
+        assert_eq!(OpCode::from_u8(5), None);
+    }
+
+    #[test]
+    fn test_opcode_display() {
+        assert_eq!(format!("{}", OpCode::Next), "Next");
+        assert_eq!(format!("{}", OpCode::Delay), "Delay");
+    }
+
+    #[test]
+    fn test_gate_op_from_str() {
+        assert_eq!(GateOp::from_str("=="), Some(GateOp::Eq));
+        assert_eq!(GateOp::from_str("!="), Some(GateOp::Ne));
+        assert_eq!(GateOp::from_str(">"), Some(GateOp::Gt));
+        assert_eq!(GateOp::from_str("<"), Some(GateOp::Lt));
+        assert_eq!(GateOp::from_str(">="), Some(GateOp::Gte));
+        assert_eq!(GateOp::from_str("<="), Some(GateOp::Lte));
+        assert_eq!(GateOp::from_str("contains"), Some(GateOp::Contains));
+        assert_eq!(GateOp::from_str("???"), None);
+    }
+
+    #[test]
+    fn test_chunk_mode_from_str() {
+        assert_eq!(ChunkMode::from_str("seq"), Some(ChunkMode::Sequential));
+        assert_eq!(ChunkMode::from_str("par"), Some(ChunkMode::Parallel));
+        assert_eq!(ChunkMode::from_str("invalid"), None);
+    }
+
+    #[test]
+    fn test_retry_strategy_from_str() {
+        assert_eq!(RetryStrategy::from_str("exp"), Some(RetryStrategy::Exponential));
+        assert_eq!(RetryStrategy::from_str("linear"), Some(RetryStrategy::Linear));
+        assert_eq!(RetryStrategy::from_str("fixed"), Some(RetryStrategy::Fixed));
+        assert_eq!(RetryStrategy::from_str("unknown"), None);
+    }
+
+    #[test]
+    fn test_gate_op_equality() {
+        assert_eq!(GateOp::Eq as u8, 0);
+        assert_eq!(GateOp::Ne as u8, 1);
+        assert_eq!(GateOp::Gt as u8, 2);
+        assert_eq!(GateOp::Lt as u8, 3);
+        assert_eq!(GateOp::Gte as u8, 4);
+        assert_eq!(GateOp::Lte as u8, 5);
+        assert_eq!(GateOp::Contains as u8, 6);
+    }
+
+    #[test]
+    fn test_chunk_mode_values() {
+        assert_eq!(ChunkMode::Sequential as u8, 0);
+        assert_eq!(ChunkMode::Parallel as u8, 1);
+    }
+}

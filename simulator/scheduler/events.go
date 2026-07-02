@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/premchandkpc/FlowRulZ/go/bridge"
+	"github.com/premchandkpc/FlowRulZ/server/bridge"
 	"github.com/premchandkpc/FlowRulZ/simulator/execution"
 	"github.com/premchandkpc/FlowRulZ/simulator/services"
 	"github.com/premchandkpc/FlowRulZ/simulator/timeline"

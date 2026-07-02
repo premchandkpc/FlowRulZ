@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	pkgengine "github.com/premchandkpc/FlowRulZ/go/pkg/engine"
-	pkgscheduler "github.com/premchandkpc/FlowRulZ/go/pkg/scheduler"
+	pkgengine "github.com/premchandkpc/FlowRulZ/server/pkg/engine"
+	pkgscheduler "github.com/premchandkpc/FlowRulZ/server/pkg/scheduler"
 )
 
 var _ pkgengine.Engine = (*Engine)(nil)

@@ -5,11 +5,11 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/premchandkpc/FlowRulZ/go/internal/membership"
-	"github.com/premchandkpc/FlowRulZ/go/internal/partition"
-	"github.com/premchandkpc/FlowRulZ/go/internal/plandist"
-	"github.com/premchandkpc/FlowRulZ/go/internal/transport"
-	kafkatransport "github.com/premchandkpc/FlowRulZ/go/internal/transport/kafka"
+	"github.com/premchandkpc/FlowRulZ/server/internal/membership"
+	"github.com/premchandkpc/FlowRulZ/server/internal/partition"
+	"github.com/premchandkpc/FlowRulZ/server/internal/plandist"
+	"github.com/premchandkpc/FlowRulZ/server/internal/transport"
+	kafkatransport "github.com/premchandkpc/FlowRulZ/server/internal/transport/kafka"
 )
 
 const DefaultMembersTopic = "_flowrulz_members"
@@ -56,7 +56,7 @@ func (n *ProdNode) startSubsystems(ctx context.Context) {
 	})
 
 	if n.RaftCluster != nil {
-		if err := n.RaftCluster.Start(); err != nil {
+		if err := n.RaftCluster.Start(ctx); err != nil {
 			slog.Error("raft: start error", "error", err)
 		}
 		if n.config.RaftBootstrap {

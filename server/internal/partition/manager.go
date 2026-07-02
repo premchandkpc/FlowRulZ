@@ -9,7 +9,7 @@ import (
 	"sort"
 	"sync"
 
-	pkgpartition "github.com/premchandkpc/FlowRulZ/go/pkg/partition"
+	pkgpartition "github.com/premchandkpc/FlowRulZ/server/pkg/partition"
 )
 
 var _ pkgpartition.PartitionManager = (*Manager)(nil)

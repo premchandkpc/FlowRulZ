@@ -6,8 +6,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/premchandkpc/FlowRulZ/go/bridge"
-	"github.com/premchandkpc/FlowRulZ/go/pkg/transport"
+	"github.com/premchandkpc/FlowRulZ/server/bridge"
+	"github.com/premchandkpc/FlowRulZ/server/pkg/transport"
 	"github.com/premchandkpc/FlowRulZ/simulator/config"
 	"github.com/premchandkpc/FlowRulZ/simulator/dashboard"
 	"github.com/premchandkpc/FlowRulZ/simulator/dispatcher"

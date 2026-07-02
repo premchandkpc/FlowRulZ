@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/premchandkpc/FlowRulZ/go/pkg/transport"
+	"github.com/premchandkpc/FlowRulZ/server/pkg/transport"
 	"github.com/premchandkpc/FlowRulZ/simulator/execution"
 	"github.com/premchandkpc/FlowRulZ/simulator/services"
 )

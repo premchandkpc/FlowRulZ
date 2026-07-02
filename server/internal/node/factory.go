@@ -5,22 +5,23 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/premchandkpc/FlowRulZ/go/internal/admin"
-	"github.com/premchandkpc/FlowRulZ/go/internal/cluster"
-	"github.com/premchandkpc/FlowRulZ/go/internal/compiler"
-	"github.com/premchandkpc/FlowRulZ/go/internal/engine"
-	"github.com/premchandkpc/FlowRulZ/go/internal/execstate"
-	"github.com/premchandkpc/FlowRulZ/go/internal/membership"
-	"github.com/premchandkpc/FlowRulZ/go/internal/observability"
-	"github.com/premchandkpc/FlowRulZ/go/internal/partition"
-	"github.com/premchandkpc/FlowRulZ/go/internal/plandist"
-	"github.com/premchandkpc/FlowRulZ/go/internal/registry"
-	"github.com/premchandkpc/FlowRulZ/go/internal/reliability"
-	"github.com/premchandkpc/FlowRulZ/go/internal/replyrouter"
-	"github.com/premchandkpc/FlowRulZ/go/internal/scheduler"
-	"github.com/premchandkpc/FlowRulZ/go/internal/transport"
-	grpctransport "github.com/premchandkpc/FlowRulZ/go/internal/transport/grpc"
-	kafkatransport "github.com/premchandkpc/FlowRulZ/go/internal/transport/kafka"
+	"github.com/premchandkpc/FlowRulZ/server/internal/admin"
+	"github.com/premchandkpc/FlowRulZ/server/internal/cluster"
+	pkgcluster "github.com/premchandkpc/FlowRulZ/server/pkg/cluster"
+	"github.com/premchandkpc/FlowRulZ/server/internal/compiler"
+	"github.com/premchandkpc/FlowRulZ/server/internal/engine"
+	"github.com/premchandkpc/FlowRulZ/server/internal/execstate"
+	"github.com/premchandkpc/FlowRulZ/server/internal/membership"
+	"github.com/premchandkpc/FlowRulZ/server/internal/observability"
+	"github.com/premchandkpc/FlowRulZ/server/internal/partition"
+	"github.com/premchandkpc/FlowRulZ/server/internal/plandist"
+	"github.com/premchandkpc/FlowRulZ/server/internal/registry"
+	"github.com/premchandkpc/FlowRulZ/server/internal/reliability"
+	"github.com/premchandkpc/FlowRulZ/server/internal/replyrouter"
+	"github.com/premchandkpc/FlowRulZ/server/internal/scheduler"
+	"github.com/premchandkpc/FlowRulZ/server/internal/transport"
+	grpctransport "github.com/premchandkpc/FlowRulZ/server/internal/transport/grpc"
+	kafkatransport "github.com/premchandkpc/FlowRulZ/server/internal/transport/kafka"
 )
 
 func DefaultDependencies(cfg Config) Dependencies {
@@ -117,10 +118,11 @@ func DefaultDependencies(cfg Config) Dependencies {
 	}, execDir)
 
 	// Raft
-	var raftCluster *cluster.RaftCluster
+	var raftCluster pkgcluster.ClusterMember
 	if cfg.RaftDir != "" && cfg.RaftPort > 0 {
 		raftBind := fmt.Sprintf("localhost:%d", cfg.RaftPort)
-		raftCluster = cluster.NewRaftCluster(cfg.NodeID, cfg.RaftDir, raftBind)
+		rc := cluster.NewRaftCluster(cfg.NodeID, cfg.RaftDir, raftBind)
+		raftCluster = cluster.NewClusterMember(rc)
 	}
 
 	// gRPC bus

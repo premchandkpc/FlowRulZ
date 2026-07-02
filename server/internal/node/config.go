@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/premchandkpc/FlowRulZ/go/internal/cluster"
+	"github.com/premchandkpc/FlowRulZ/server/internal/cluster"
 )
 
 const (

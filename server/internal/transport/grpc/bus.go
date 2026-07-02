@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/premchandkpc/FlowRulZ/go/pkg/transport"
+	"github.com/premchandkpc/FlowRulZ/server/pkg/transport"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )

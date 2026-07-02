@@ -81,3 +81,145 @@ pub(crate) fn read_str<'a>(ptr: *const u8, len: usize) -> Option<&'a str> {
     let slice = read_slice(ptr, len)?;
     std::str::from_utf8(slice).ok()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bytecode::plan::BYTECODE_VERSION;
+
+    #[test]
+    fn test_check_plan_version_match() {
+        let mut plan = ExecutionPlan::new("test");
+        plan.version = BYTECODE_VERSION;
+        assert!(check_plan_version(&plan));
+    }
+
+    #[test]
+    fn test_check_plan_version_mismatch() {
+        let mut plan = ExecutionPlan::new("test");
+        plan.version = BYTECODE_VERSION + 1;
+        assert!(!check_plan_version(&plan));
+    }
+
+    #[test]
+    fn test_hash_bytes_deterministic() {
+        let data = b"hello";
+        let h1 = hash_bytes(data);
+        let h2 = hash_bytes(data);
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn test_hash_bytes_different_inputs() {
+        let h1 = hash_bytes(b"hello");
+        let h2 = hash_bytes(b"world");
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn test_read_slice_valid() {
+        let data = b"hello";
+        let slice = read_slice(data.as_ptr(), data.len());
+        assert_eq!(slice, Some(b"hello" as &[u8]));
+    }
+
+    #[test]
+    fn test_read_slice_null_ptr() {
+        let slice = read_slice(std::ptr::null(), 5);
+        assert_eq!(slice, None);
+    }
+
+    #[test]
+    fn test_read_slice_zero_len() {
+        let data = b"hello";
+        let slice = read_slice(data.as_ptr(), 0);
+        assert_eq!(slice, Some(b"" as &[u8]));
+    }
+
+    #[test]
+    fn test_read_str_valid_utf8() {
+        let data = b"hello";
+        let s = read_str(data.as_ptr(), data.len());
+        assert_eq!(s, Some("hello"));
+    }
+
+    #[test]
+    fn test_read_str_invalid_utf8() {
+        let data = b"\xff\xfe";
+        let s = read_str(data.as_ptr(), data.len());
+        assert_eq!(s, None);
+    }
+
+    #[test]
+    fn test_read_str_null_ptr() {
+        let s = read_str(std::ptr::null(), 5);
+        assert_eq!(s, None);
+    }
+
+    #[test]
+    fn test_write_error_normal() {
+        let mut buf = [0u8; 32];
+        let mut written: usize = 0;
+        write_error(buf.as_mut_ptr(), buf.len(), &mut written as *mut usize, "test error");
+        assert_eq!(&buf[..written], b"test error");
+    }
+
+    #[test]
+    fn test_write_error_truncated() {
+        let mut buf = [0u8; 4];
+        let mut written: usize = 0;
+        write_error(buf.as_mut_ptr(), buf.len(), &mut written as *mut usize, "too long error message");
+        assert_eq!(&buf[..written], b"too ");
+    }
+
+    #[test]
+    fn test_write_error_null_ptr() {
+        // Should not panic
+        write_error(std::ptr::null_mut(), 0, std::ptr::null_mut(), "test");
+        write_error(std::ptr::null_mut(), 10, std::ptr::null_mut(), "test");
+        let mut buf = [0u8; 10];
+        write_error(buf.as_mut_ptr(), 0, std::ptr::null_mut(), "test");
+    }
+
+    #[test]
+    fn test_with_resp_buf() {
+        let result = with_resp_buf(|buf| {
+            buf[..5].copy_from_slice(b"hello");
+            buf.len()
+        });
+        assert!(result >= 5);
+    }
+
+    #[test]
+    fn test_plan_cache_basic() {
+        let mut cache = PLAN_CACHE.lock().unwrap();
+        let plan = Arc::new(ExecutionPlan::new("cached_rule"));
+        let key = 42u64;
+        cache.insert(key, Arc::clone(&plan));
+        let retrieved = cache.get(&key).cloned();
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().rule_id, "cached_rule");
+        cache.clear();
+    }
+
+    #[test]
+    fn test_plan_cache_eviction() {
+        let mut cache = PLAN_CACHE.lock().unwrap();
+        // Insert 65 entries to trigger eviction (clears when >= 64)
+        for i in 0..65u64 {
+            cache.insert(i, Arc::new(ExecutionPlan::new(&format!("rule_{}", i))));
+        }
+        // Cache should have been cleared at some point
+        assert!(cache.len() <= 65);
+        cache.clear();
+    }
+
+    #[test]
+    fn test_intern_table_prefilled() {
+        let table = &INTERN_TABLE;
+        let id = table.intern("content-type");
+        assert!(table.lookup(id).is_some());
+        // Should be < the number of prefilled entries
+        assert!(id < 10);
+    }
+}

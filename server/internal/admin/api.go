@@ -10,9 +10,9 @@ import (
 	"runtime"
 	"strconv"
 
-	"github.com/premchandkpc/FlowRulZ/go/internal/compiler"
-	"github.com/premchandkpc/FlowRulZ/go/internal/engine"
-	"github.com/premchandkpc/FlowRulZ/go/internal/reliability"
+	"github.com/premchandkpc/FlowRulZ/server/internal/compiler"
+	"github.com/premchandkpc/FlowRulZ/server/internal/engine"
+	"github.com/premchandkpc/FlowRulZ/server/internal/reliability"
 )
 
 type Server struct {

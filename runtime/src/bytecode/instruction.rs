@@ -12,6 +12,196 @@ pub struct Instruction {
 
 const _: () = assert!(std::mem::size_of::<Instruction>() == 8);
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_size_is_8_bytes() {
+        assert_eq!(std::mem::size_of::<Instruction>(), 8);
+    }
+
+    #[test]
+    fn test_instruction_new() {
+        let i = Instruction::new(OpCode::Next, 0x01, 1, 2, 3);
+        assert_eq!(i.op, OpCode::Next);
+        assert_eq!(i.flags, 0x01);
+        assert_eq!(i.a, 1);
+        assert_eq!(i.b, 2);
+        assert_eq!(i.c, 3);
+    }
+
+    #[test]
+    fn test_next_encodes_timeout() {
+        let i = Instruction::next(42, 0xDEADBEEF);
+        assert_eq!(i.op, OpCode::Next);
+        assert_eq!(i.a, 42);
+        assert_eq!(i.timeout_ms(), 0xDEADBEEF);
+    }
+
+    #[test]
+    fn test_parallel_instruction() {
+        let i = Instruction::parallel(5, 100);
+        assert_eq!(i.op, OpCode::Parallel);
+        assert_eq!(i.a, 5);
+        assert_eq!(i.b, 100);
+    }
+
+    #[test]
+    fn test_collect_instruction() {
+        let i = Instruction::collect();
+        assert_eq!(i.op, OpCode::Collect);
+    }
+
+    #[test]
+    fn test_fallback_instruction() {
+        let i = Instruction::fallback(77);
+        assert_eq!(i.op, OpCode::Fallback);
+        assert_eq!(i.a, 77);
+    }
+
+    #[test]
+    fn test_gate_instruction() {
+        let i = Instruction::gate(10, 2, 20);
+        assert_eq!(i.op, OpCode::Gate);
+        assert_eq!(i.flags, 2);
+        assert_eq!(i.a, 10);
+        assert_eq!(i.b, 20);
+        assert_eq!(i.gate_op(), 2);
+    }
+
+    #[test]
+    fn test_jmp_instruction() {
+        let i = Instruction::jmp(99);
+        assert_eq!(i.op, OpCode::Jmp);
+        assert_eq!(i.a, 99);
+    }
+
+    #[test]
+    fn test_label_instruction() {
+        let i = Instruction::label();
+        assert_eq!(i.op, OpCode::Label);
+    }
+
+    #[test]
+    fn test_svc_arg_instruction() {
+        let i = Instruction::svc_arg(55);
+        assert_eq!(i.op, OpCode::SvcArg);
+        assert_eq!(i.a, 55);
+    }
+
+    #[test]
+    fn test_jump_offset_instruction() {
+        let i = Instruction::jump_offset(33);
+        assert_eq!(i.op, OpCode::JumpOffset);
+        assert_eq!(i.a, 33);
+    }
+
+    #[test]
+    fn test_emit_instruction() {
+        let i = Instruction::emit(3, 200);
+        assert_eq!(i.op, OpCode::Emit);
+        assert_eq!(i.a, 3);
+        assert_eq!(i.b, 200);
+    }
+
+    #[test]
+    fn test_map_instruction() {
+        let i = Instruction::map(42);
+        assert_eq!(i.op, OpCode::Map);
+        assert_eq!(i.a, 42);
+    }
+
+    #[test]
+    fn test_set_key_instruction() {
+        let i = Instruction::set_key(7);
+        assert_eq!(i.op, OpCode::Key);
+        assert_eq!(i.a, 7);
+    }
+
+    #[test]
+    fn test_chunk_instruction() {
+        let i = Instruction::chunk(4, 1);
+        assert_eq!(i.op, OpCode::Chunk);
+        assert_eq!(i.a, 4);
+        assert_eq!(i.b, 1);
+    }
+
+    #[test]
+    fn test_drop_instruction() {
+        let i = Instruction::drop();
+        assert_eq!(i.op, OpCode::Drop);
+    }
+
+    #[test]
+    fn test_buffer_instruction() {
+        let i = Instruction::buffer(10);
+        assert_eq!(i.op, OpCode::Buffer);
+        assert_eq!(i.a, 10);
+    }
+
+    #[test]
+    fn test_async_svc_instruction() {
+        let i = Instruction::async_svc(88, 0xFF00FF);
+        assert_eq!(i.op, OpCode::Async);
+        assert_eq!(i.a, 88);
+        assert_eq!(i.timeout_ms(), 0xFF00FF);
+    }
+
+    #[test]
+    fn test_dag_instruction() {
+        let i = Instruction::dag(3);
+        assert_eq!(i.op, OpCode::Dag);
+        assert_eq!(i.a, 3);
+    }
+
+    #[test]
+    fn test_type_guard_instruction() {
+        let i = Instruction::type_guard(1);
+        assert_eq!(i.op, OpCode::TypeGuard);
+        assert_eq!(i.a, 1);
+    }
+
+    #[test]
+    fn test_delay_instruction() {
+        let i = Instruction::delay(0xAABBCCDD);
+        assert_eq!(i.op, OpCode::Delay);
+        assert_eq!(i.delay_ms(), 0xAABBCCDD);
+    }
+
+    #[test]
+    fn test_has_retry_flag() {
+        let with_retry = Instruction { op: OpCode::Next, flags: 0x01, a: 0, b: 0, c: 0 };
+        let without = Instruction { op: OpCode::Next, flags: 0x00, a: 0, b: 0, c: 0 };
+        assert!(with_retry.has_retry());
+        assert!(!without.has_retry());
+    }
+
+    #[test]
+    fn test_timeout_roundtrip() {
+        let i = Instruction::next(1, 0x12345678);
+        assert_eq!(i.timeout_ms(), 0x12345678);
+    }
+
+    #[test]
+    fn test_delay_roundtrip() {
+        let i = Instruction::delay(0xDEADBEAF);
+        assert_eq!(i.delay_ms(), 0xDEADBEAF);
+    }
+
+    #[test]
+    fn test_serialization_roundtrip() {
+        let i = Instruction::next(1, 5000);
+        let bytes = bincode::serialize(&i).unwrap();
+        let deserialized: Instruction = bincode::deserialize(&bytes).unwrap();
+        assert_eq!(i.op, deserialized.op);
+        assert_eq!(i.flags, deserialized.flags);
+        assert_eq!(i.a, deserialized.a);
+        assert_eq!(i.b, deserialized.b);
+        assert_eq!(i.c, deserialized.c);
+    }
+}
+
 impl Instruction {
     pub fn new(op: OpCode, flags: u8, a: u16, b: u16, c: u16) -> Self {
         Instruction { op, flags, a, b, c }

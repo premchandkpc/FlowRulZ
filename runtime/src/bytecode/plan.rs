@@ -55,3 +55,69 @@ impl ExecutionPlan {
         self.instr_count = self.instructions.len() as u32;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bytecode::opcode::OpCode;
+
+    #[test]
+    fn test_execution_plan_new() {
+        let plan = ExecutionPlan::new("my_rule");
+        assert_eq!(plan.rule_id, "my_rule");
+        assert_eq!(plan.version, 1);
+        assert_eq!(plan.instr_count, 0);
+        assert!(plan.instructions.is_empty());
+        assert!(plan.services.is_empty());
+        assert!(plan.dag_tables.is_empty());
+        assert!(plan.retry_configs.is_empty());
+        assert!(plan.chunk_configs.is_empty());
+        assert!(plan.schema.is_none());
+    }
+
+    #[test]
+    fn test_add_instr() {
+        let mut plan = ExecutionPlan::new("test");
+        let instr = Instruction::next(1, 5000);
+        plan.add_instr(instr);
+        assert_eq!(plan.instr_count, 1);
+        assert_eq!(plan.instructions.len(), 1);
+        assert_eq!(plan.instructions[0].op, OpCode::Next);
+        plan.add_instr(Instruction::drop());
+        assert_eq!(plan.instr_count, 2);
+    }
+
+    #[test]
+    fn test_serialization_roundtrip() {
+        let mut plan = ExecutionPlan::new("roundtrip");
+        plan.add_instr(Instruction::next(1, 5000));
+        plan.complexity_score = 42;
+        let bytes = bincode::serialize(&plan).unwrap();
+        let deserialized: ExecutionPlan = bincode::deserialize(&bytes).unwrap();
+        assert_eq!(deserialized.rule_id, "roundtrip");
+        assert_eq!(deserialized.version, 1);
+        assert_eq!(deserialized.complexity_score, 42);
+        assert_eq!(deserialized.instructions.len(), 1);
+    }
+
+    #[test]
+    fn test_retry_config_defaults() {
+        let cfg = RetryConfig {
+            max_attempts: 3,
+            strategy: RetryStrategy::Exponential,
+            fixed_ms: 0,
+        };
+        assert_eq!(cfg.max_attempts, 3);
+        assert_eq!(cfg.strategy, RetryStrategy::Exponential);
+    }
+
+    #[test]
+    fn test_chunk_config_defaults() {
+        let cfg = ChunkConfig {
+            count: 4,
+            mode: ChunkMode::Sequential,
+        };
+        assert_eq!(cfg.count, 4);
+        assert_eq!(cfg.mode, ChunkMode::Sequential);
+    }
+}

@@ -8,7 +8,7 @@ import (
 
 	"golang.org/x/net/context"
 
-	pkgpartition "github.com/premchandkpc/FlowRulZ/go/pkg/partition"
+	pkgpartition "github.com/premchandkpc/FlowRulZ/server/pkg/partition"
 )
 
 func (en *ExecutionNode) registerHandlers(mux *http.ServeMux) {

@@ -1,7 +1,7 @@
 package bridge
 
 /*
-#cgo LDFLAGS: -L../../rust/target/release -lflowrulz_core -ldl
+#cgo LDFLAGS: -L../../runtime/target/release -lflowrulz_core -ldl
 #include <stdlib.h>
 #include <stdint.h>
 

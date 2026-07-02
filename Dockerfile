@@ -1,16 +1,16 @@
 FROM rust:1.85-alpine AS rust-builder
 RUN apk add --no-cache gcc musl-dev
 WORKDIR /build
-COPY rust/ rust/
-RUN cd rust && cargo build --release
+COPY runtime/ runtime/
+RUN cd runtime && cargo build --release
 
 FROM golang:1.26-alpine AS go-builder
 RUN apk add --no-cache gcc musl-dev
 WORKDIR /build
 COPY . .
-COPY --from=rust-builder /build/rust/target/release/libflowrulz_core.a rust/target/release/
+COPY --from=rust-builder /build/runtime/target/release/libflowrulz_core.a runtime/target/release/
 ENV CGO_ENABLED=1 GOOS=linux
-RUN go build -o /flowrulz    ./go/cmd/flowrulz && \
+RUN go build -o /flowrulz    ./server/cmd/flowrulz && \
     go build -o /sim         ./simulator/cmd/simulator
 
 FROM alpine:3.21 AS flowrulz

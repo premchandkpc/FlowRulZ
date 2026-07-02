@@ -60,3 +60,74 @@ impl Default for InternTable {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_intern_and_lookup() {
+        let table = InternTable::new();
+        let id = table.intern("hello");
+        assert_eq!(table.lookup(id), Some("hello"));
+    }
+
+    #[test]
+    fn test_intern_dedup() {
+        let table = InternTable::new();
+        let id1 = table.intern("hello");
+        let id2 = table.intern("hello");
+        assert_eq!(id1, id2);
+        assert_eq!(table.len(), 1);
+    }
+
+    #[test]
+    fn test_intern_multiple() {
+        let table = InternTable::new();
+        let a = table.intern("foo");
+        let b = table.intern("bar");
+        assert_ne!(a, b);
+        assert_eq!(table.len(), 2);
+        assert_eq!(table.lookup(a), Some("foo"));
+        assert_eq!(table.lookup(b), Some("bar"));
+    }
+
+    #[test]
+    fn test_prefill() {
+        let table = InternTable::new();
+        table.prefill(&["content-type", "content-length"]);
+        assert_eq!(table.len(), 2);
+        let id1 = table.intern("content-type");
+        let id2 = table.intern("content-length");
+        // Should return same IDs as prefill
+        assert_eq!(table.len(), 2);
+        assert!(id1 < 2);
+        assert!(id2 < 2);
+    }
+
+    #[test]
+    fn test_lookup_invalid_id() {
+        let table = InternTable::new();
+        assert_eq!(table.lookup(999), None);
+    }
+
+    #[test]
+    fn test_intern_empty_string() {
+        let table = InternTable::new();
+        let id = table.intern("");
+        assert_eq!(table.lookup(id), Some(""));
+    }
+
+    #[test]
+    fn test_intern_unicode() {
+        let table = InternTable::new();
+        let id = table.intern("héllo wörld 🎉");
+        assert_eq!(table.lookup(id), Some("héllo wörld 🎉"));
+    }
+
+    #[test]
+    fn test_new_table_is_empty() {
+        let table = InternTable::new();
+        assert_eq!(table.len(), 0);
+    }
+}

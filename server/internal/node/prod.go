@@ -9,24 +9,25 @@ import (
 	"sync"
 	"time"
 
-	"github.com/premchandkpc/FlowRulZ/go/internal/admin"
-	"github.com/premchandkpc/FlowRulZ/go/internal/cluster"
-	"github.com/premchandkpc/FlowRulZ/go/internal/engine"
-	"github.com/premchandkpc/FlowRulZ/go/internal/execstate"
-	"github.com/premchandkpc/FlowRulZ/go/internal/observability"
-	"github.com/premchandkpc/FlowRulZ/go/internal/plandist"
-	"github.com/premchandkpc/FlowRulZ/go/internal/plugins"
-	"github.com/premchandkpc/FlowRulZ/go/internal/registry"
-	"github.com/premchandkpc/FlowRulZ/go/internal/reliability"
-	"github.com/premchandkpc/FlowRulZ/go/internal/transport"
-	grpctransport "github.com/premchandkpc/FlowRulZ/go/internal/transport/grpc"
-	kafkatransport "github.com/premchandkpc/FlowRulZ/go/internal/transport/kafka"
+	"github.com/premchandkpc/FlowRulZ/server/internal/admin"
+	"github.com/premchandkpc/FlowRulZ/server/internal/cluster"
+	"github.com/premchandkpc/FlowRulZ/server/internal/engine"
+	"github.com/premchandkpc/FlowRulZ/server/internal/execstate"
+	"github.com/premchandkpc/FlowRulZ/server/internal/observability"
+	"github.com/premchandkpc/FlowRulZ/server/internal/plandist"
+	"github.com/premchandkpc/FlowRulZ/server/internal/plugins"
+	"github.com/premchandkpc/FlowRulZ/server/internal/registry"
+	"github.com/premchandkpc/FlowRulZ/server/internal/reliability"
+	"github.com/premchandkpc/FlowRulZ/server/internal/transport"
+	grpctransport "github.com/premchandkpc/FlowRulZ/server/internal/transport/grpc"
+	kafkatransport "github.com/premchandkpc/FlowRulZ/server/internal/transport/kafka"
 
-	pkgmembership "github.com/premchandkpc/FlowRulZ/go/pkg/membership"
-	pkgnode "github.com/premchandkpc/FlowRulZ/go/pkg/node"
-	pkgpartition "github.com/premchandkpc/FlowRulZ/go/pkg/partition"
-	pkgreplyrouter "github.com/premchandkpc/FlowRulZ/go/pkg/replyrouter"
-	pkgscheduler "github.com/premchandkpc/FlowRulZ/go/pkg/scheduler"
+	pkgcluster "github.com/premchandkpc/FlowRulZ/server/pkg/cluster"
+	pkgmembership "github.com/premchandkpc/FlowRulZ/server/pkg/membership"
+	pkgnode "github.com/premchandkpc/FlowRulZ/server/pkg/node"
+	pkgpartition "github.com/premchandkpc/FlowRulZ/server/pkg/partition"
+	pkgreplyrouter "github.com/premchandkpc/FlowRulZ/server/pkg/replyrouter"
+	pkgscheduler "github.com/premchandkpc/FlowRulZ/server/pkg/scheduler"
 )
 
 var _ pkgnode.Node = (*ProdNode)(nil)
@@ -45,7 +46,7 @@ type Dependencies struct {
 	Dedup           *reliability.DedupTracker
 	Saga            *reliability.SagaTracker
 	StateStore      *execstate.FileStore
-	Cluster         *cluster.RaftCluster
+	Cluster         pkgcluster.ClusterMember
 	ClusterNode     *cluster.ClusterNode
 	GRPCBus         *grpctransport.GRPCBus
 	AdminSrv        *admin.Server
@@ -74,7 +75,7 @@ type ProdNode struct {
 	StateStore  *execstate.FileStore
 	Execs       *ExecRegistry
 	GRPCBus     *grpctransport.GRPCBus
-	RaftCluster *cluster.RaftCluster
+	RaftCluster pkgcluster.ClusterMember
 	ClusterNode *cluster.ClusterNode
 	AdminSrv    *admin.Server
 	Metrics     *observability.MetricsCollector
@@ -256,7 +257,7 @@ func (n *ProdNode) Shutdown(ctx context.Context) error {
 		n.OtelExporter.Stop()
 	}
 	if n.RaftCluster != nil {
-		n.RaftCluster.Stop()
+		n.RaftCluster.Stop(ctx)
 	}
 	if n.StateStore != nil {
 		n.StateStore.Close()

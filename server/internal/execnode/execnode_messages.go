@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/premchandkpc/FlowRulZ/go/internal/plandist"
+	"github.com/premchandkpc/FlowRulZ/server/internal/plandist"
 )
 
 func (en *ExecutionNode) handleNodeDiscoveryMessage(ctx context.Context, msg []byte) ([]byte, error) {

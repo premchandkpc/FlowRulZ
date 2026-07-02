@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/IBM/sarama"
-	"github.com/premchandkpc/FlowRulZ/go/internal/transport"
+	"github.com/premchandkpc/FlowRulZ/server/internal/transport"
 )
 
 type Consumer struct {

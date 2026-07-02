@@ -12,10 +12,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/premchandkpc/FlowRulZ/go/internal/membership"
-	"github.com/premchandkpc/FlowRulZ/go/internal/partition"
-	"github.com/premchandkpc/FlowRulZ/go/internal/plandist"
-	kafkatransport "github.com/premchandkpc/FlowRulZ/go/internal/transport/kafka"
+	"github.com/premchandkpc/FlowRulZ/server/internal/membership"
+	"github.com/premchandkpc/FlowRulZ/server/internal/partition"
+	"github.com/premchandkpc/FlowRulZ/server/internal/plandist"
+	kafkatransport "github.com/premchandkpc/FlowRulZ/server/internal/transport/kafka"
 )
 
 func (en *ExecutionNode) Start() {

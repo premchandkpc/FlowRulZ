@@ -6,8 +6,8 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/premchandkpc/FlowRulZ/go/internal/compiler"
-	"github.com/premchandkpc/FlowRulZ/go/internal/engine"
+	"github.com/premchandkpc/FlowRulZ/server/internal/compiler"
+	"github.com/premchandkpc/FlowRulZ/server/internal/engine"
 )
 
 type ruleService struct {

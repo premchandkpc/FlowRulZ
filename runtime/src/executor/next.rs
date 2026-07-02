@@ -76,3 +76,94 @@ fn find_retry_config(instr: &Instruction, plan: &ExecutionPlan) -> RetryConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bytecode::opcode::OpCode;
+
+    fn mock_ok_caller(_svc_id: u16, body: &[u8], _timeout: u64) -> Result<Vec<u8>, String> {
+        Ok(body.to_vec())
+    }
+
+    fn mock_err_caller(_svc_id: u16, _body: &[u8], _timeout: u64) -> Result<Vec<u8>, String> {
+        Err("service error".to_string())
+    }
+
+    fn make_plan_with_retry() -> ExecutionPlan {
+        let mut plan = ExecutionPlan::new("test");
+        let cfg = RetryConfig {
+            max_attempts: 2,
+            strategy: RetryStrategy::Fixed,
+            fixed_ms: 1, // minimal delay for tests
+        };
+        plan.retry_configs.push(cfg);
+        plan
+    }
+
+    #[test]
+    fn test_exec_next_no_retry() {
+        let plan = ExecutionPlan::new("test");
+        let instr = Instruction::next(1, 5000);
+        let result = exec_next(b"hello", &instr, &plan, &mock_ok_caller, false);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), b"hello");
+    }
+
+    #[test]
+    fn test_exec_next_no_retry_error() {
+        let plan = ExecutionPlan::new("test");
+        let instr = Instruction::next(1, 5000);
+        let result = exec_next(b"hello", &instr, &plan, &mock_err_caller, false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_exec_next_with_retry_success() {
+        let plan = make_plan_with_retry();
+        let mut instr = Instruction::next(1, 5000);
+        instr.flags = 0x01; // has_retry
+        instr.c = 0; // retry config index
+        let result = exec_next(b"hello", &instr, &plan, &mock_ok_caller, false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_exec_next_with_retry_all_fail() {
+        let plan = make_plan_with_retry();
+        let mut instr = Instruction::next(1, 5000);
+        instr.flags = 0x01;
+        instr.c = 0;
+        let result = exec_next(b"hello", &instr, &plan, &mock_err_caller, false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_exec_next_async_ack_with_retry() {
+        let mut plan = make_plan_with_retry();
+        let mut instr = Instruction::next(1, 5000);
+        instr.flags = 0x01; // has_retry
+        instr.c = 0;
+        let result = exec_next(b"hello", &instr, &plan, &mock_ok_caller, true);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_find_retry_config_valid() {
+        let plan = make_plan_with_retry();
+        let instr = Instruction { op: OpCode::Next, flags: 0x01, a: 0, b: 0, c: 0 };
+        let cfg = find_retry_config(&instr, &plan);
+        assert_eq!(cfg.max_attempts, 2);
+        assert_eq!(cfg.strategy, RetryStrategy::Fixed);
+    }
+
+    #[test]
+    fn test_find_retry_config_out_of_bounds() {
+        let plan = ExecutionPlan::new("test");
+        let instr = Instruction { op: OpCode::Next, flags: 0x01, a: 0, b: 0, c: 99 };
+        let cfg = find_retry_config(&instr, &plan);
+        assert_eq!(cfg.max_attempts, 3);
+        assert_eq!(cfg.strategy, RetryStrategy::Exponential);
+    }
+}

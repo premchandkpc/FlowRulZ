@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/premchandkpc/FlowRulZ/go/internal/transport"
-	pkgpartition "github.com/premchandkpc/FlowRulZ/go/pkg/partition"
+	"github.com/premchandkpc/FlowRulZ/server/internal/transport"
+	pkgpartition "github.com/premchandkpc/FlowRulZ/server/pkg/partition"
 )
 
 type mockProducer struct {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	pkgscheduler "github.com/premchandkpc/FlowRulZ/go/pkg/scheduler"
+	pkgscheduler "github.com/premchandkpc/FlowRulZ/server/pkg/scheduler"
 )
 
 var _ pkgscheduler.Scheduler = (*Scheduler)(nil)

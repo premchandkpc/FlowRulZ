@@ -1,5 +1,92 @@
 use super::{read_str, INTERN_TABLE};
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_msg_alloc_and_release() {
+        let ptr = unsafe { flowrulz_msg_alloc(100) };
+        assert!(!ptr.is_null());
+        // Write some data
+        unsafe {
+            std::ptr::write_bytes(ptr, 0xAB, 100);
+            assert_eq!(std::ptr::read(ptr), 0xAB);
+        }
+        unsafe { flowrulz_msg_release(ptr) };
+    }
+
+    #[test]
+    fn test_msg_alloc_zero_size() {
+        let ptr = unsafe { flowrulz_msg_alloc(0) };
+        assert!(ptr.is_null());
+    }
+
+    #[test]
+    fn test_msg_release_null() {
+        // Should not panic
+        unsafe { flowrulz_msg_release(std::ptr::null_mut()) };
+    }
+
+    #[test]
+    fn test_msg_alloc_large_size() {
+        let ptr = unsafe { flowrulz_msg_alloc(1024 * 1024) }; // 1MB
+        assert!(!ptr.is_null());
+        unsafe { flowrulz_msg_release(ptr) };
+    }
+
+    #[test]
+    fn test_intern_and_lookup() {
+        let s = b"my-header";
+        let id = unsafe { flowrulz_intern(s.as_ptr(), s.len()) };
+        assert!(id > 0); // Not 0, which is reserved for null/invalid
+
+        let mut out_buf = [0u8; 64];
+        let mut out_len: usize = 0;
+        unsafe {
+            flowrulz_intern_lookup(id, out_buf.as_mut_ptr(), &mut out_len as *mut usize);
+        }
+        assert_eq!(&out_buf[..out_len], b"my-header");
+    }
+
+    #[test]
+    fn test_intern_empty_string() {
+        let id = unsafe { flowrulz_intern(std::ptr::null(), 0) };
+        assert_eq!(id, 0); // Invalid input returns 0
+    }
+
+    #[test]
+    fn test_intern_lookup_invalid_id() {
+        let mut out_buf = [0u8; 64];
+        let mut out_len: usize = 0;
+        unsafe {
+            flowrulz_intern_lookup(999, out_buf.as_mut_ptr(), &mut out_len as *mut usize);
+        }
+        assert_eq!(out_len, 0); // Nothing written
+    }
+
+    #[test]
+    fn test_intern_lookup_null_out_ptr() {
+        unsafe {
+            flowrulz_intern_lookup(0, std::ptr::null_mut(), std::ptr::null_mut());
+        }
+        // Should not panic
+    }
+
+    #[test]
+    fn test_intern_prefilled_headers() {
+        let s = b"content-type";
+        let id = unsafe { flowrulz_intern(s.as_ptr(), s.len()) };
+        // Prefilled entries start at id=0, so "content-type" should have a valid id
+        let mut out_buf = [0u8; 64];
+        let mut out_len: usize = 0;
+        unsafe {
+            flowrulz_intern_lookup(id, out_buf.as_mut_ptr(), &mut out_len as *mut usize);
+        }
+        assert_eq!(&out_buf[..out_len], b"content-type");
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn flowrulz_msg_alloc(size: usize) -> *mut u8 {
     if size == 0 {

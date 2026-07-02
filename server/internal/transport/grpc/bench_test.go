@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/premchandkpc/FlowRulZ/go/pkg/transport"
+	"github.com/premchandkpc/FlowRulZ/server/pkg/transport"
 )
 
 func setupLocalBus(b *testing.B) (*GRPCBus, *GRPCClient, func()) {

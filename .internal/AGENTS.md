@@ -96,21 +96,22 @@ The AI agent has access to:
 - `internal/scheduler.Scheduler.Stop() error` (was void)
 - `internal/scheduler.Enqueue` → `EnqueueTask` (to add `Enqueue(*ExecutionContext)` for interface)
 
-**Phase 3b — ProdNode DI wiring (partial)**
+**Phase 3b — ProdNode DI wiring (6 of ~17 fields on pkg/ interfaces)**
 - Created `Dependencies` struct (`go/internal/node/prod.go:36`) with interface + concrete fields
 - Created `NewNode(cfg Config, deps Dependencies)` — pure DI constructor
 - Created `DefaultDependencies(cfg Config) Dependencies` in `factory.go` — production wiring
-- Changed 5 ProdNode fields to `pkg/` interface types:
+- Changed 6 ProdNode fields to `pkg/` interface types:
   - `Scheduler` → `scheduler.Scheduler`
   - `Membership` → `membership.Membership`
   - `Partitions` → `partition.PartitionManager`
   - `Rebalancer` → `partition.RebalanceNotifier`
   - `ReplyRouter` → `replyrouter.ReplyRouter`
+  - `RaftCluster` → `pkgcluster.ClusterMember` (via `cluster.ClusterMember` adapter, wrap in `factory.go`)
 - `NewProdNode(cfg)` kept as backward-compat wrapper (calls `NewNode(cfg, DefaultDependencies(*cfg))`)
 - `main.go` updated to use `NewNode` + `DefaultDependencies` directly
 
 **Still concrete in ProdNode (deferred):**
-- Engine, Registry, DLQ, RateLimiter, Dedup, Saga, StateStore, RaftCluster, ClusterNode, GRPCBus — internal methods not yet on `pkg/` interfaces
+- Engine, Registry, DLQ, RateLimiter, Dedup, Saga, StateStore, ClusterNode, GRPCBus, PlanDist, AdminSrv — internal methods not yet on `pkg/` interfaces
 - `go/internal/execnode/execnode.go` — still on old pattern (concrete fields, no DI)
 - `go/internal/admin/api.go` — uses concrete `*engine.Engine` + `*reliability.DLQ`
 - See `go/internal/node/prod.go` for current state

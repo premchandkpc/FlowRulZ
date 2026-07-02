@@ -6,7 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	pkgpartition "github.com/premchandkpc/FlowRulZ/go/pkg/partition"
+	pkgpartition "github.com/premchandkpc/FlowRulZ/server/pkg/partition"
 )
 
 var _ pkgpartition.RebalanceNotifier = (*RebalanceNotifier)(nil)

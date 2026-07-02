@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/premchandkpc/FlowRulZ/go/bridge"
+	"github.com/premchandkpc/FlowRulZ/server/bridge"
 )
 
 type Result struct {

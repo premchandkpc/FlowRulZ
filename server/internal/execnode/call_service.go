@@ -11,8 +11,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/premchandkpc/FlowRulZ/go/internal/observability"
-	"github.com/premchandkpc/FlowRulZ/go/internal/reliability"
+	"github.com/premchandkpc/FlowRulZ/server/internal/observability"
+	"github.com/premchandkpc/FlowRulZ/server/internal/reliability"
 )
 
 func (en *ExecutionNode) httpCall(endpoint string, body []byte, cb *reliability.CircuitBreaker) ([]byte, error) {

@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	pkgplandist "github.com/premchandkpc/FlowRulZ/go/pkg/plandist"
+	pkgplandist "github.com/premchandkpc/FlowRulZ/server/pkg/plandist"
 )
 
 type AckMessage = pkgplandist.AckMessage

@@ -6,7 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	pkgpartition "github.com/premchandkpc/FlowRulZ/go/pkg/partition"
+	pkgcluster "github.com/premchandkpc/FlowRulZ/server/pkg/cluster"
+	pkgpartition "github.com/premchandkpc/FlowRulZ/server/pkg/partition"
 )
 
 func (n *ProdNode) registerHandlers(mux *http.ServeMux) {
@@ -33,7 +34,7 @@ func (n *ProdNode) handleClusterJoin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	if err := n.RaftCluster.Join(req.NodeID, req.RaftAddr); err != nil {
+	if err := n.RaftCluster.Join(pkgcluster.MemberID(req.NodeID), req.RaftAddr); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

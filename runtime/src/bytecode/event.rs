@@ -91,3 +91,75 @@ impl Event {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_event_new() {
+        let body = b"hello".to_vec();
+        let event = Event::new("orders", body.clone());
+        assert_eq!(event.topic, "orders");
+        assert_eq!(event.payload, body);
+        assert_eq!(event.metadata.mode, Mode::Publish);
+        assert!(event.headers.is_empty());
+        assert!(!event.id.is_empty());
+    }
+
+    #[test]
+    fn test_event_with_mode() {
+        let event = Event::new("test", vec![]).with_mode(Mode::Request);
+        assert_eq!(event.metadata.mode, Mode::Request);
+    }
+
+    #[test]
+    fn test_event_with_reply_to() {
+        let event = Event::new("test", vec![]).with_reply_to("reply-queue");
+        assert_eq!(event.metadata.reply_to, "reply-queue");
+    }
+
+    #[test]
+    fn test_event_with_header() {
+        let event = Event::new("test", vec![])
+            .with_header("content-type", "application/json")
+            .with_header("x-custom", "value");
+        assert_eq!(event.headers.get("content-type").unwrap(), "application/json");
+        assert_eq!(event.headers.get("x-custom").unwrap(), "value");
+    }
+
+    #[test]
+    fn test_event_metadata_default() {
+        let meta = EventMetadata::default();
+        assert_eq!(meta.mode, Mode::Publish);
+        assert!(meta.reply_to.is_empty());
+        assert!(meta.correlation_id.is_empty());
+        assert!(meta.trace_id.is_empty());
+        assert_eq!(meta.partition, 0);
+        assert_eq!(meta.offset, 0);
+    }
+
+    #[test]
+    fn test_mode_from_u8() {
+        assert_eq!(Mode::from_u8(0), Some(Mode::Publish));
+        assert_eq!(Mode::from_u8(1), Some(Mode::Request));
+        assert_eq!(Mode::from_u8(2), Some(Mode::Reply));
+        assert_eq!(Mode::from_u8(3), Some(Mode::Stream));
+        assert_eq!(Mode::from_u8(4), Some(Mode::Workflow));
+        assert_eq!(Mode::from_u8(5), Some(Mode::Internal));
+        assert_eq!(Mode::from_u8(255), None);
+    }
+
+    #[test]
+    fn test_serialization_roundtrip() {
+        let event = Event::new("test", vec![1, 2, 3])
+            .with_mode(Mode::Request)
+            .with_header("h", "v");
+        let bytes = bincode::serialize(&event).unwrap();
+        let deserialized: Event = bincode::deserialize(&bytes).unwrap();
+        assert_eq!(deserialized.topic, "test");
+        assert_eq!(deserialized.payload, vec![1, 2, 3]);
+        assert_eq!(deserialized.metadata.mode, Mode::Request);
+        assert_eq!(deserialized.headers.get("h").unwrap(), "v");
+    }
+}

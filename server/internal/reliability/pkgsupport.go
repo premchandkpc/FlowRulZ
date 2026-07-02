@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	pkgreliability "github.com/premchandkpc/FlowRulZ/go/pkg/reliability"
+	pkgreliability "github.com/premchandkpc/FlowRulZ/server/pkg/reliability"
 )
 
 var (

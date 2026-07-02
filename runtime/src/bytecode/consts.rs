@@ -46,3 +46,75 @@ impl Default for ConstantPool {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_constant_pool_new() {
+        let pool = ConstantPool::new();
+        assert!(pool.is_empty());
+        assert_eq!(pool.len(), 0);
+    }
+
+    #[test]
+    fn test_constant_pool_add_and_get() {
+        let mut pool = ConstantPool::new();
+        let id = pool.add("hello");
+        assert_eq!(pool.get(id), "hello");
+        assert_eq!(pool.len(), 1);
+    }
+
+    #[test]
+    fn test_constant_pool_dedup() {
+        let mut pool = ConstantPool::new();
+        let id1 = pool.add("hello");
+        let id2 = pool.add("hello");
+        assert_eq!(id1, id2);
+        assert_eq!(pool.len(), 1);
+    }
+
+    #[test]
+    fn test_constant_pool_multiple_entries() {
+        let mut pool = ConstantPool::new();
+        let a = pool.add("foo");
+        let b = pool.add("bar");
+        let c = pool.add("baz");
+        assert_ne!(a, b);
+        assert_ne!(b, c);
+        assert_eq!(pool.len(), 3);
+        assert_eq!(pool.get(a), "foo");
+        assert_eq!(pool.get(b), "bar");
+        assert_eq!(pool.get(c), "baz");
+    }
+
+    #[test]
+    fn test_constant_pool_entries() {
+        let mut pool = ConstantPool::new();
+        pool.add("first");
+        pool.add("second");
+        let entries = pool.entries();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0], "first");
+        assert_eq!(entries[1], "second");
+    }
+
+    #[test]
+    fn test_serialization_roundtrip() {
+        let mut pool = ConstantPool::new();
+        pool.add("x");
+        pool.add("y");
+        let bytes = bincode::serialize(&pool).unwrap();
+        let deserialized: ConstantPool = bincode::deserialize(&bytes).unwrap();
+        assert_eq!(deserialized.len(), 2);
+        assert_eq!(deserialized.get(0), "x");
+        assert_eq!(deserialized.get(1), "y");
+    }
+
+    #[test]
+    fn test_default_is_empty() {
+        let pool = ConstantPool::default();
+        assert!(pool.is_empty());
+    }
+}

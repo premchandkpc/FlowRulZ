@@ -24,20 +24,13 @@ profile.cov
 go.work
 go.work.sum
 
-# env file
-.env
-
-# Editor/IDE
-# .idea/
-# .vscode/
-
 # Rust
-rust/target/
-rust/Cargo.lock
+runtime/target/
+runtime/Cargo.lock
 
 # Go
-go/bin/
-go/vendor/
+server/bin/
+server/vendor/
 go.sum
 
 # IDE
@@ -58,6 +51,12 @@ Thumbs.db
 # Skills CLI artifacts (global in ~/.config/opencode/skills/)
 .agents/
 skills-lock.json
+
+# Dependencies
+node_modules/
+
+# Internal / non-shipping
+.internal/
 
 # Build
 flowrulz

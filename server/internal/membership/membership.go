@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	pkgmembership "github.com/premchandkpc/FlowRulZ/go/pkg/membership"
+	pkgmembership "github.com/premchandkpc/FlowRulZ/server/pkg/membership"
 )
 
 const (

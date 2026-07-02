@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/premchandkpc/FlowRulZ/go/internal/transport"
+	"github.com/premchandkpc/FlowRulZ/server/internal/transport"
 )
 
 func makePlanProducer(planCh chan []byte) transport.MessageProducer {

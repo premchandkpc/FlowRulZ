@@ -9,9 +9,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/premchandkpc/FlowRulZ/go/internal/transport"
+	"github.com/premchandkpc/FlowRulZ/server/internal/transport"
 
-	pkgplandist "github.com/premchandkpc/FlowRulZ/go/pkg/plandist"
+	pkgplandist "github.com/premchandkpc/FlowRulZ/server/pkg/plandist"
 )
 
 const (

@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/premchandkpc/FlowRulZ/go/internal/cluster"
-	"github.com/premchandkpc/FlowRulZ/go/internal/transport"
-	kafkatransport "github.com/premchandkpc/FlowRulZ/go/internal/transport/kafka"
+	"github.com/premchandkpc/FlowRulZ/server/internal/cluster"
+	"github.com/premchandkpc/FlowRulZ/server/internal/transport"
+	kafkatransport "github.com/premchandkpc/FlowRulZ/server/internal/transport/kafka"
 )
 
 func (en *ExecutionNode) IsLeader() bool {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	pkgstore "github.com/premchandkpc/FlowRulZ/go/pkg/store"
+	pkgstore "github.com/premchandkpc/FlowRulZ/server/pkg/store"
 )
 
 var _ pkgstore.Store = (*ExecutionStore)(nil)

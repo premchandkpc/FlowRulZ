@@ -6,10 +6,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/premchandkpc/FlowRulZ/go/bridge"
-	"github.com/premchandkpc/FlowRulZ/go/internal/execstate"
-	"github.com/premchandkpc/FlowRulZ/go/internal/observability"
-	"github.com/premchandkpc/FlowRulZ/go/internal/reliability"
+	"github.com/premchandkpc/FlowRulZ/server/bridge"
+	"github.com/premchandkpc/FlowRulZ/server/internal/execstate"
+	"github.com/premchandkpc/FlowRulZ/server/internal/observability"
+	"github.com/premchandkpc/FlowRulZ/server/internal/reliability"
 )
 
 func (en *ExecutionNode) executePlan(ctx context.Context, plan []byte, body []byte) ([]byte, error) {

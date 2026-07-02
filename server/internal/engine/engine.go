@@ -5,8 +5,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/premchandkpc/FlowRulZ/go/bridge"
-	"github.com/premchandkpc/FlowRulZ/go/internal/compiler"
+	"github.com/premchandkpc/FlowRulZ/server/bridge"
+	"github.com/premchandkpc/FlowRulZ/server/internal/compiler"
 )
 
 type Lane string

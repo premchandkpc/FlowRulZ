@@ -6,7 +6,7 @@ import (
 
 	"github.com/hashicorp/raft"
 
-	pkgcluster "github.com/premchandkpc/FlowRulZ/go/pkg/cluster"
+	pkgcluster "github.com/premchandkpc/FlowRulZ/server/pkg/cluster"
 )
 
 var (

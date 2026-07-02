@@ -1,6 +1,6 @@
 # FlowRulZ Go Architecture — SOLID Restructure
 
-> **Status:** Phase 1 complete. Phase 2 (interface extraction) complete — 13 packages in `go/pkg/`. Phase 3a (adapter layer) complete — 6 `pkgsupport.go` files implementing `pkg/` interfaces from `internal/` types, all with compile-time assertions. Phase 3b (ProdNode DI wiring) partial — `Dependencies` struct + `NewNode(cfg, deps)` + `DefaultDependencies()` created, 5 fields migrated to `pkg/` interfaces, 8+ fields remain concrete. Next: migrate `execnode/execnode.go` and `admin/api.go` to interfaces, create `pkg/transport` interfaces.
+> **Status:** Phase 1 complete. Phase 2 (interface extraction) complete — 13 packages in `go/pkg/`. Phase 3a (adapter layer) complete — 6 `pkgsupport.go` files implementing `pkg/` interfaces from `internal/` types, all with compile-time assertions. Phase 3b (ProdNode DI wiring) partial — `Dependencies` struct + `NewNode(cfg, deps)` + `DefaultDependencies()` created, 6 fields migrated to `pkg/` interfaces, 11+ fields remain concrete. Next: migrate remaining ProdNode fields (`Engine`, `Registry`, `DLQ`, `RateLimiter`, `Dedup`, `Saga`, `StateStore`, `ClusterNode`, `GRPCBus`, `PlanDist`, `AdminSrv`) to interfaces, migrate `execnode/execnode.go` and `admin/api.go`.
 
 ## Package Dependency Hierarchy (top→bottom)
 

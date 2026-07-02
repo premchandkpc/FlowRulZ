@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	pkgregistry "github.com/premchandkpc/FlowRulZ/go/pkg/registry"
+	pkgregistry "github.com/premchandkpc/FlowRulZ/server/pkg/registry"
 )
 
 var _ pkgregistry.Registry = (*Registry)(nil)

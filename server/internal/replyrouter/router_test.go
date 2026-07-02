@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/premchandkpc/FlowRulZ/go/pkg/transport"
+	"github.com/premchandkpc/FlowRulZ/server/pkg/transport"
 )
 
 func TestRegisterAndDeliver(t *testing.T) {

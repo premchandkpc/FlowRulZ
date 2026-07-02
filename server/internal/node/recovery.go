@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/premchandkpc/FlowRulZ/go/bridge"
-	"github.com/premchandkpc/FlowRulZ/go/internal/execstate"
+	"github.com/premchandkpc/FlowRulZ/server/bridge"
+	"github.com/premchandkpc/FlowRulZ/server/internal/execstate"
 )
 
 func (n *ProdNode) tryCompensate(execID string) {

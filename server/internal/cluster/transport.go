@@ -5,7 +5,7 @@ import (
 	"log"
 	"sync/atomic"
 
-	"github.com/premchandkpc/FlowRulZ/go/internal/transport"
+	"github.com/premchandkpc/FlowRulZ/server/internal/transport"
 )
 
 type ClusterProducer struct {

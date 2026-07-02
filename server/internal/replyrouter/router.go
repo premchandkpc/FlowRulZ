@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	pkgreplyrouter "github.com/premchandkpc/FlowRulZ/go/pkg/replyrouter"
-	"github.com/premchandkpc/FlowRulZ/go/pkg/transport"
+	pkgreplyrouter "github.com/premchandkpc/FlowRulZ/server/pkg/replyrouter"
+	"github.com/premchandkpc/FlowRulZ/server/pkg/transport"
 )
 
 var (

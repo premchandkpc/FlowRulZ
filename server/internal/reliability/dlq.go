@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/premchandkpc/FlowRulZ/go/internal/transport"
+	"github.com/premchandkpc/FlowRulZ/server/internal/transport"
 )
 
 const DefaultDLQTopic = "_flowrulz_dlq"

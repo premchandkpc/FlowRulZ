@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	grpctransport "github.com/premchandkpc/FlowRulZ/go/internal/transport/grpc"
+	grpctransport "github.com/premchandkpc/FlowRulZ/server/internal/transport/grpc"
 )
 
 type Peer struct {

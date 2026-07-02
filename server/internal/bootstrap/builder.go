@@ -22,7 +22,6 @@ import (
 	"github.com/premchandkpc/FlowRulZ/server/internal/reliability"
 	"github.com/premchandkpc/FlowRulZ/server/internal/replyrouter"
 	"github.com/premchandkpc/FlowRulZ/server/internal/scheduler"
-	"github.com/premchandkpc/FlowRulZ/server/internal/transport"
 	grpctransport "github.com/premchandkpc/FlowRulZ/server/internal/transport/grpc"
 	kafkatransport "github.com/premchandkpc/FlowRulZ/server/internal/transport/kafka"
 )
@@ -43,24 +42,7 @@ func NewNodeBuilder(cfg node.Config) *NodeBuilder {
 }
 
 func (b *NodeBuilder) WithDefaults() *NodeBuilder {
-	b.buildEngine()
-	b.buildMetrics()
-	b.buildScheduler()
-	b.buildReplyRouter()
-	b.buildReliability()
-	b.buildRegistry()
-	b.buildClusterNode()
-	b.buildMessaging()
-	b.buildDLQ()
-	b.buildMembership()
-	b.buildPlanDistribution()
-	b.buildPartitioning()
-	b.buildAdmin()
-	b.buildStateStore()
-	b.buildSaga()
-	b.buildRaft()
-	b.buildGRPC()
-	b.buildOTel()
+	b.deps = node.DefaultDependencies(b.cfg)
 	return b
 }
 
@@ -157,7 +139,7 @@ func (b *NodeBuilder) buildMessaging() {
 func (b *NodeBuilder) buildDLQ() {
 	dlqDir := b.cfg.DLQDir()
 	os.MkdirAll(dlqDir, 0755)
-	dlqProducer := makeProducerFromCluster(reliability.DefaultDLQTopic, b.deps.ClusterNode, kafkatransport.Config{})
+	dlqProducer := node.MakeProducerFromCluster(reliability.DefaultDLQTopic, b.deps.ClusterNode, kafkatransport.Config{})
 	dlq := reliability.NewDLQ(b.cfg.DLQMaxEntries(),
 		reliability.WithDLQProducer(dlqProducer),
 		reliability.WithDLQDir(dlqDir),
@@ -172,8 +154,8 @@ func (b *NodeBuilder) buildMembership() {
 
 func (b *NodeBuilder) buildPlanDistribution() {
 	kc := kafkatransport.Config{Brokers: b.cfg.KafkaBrokers, GroupID: b.cfg.KafkaGroupID}
-	planProducer := makeProducerFromCluster(plandist.DefaultPlanTopic, b.deps.ClusterNode, kc)
-	ackProducer := makeProducerFromCluster(plandist.DefaultAckTopic, b.deps.ClusterNode, kc)
+	planProducer := node.MakeProducerFromCluster(plandist.DefaultPlanTopic, b.deps.ClusterNode, kc)
+	ackProducer := node.MakeProducerFromCluster(plandist.DefaultAckTopic, b.deps.ClusterNode, kc)
 	planDist := plandist.New(b.cfg.NodeID,
 		plandist.WithPlanProducer(planProducer),
 		plandist.WithAckProducer(ackProducer),
@@ -185,7 +167,7 @@ func (b *NodeBuilder) buildPlanDistribution() {
 func (b *NodeBuilder) buildPartitioning() {
 	partitions := partition.New(partition.DefaultNumPartitions)
 	kc := kafkatransport.Config{Brokers: b.cfg.KafkaBrokers}
-	partProducer := makeProducerFromCluster(partition.PartitionTopic, b.deps.ClusterNode, kc)
+	partProducer := node.MakeProducerFromCluster(partition.PartitionTopic, b.deps.ClusterNode, kc)
 	partitions.SetProducer(partProducer)
 	b.deps.Partitions = partitions
 
@@ -259,24 +241,4 @@ type schedulerService struct{ s *scheduler.Scheduler }
 func (s schedulerService) Start(ctx context.Context) error { return s.s.Start(ctx) }
 func (s schedulerService) Stop() error                     { return s.s.Stop() }
 
-// --- helpers ---
 
-func makeProducerFromCluster(topic string, clusterNode *cluster.ClusterNode, kc kafkatransport.Config) transport.MessageProducer {
-	if len(kc.Brokers) > 0 {
-		return kafkatransport.NewProducer(topic, kc)
-	}
-	if clusterNode != nil {
-		return cluster.NewClusterProducer(topic, clusterNode)
-	}
-	return transport.NewProducer(topic)
-}
-
-func makeConsumerFromCluster(topic string, handler transport.MessageHandler, clusterNode *cluster.ClusterNode, kc kafkatransport.Config) transport.MessageConsumer {
-	if len(kc.Brokers) > 0 {
-		return kafkatransport.NewConsumer(topic, handler, kc)
-	}
-	if clusterNode != nil {
-		return cluster.NewClusterConsumer(topic, handler, clusterNode)
-	}
-	return transport.NewConsumer(topic, handler)
-}

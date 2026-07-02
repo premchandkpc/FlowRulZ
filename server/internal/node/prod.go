@@ -268,7 +268,7 @@ func (n *ProdNode) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-// --- Internal methods (adapted from execnode) ---
+// --- Internal methods ---
 
 func (n *ProdNode) makeProducer(topic string, kc kafkatransport.Config) transport.MessageProducer {
 	if len(kc.Brokers) > 0 {

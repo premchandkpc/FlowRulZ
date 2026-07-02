@@ -4,7 +4,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"runtime"
@@ -88,7 +88,7 @@ func (s *Server) deployRule(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	log.Printf("deploy rule: id=%s", req.ID)
+	slog.Info("deploy rule", "id", req.ID)
 	if err := s.rules.DeployRule(req.ID, req.DSL); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

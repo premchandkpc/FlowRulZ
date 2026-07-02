@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -76,7 +76,7 @@ func (fs *FileStore) ListByStatus(_ context.Context, statuses ...Status) ([]*Sta
 		}
 		s, err := fs.readLocked(filepath.Join(fs.dir, e.Name()))
 		if err != nil {
-			log.Printf("execstate: skip %s: %v", e.Name(), err)
+			slog.Warn("execstate: skip", "file", e.Name(), "error", err)
 			continue
 		}
 		if len(want) > 0 && !want[s.Status] {

@@ -3,7 +3,7 @@ package cluster
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -72,7 +72,7 @@ func (cn *ClusterNode) Start() error {
 	cn.gossipCancel = gossipCancel
 	go cn.gossiper.Start(gossipCtx)
 
-	log.Printf("cluster node %s: listening on %s", cn.nodeID, cn.grpcAddr)
+	slog.Info("cluster node: listening", "node_id", cn.nodeID, "addr", cn.grpcAddr)
 	return nil
 }
 
@@ -90,7 +90,7 @@ func (cn *ClusterNode) AddPeer(id, addr string) error {
 	}
 
 	cn.peers[id] = &Peer{ID: id, Addr: addr, client: client}
-	log.Printf("cluster node %s: connected to peer %s at %s", cn.nodeID, id, addr)
+	slog.Info("cluster node: connected to peer", "node_id", cn.nodeID, "peer_id", id, "addr", addr)
 	return nil
 }
 
@@ -101,7 +101,7 @@ func (cn *ClusterNode) RemovePeer(id string) {
 		p.client.Close()
 		p.mu.Unlock()
 		delete(cn.peers, id)
-		log.Printf("cluster node %s: disconnected peer %s", cn.nodeID, id)
+		slog.Info("cluster node: disconnected peer", "node_id", cn.nodeID, "peer_id", id)
 	}
 	cn.peersMu.Unlock()
 }
@@ -117,7 +117,7 @@ func (cn *ClusterNode) PublishToPeer(peerID, topic string, body []byte) error {
 	defer p.mu.Unlock()
 	_, err := p.client.PublishRaw(context.Background(), topic, "", body)
 	if err != nil {
-		log.Printf("cluster node: publish to peer %s: %v", peerID, err)
+		slog.Error("cluster node: publish to peer", "peer_id", peerID, "error", err)
 	}
 	return err
 }
@@ -132,7 +132,7 @@ func (cn *ClusterNode) Publish(topic, key string, body []byte) error {
 			PartitionKey: key,
 		},
 	}); err != nil {
-		log.Printf("cluster node: local bus publish error: %v", err)
+		slog.Error("cluster node: local bus publish error", "error", err)
 	}
 
 	cn.peersMu.RLock()
@@ -142,7 +142,7 @@ func (cn *ClusterNode) Publish(topic, key string, body []byte) error {
 			defer peer.mu.Unlock()
 			_, err := peer.client.PublishRaw(context.Background(), topic, key, body)
 			if err != nil {
-				log.Printf("cluster node: publish to peer %s: %v", peer.ID, err)
+				slog.Error("cluster node: publish to peer", "peer_id", peer.ID, "error", err)
 			}
 		}(p)
 	}

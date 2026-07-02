@@ -3,7 +3,7 @@ package observability
 import (
 	"context"
 	"encoding/binary"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/premchandkpc/FlowRulZ/server/bridge"
@@ -61,7 +61,7 @@ func NewSpanExporter(endpoint string) *SpanExporter {
 		otlptracegrpc.WithInsecure(),
 	))
 	if err != nil {
-		log.Printf("otel: create exporter: %v", err)
+		slog.Warn("otel: create exporter", "error", err)
 		return nil
 	}
 
@@ -72,7 +72,7 @@ func NewSpanExporter(endpoint string) *SpanExporter {
 		),
 	)
 	if err != nil {
-		log.Printf("otel: create resource: %v", err)
+		slog.Warn("otel: create resource", "error", err)
 		return nil
 	}
 
@@ -119,7 +119,7 @@ func (se *SpanExporter) Stop() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := se.provider.Shutdown(ctx); err != nil {
-		log.Printf("otel: shutdown error: %v", err)
+		slog.Error("otel: shutdown error", "error", err)
 	}
 }
 

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
-	"log"
+	"log/slog"
 	"sort"
 	"sync"
 
@@ -189,7 +189,7 @@ func (m *Manager) HandleAssignmentMessage(msg []byte) error {
 	}
 	if pm.Type == "assign" {
 		m.ApplyAssignments(pm.Assignments)
-		log.Printf("partition: applied %d assignments from term %d", len(pm.Assignments), pm.Term)
+		slog.Info("partition: applied assignments", "count", len(pm.Assignments), "term", pm.Term)
 	}
 	return nil
 }

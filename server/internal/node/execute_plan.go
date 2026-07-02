@@ -16,6 +16,7 @@ import (
 	"github.com/premchandkpc/FlowRulZ/server/internal/execstate"
 	"github.com/premchandkpc/FlowRulZ/server/internal/observability"
 	"github.com/premchandkpc/FlowRulZ/server/internal/reliability"
+	"github.com/premchandkpc/FlowRulZ/server/internal/scheduler"
 )
 
 func (n *ProdNode) executePlan(ctx context.Context, plan []byte, body []byte) ([]byte, error) {
@@ -55,7 +56,9 @@ func (n *ProdNode) executePlan(ctx context.Context, plan []byte, body []byte) ([
 			st.Error = err.Error()
 			n.StateStore.Save(execCtx, st)
 		} else {
-			n.StateStore.Delete(execCtx, execID)
+			st.Status = execstate.StatusCompleted
+			st.Output = out
+			n.StateStore.Save(execCtx, st)
 		}
 	}
 	return out, err
@@ -149,6 +152,11 @@ func (n *ProdNode) executeAll(ctx context.Context, body []byte) ([][]byte, error
 		return nil, nil
 	}
 
+	sched, ok := n.Scheduler.(*scheduler.Scheduler)
+	if !ok {
+		return nil, fmt.Errorf("scheduler not available")
+	}
+
 	type planResult struct {
 		index int
 		out   []byte
@@ -160,15 +168,21 @@ func (n *ProdNode) executeAll(ctx context.Context, body []byte) ([][]byte, error
 
 	results := make([][]byte, len(plans))
 	ch := make(chan planResult, len(plans))
-	sem := make(chan struct{}, 10)
 
 	for i, plan := range plans {
-		sem <- struct{}{}
-		go func(idx int, p []byte) {
-			defer func() { <-sem }()
-			out, err := n.executePlan(ctx, p, body)
+		idx, p := i, plan
+		go func() {
+			task := &scheduler.Task{
+				ID:       fmt.Sprintf("plan-%d", idx),
+				Priority: scheduler.PriorityNormal,
+				Body:     body,
+				Execute: func(execCtx context.Context, task *scheduler.Task) ([]byte, error) {
+					return n.executePlan(execCtx, p, task.Body)
+				},
+			}
+			out, err := sched.EnqueueAndWait(ctx, task)
 			ch <- planResult{idx, out, err}
-		}(i, plan)
+		}()
 	}
 
 	var firstErr error

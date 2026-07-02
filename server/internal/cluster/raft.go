@@ -3,7 +3,7 @@ package cluster
 import (
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -141,7 +141,7 @@ func (rc *RaftCluster) Start() error {
 
 	go rc.trackLeadership()
 
-	log.Printf("raft cluster %s: started on %s", rc.nodeID, rc.raftBind)
+	slog.Info("raft cluster: started", "node_id", rc.nodeID, "bind", rc.raftBind)
 	return nil
 }
 
@@ -160,7 +160,7 @@ func (rc *RaftCluster) Stop() {
 	if rc.raft != nil {
 		future := rc.raft.Shutdown()
 		if err := future.Error(); err != nil {
-			log.Printf("raft shutdown error: %v", err)
+			slog.Error("raft shutdown error", "error", err)
 		}
 	}
 	if rc.transport != nil {
@@ -173,7 +173,7 @@ func (rc *RaftCluster) Stop() {
 		rc.stable.Close()
 	}
 	rc.started = false
-	log.Printf("raft cluster %s: stopped", rc.nodeID)
+	slog.Info("raft cluster: stopped", "node_id", rc.nodeID)
 }
 
 // BootstrapCluster initializes the Raft cluster with this node as the sole voter.
@@ -187,7 +187,7 @@ func (rc *RaftCluster) BootstrapCluster() error {
 		hasState = false
 	}
 	if hasState {
-		log.Printf("raft cluster %s: existing state found, skipping bootstrap", rc.nodeID)
+		slog.Info("raft cluster: existing state found, skipping bootstrap", "node_id", rc.nodeID)
 		return nil
 	}
 	configuration := raft.Configuration{
@@ -202,7 +202,7 @@ func (rc *RaftCluster) BootstrapCluster() error {
 	if err := future.Error(); err != nil {
 		return fmt.Errorf("bootstrap cluster: %w", err)
 	}
-	log.Printf("raft cluster %s: bootstrapped as initial leader candidate", rc.nodeID)
+	slog.Info("raft cluster: bootstrapped as initial leader candidate", "node_id", rc.nodeID)
 	return nil
 }
 
@@ -223,7 +223,7 @@ func (rc *RaftCluster) Join(nodeID, raftAddr string) error {
 	if err := addFuture.Error(); err != nil {
 		return fmt.Errorf("add voter %s at %s: %w", nodeID, raftAddr, err)
 	}
-	log.Printf("raft cluster %s: added voter %s at %s", rc.nodeID, nodeID, raftAddr)
+	slog.Info("raft cluster: added voter", "node_id", rc.nodeID, "voter_id", nodeID, "addr", raftAddr)
 	return nil
 }
 
@@ -239,7 +239,7 @@ func (rc *RaftCluster) Leave(nodeID string) error {
 	if err := future.Error(); err != nil {
 		return fmt.Errorf("remove server %s: %w", nodeID, err)
 	}
-	log.Printf("raft cluster %s: removed voter %s", rc.nodeID, nodeID)
+	slog.Info("raft cluster: removed voter", "node_id", rc.nodeID, "voter_id", nodeID)
 	return nil
 }
 
@@ -313,7 +313,7 @@ func (rc *RaftCluster) trackLeadership() {
 			if isLeader {
 				rc.leaderAddr.Store(string(rc.raft.Leader()))
 			}
-			log.Printf("raft cluster %s: leadership changed, isLeader=%v", rc.nodeID, isLeader)
+			slog.Info("raft cluster: leadership changed", "node_id", rc.nodeID, "is_leader", isLeader)
 
 			rc.leaderSubsMu.RLock()
 			for _, fn := range rc.leaderSubs {

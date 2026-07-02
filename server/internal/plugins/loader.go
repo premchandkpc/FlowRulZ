@@ -2,7 +2,7 @@ package plugins
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -13,7 +13,7 @@ func LoadDir(pluginDir string) error {
 	entries, err := os.ReadDir(pluginDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			log.Printf("[plugins] dir %s does not exist, skipping", pluginDir)
+			slog.Info("plugins: dir does not exist, skipping", "dir", pluginDir)
 			return nil
 		}
 		return fmt.Errorf("read plugin dir %s: %w", pluginDir, err)
@@ -35,7 +35,7 @@ func LoadDir(pluginDir string) error {
 		if err := bridge.RegisterPlugin(name, data); err != nil {
 			return fmt.Errorf("register plugin %s: %w", name, err)
 		}
-		log.Printf("[plugins] registered plugin '%s' (%d bytes)", name, len(data))
+		slog.Info("plugins: registered plugin", "name", name, "bytes", len(data))
 	}
 
 	return nil

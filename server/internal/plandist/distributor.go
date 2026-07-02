@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -119,7 +119,7 @@ func (pd *PlanDistributor) Start(ctx context.Context) error {
 		go pd.ackConsumer.Start(ctx)
 	}
 
-	log.Printf("plandist: node=%s started", pd.nodeID)
+	slog.Info("plandist: started", "node", pd.nodeID)
 	return nil
 }
 

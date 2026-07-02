@@ -3,7 +3,7 @@ package reliability
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -88,16 +88,16 @@ func (d *DLQ) Send(entry *DeadLetterEntry) error {
 
 	d.persistEntry(&entryCopy)
 
-	log.Printf("dlq: rule=%s id=%s error=%s", entry.RuleID, entry.ID, entry.Error)
+	slog.Warn("dlq: message", "rule", entry.RuleID, "id", entry.ID, "error", entry.Error)
 
 	if d.producer != nil {
 		data, err := json.Marshal(&entryCopy)
 		if err != nil {
-			log.Printf("dlq: marshal error for kafka: %v", err)
+			slog.Error("dlq: marshal error for kafka", "error", err)
 			return nil
 		}
 		if err := d.producer.Send(context.Background(), []byte(entry.ID), data); err != nil {
-			log.Printf("dlq: kafka produce error: %v", err)
+			slog.Error("dlq: kafka produce error", "error", err)
 		}
 	}
 	return nil
@@ -124,7 +124,7 @@ func (d *DLQ) loadFromDir() {
 		}
 		d.entries = append(d.entries, &entry)
 	}
-	log.Printf("dlq: restored %d entries from %s", len(d.entries), d.dir)
+	slog.Info("dlq: restored entries", "count", len(d.entries), "dir", d.dir)
 }
 
 func (d *DLQ) persistEntry(entry *DeadLetterEntry) {
@@ -134,12 +134,12 @@ func (d *DLQ) persistEntry(entry *DeadLetterEntry) {
 	path := filepath.Join(d.dir, entry.ID+".json")
 	data, err := json.Marshal(entry)
 	if err != nil {
-		log.Printf("dlq: marshal error: %v", err)
+		slog.Error("dlq: marshal error", "error", err)
 		return
 	}
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0644); err != nil {
-		log.Printf("dlq: write error: %v", err)
+		slog.Error("dlq: write error", "error", err)
 		return
 	}
 	os.Rename(tmp, path)
@@ -155,7 +155,7 @@ func (d *DLQ) removePersisted(id string) {
 }
 
 func (d *DLQ) LoadFromTopic(ctx context.Context) {
-	log.Printf("dlq: rebuild from topic not implemented")
+	slog.Warn("dlq: rebuild from topic not implemented")
 }
 
 func (d *DLQ) Replay(ctx context.Context, id string) error {

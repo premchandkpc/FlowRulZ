@@ -21,7 +21,7 @@ pub fn exec_map<'a>(
         if let Some(field) = expr_str.strip_prefix('.') {
             let field_path = field.split('=').next().unwrap_or(field);
             if matches!(schema.field_type(field_path), Some(ResolvedType::Any)) {
-                eprintln!("[warn] map operates on field '{}' typed 'any' — no compile-time type checking", field_path);
+                log::warn!("map operates on field '{}' typed 'any' — no compile-time type checking", field_path);
             }
         }
     }

@@ -3,7 +3,7 @@ package scheduler
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -83,7 +83,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 		go s.laneWorker(ctx, p, l)
 	}
 
-	log.Printf("scheduler: started with %d lanes", len(s.lanes))
+	slog.Info("scheduler: started", "lanes", len(s.lanes))
 	return nil
 }
 
@@ -152,15 +152,45 @@ func (s *Scheduler) slotWorker(ctx context.Context, l *lane) {
 	defer l.wg.Done()
 
 	for {
-		select {
-		case <-s.stopCh:
+		task := s.dequeueOrSteal(ctx, l)
+		if task == nil {
 			return
-		case <-ctx.Done():
-			return
-		case task := <-l.queue:
-			s.totalDeq.Add(1)
-			s.execTask(ctx, task)
 		}
+		s.totalDeq.Add(1)
+		s.execTask(ctx, task)
+	}
+}
+
+func (s *Scheduler) dequeueOrSteal(ctx context.Context, myLane *lane) *Task {
+	select {
+	case <-s.stopCh:
+		return nil
+	case <-ctx.Done():
+		return nil
+	case task := <-myLane.queue:
+		return task
+	default:
+	}
+
+	for p := PriorityHeavy; p >= PriorityFast; p-- {
+		l, ok := s.lanes[p]
+		if !ok || l == myLane {
+			continue
+		}
+		select {
+		case task := <-l.queue:
+			return task
+		default:
+		}
+	}
+
+	select {
+	case <-s.stopCh:
+		return nil
+	case <-ctx.Done():
+		return nil
+	case task := <-myLane.queue:
+		return task
 	}
 }
 

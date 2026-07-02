@@ -285,7 +285,7 @@ func TestExecuteWithMethodSyntax(t *testing.T) {
 		t.Fatalf("Compile failed: %v", err)
 	}
 
-	// Build plan service map the way execnode should
+	// Build plan service map
 	svcs, err := PlanServices(plan)
 	if err != nil {
 		t.Fatalf("PlanServices failed: %v", err)

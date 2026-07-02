@@ -3,7 +3,7 @@ package flowengine
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -164,17 +164,17 @@ func (f *Flow) checkpoint() {
 		Error:  f.Error,
 	})
 	if err != nil {
-		log.Printf("flow checkpoint marshal error: %v", err)
+		slog.Error("flow checkpoint marshal error", "error", err)
 		return
 	}
 	path := filepath.Join(f.dir, f.ID+".json")
 	tmpPath := path + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
-		log.Printf("flow checkpoint write error: %v", err)
+		slog.Error("flow checkpoint write error", "error", err)
 		return
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		log.Printf("flow checkpoint rename error: %v", err)
+		slog.Error("flow checkpoint rename error", "error", err)
 	}
 }
 

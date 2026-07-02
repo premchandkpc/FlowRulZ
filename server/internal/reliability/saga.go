@@ -3,7 +3,7 @@ package reliability
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,7 +80,7 @@ func (st *SagaTracker) Compensate(execID string) error {
 		if s.CompSvc == "" && s.CompMethod == "" {
 			continue
 		}
-		log.Printf("saga: compensating %s/%s via %s/%s", s.ServiceName, s.Method, s.CompSvc, s.CompMethod)
+		slog.Info("saga: compensating", "service", s.ServiceName, "method", s.Method, "comp_svc", s.CompSvc, "comp_method", s.CompMethod)
 		if err := st.call(s.CompSvc, s.CompMethod, s.Body); err != nil {
 			errs = append(errs, fmt.Errorf("compensate %s/%s: %w", s.ServiceName, s.Method, err))
 		}
@@ -127,12 +127,12 @@ func (st *SagaTracker) persistLocked(execID string) {
 	steps := st.steps[execID]
 	data, err := json.Marshal(steps)
 	if err != nil {
-		log.Printf("saga: marshal error for %s: %v", execID, err)
+		slog.Error("saga: marshal error", "exec_id", execID, "error", err)
 		return
 	}
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0644); err != nil {
-		log.Printf("saga: write error for %s: %v", execID, err)
+		slog.Error("saga: write error", "exec_id", execID, "error", err)
 		return
 	}
 	os.Rename(tmp, path)

@@ -2,7 +2,7 @@ package cluster
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"sync/atomic"
 
 	"github.com/premchandkpc/FlowRulZ/server/internal/transport"
@@ -49,7 +49,7 @@ func (c *ClusterConsumer) Start(ctx context.Context) {
 	c.node.Subscribe(c.topic, func(ctx context.Context, topic string, body []byte) {
 		_, err := c.handler(ctx, body)
 		if err != nil {
-			log.Printf("cluster consumer %s: handler error: %v", c.topic, err)
+			slog.Error("cluster consumer handler error", "topic", c.topic, "error", err)
 		}
 	})
 

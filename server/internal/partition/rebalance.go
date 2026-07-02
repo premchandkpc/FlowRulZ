@@ -1,7 +1,7 @@
 package partition
 
 import (
-	"log"
+	"log/slog"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -59,7 +59,7 @@ func (rn *RebalanceNotifier) CheckAndRebalance() bool {
 
 	rn.lastNodes = make([]string, len(nodes))
 	copy(rn.lastNodes, nodes)
-	log.Printf("partition: membership changed (%d nodes), triggering rebalance", len(nodes))
+	slog.Info("partition: membership changed, triggering rebalance", "node_count", len(nodes))
 
 	rn.manager.Rebalance(nodes, rn.termFn())
 	if rn.notifyFn != nil {

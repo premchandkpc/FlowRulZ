@@ -44,12 +44,12 @@ test-go:
 
 test: test-rust test-go
 
-test-local: go
+test-local: go sim
 	$(CGO) go test ./server/... ./simulator/... -count=1
-	@echo "--- smoke: simulate --scenarios ---"
-	./$(BIN) simulate --scenarios
-	@echo "--- smoke: simulate 1s run ---"
-	./$(BIN) simulate --scenario ramp-up --duration 1s --rate 10 --dashboard=false
+	@echo "--- smoke: sim --scenarios ---"
+	./$(SIM_BIN) --scenarios
+	@echo "--- smoke: sim 1s run ---"
+	./$(SIM_BIN) --scenario ramp-up --duration 1s --rate 10 --dashboard=false
 
 bench:
 	cd $(RUST_DIR) && cargo bench --bench flowrulz_bench

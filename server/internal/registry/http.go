@@ -3,7 +3,7 @@ package registry
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -124,7 +124,7 @@ func (r *ServiceRegistry) StartHeartbeatChecker(stopCh <-chan struct{}) {
 			case <-ticker.C:
 				expired := r.CheckExpired()
 				for _, e := range expired {
-					log.Printf("registry: instance expired (no heartbeat): %s", e)
+					slog.Warn("registry: instance expired", "id", e)
 				}
 			case <-stopCh:
 				return

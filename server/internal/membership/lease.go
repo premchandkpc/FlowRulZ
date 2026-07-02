@@ -2,7 +2,7 @@ package membership
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 )
 
@@ -13,14 +13,14 @@ func (m *Membership) evictStale() {
 	for id, n := range m.nodes {
 		if n.IsAlive && now.Sub(n.LastSeen) > m.heartbeatTimeout {
 			n.IsAlive = false
-			log.Printf("membership: node %s timed out (last seen %v ago)", id, now.Sub(n.LastSeen))
+			slog.Warn("membership: node timed out", "node", id, "last_seen_ago", now.Sub(n.LastSeen))
 		}
 	}
 	leaderAfter := m.leaderIDLocked()
 	m.mu.Unlock()
 
 	if leaderBefore != "" && leaderBefore != leaderAfter && m.leaseCallback != nil {
-		log.Printf("membership: leader %s lost due to heartbeat timeout, notifying lease callback", leaderBefore)
+		slog.Warn("membership: leader lost due to heartbeat timeout, notifying lease callback", "leader", leaderBefore)
 		m.leaseCallback(leaderBefore)
 	}
 }
@@ -59,7 +59,7 @@ func (m *Membership) StartLeaderLeaseChecker(ctx context.Context, interval time.
 				}
 				if time.Since(n.LastSeen) > m.leaderLease {
 					n.IsAlive = false
-					log.Printf("membership: leader %s lease expired (last seen %v ago)", leaderID, time.Since(n.LastSeen))
+					slog.Warn("membership: leader lease expired", "leader", leaderID, "last_seen_ago", time.Since(n.LastSeen))
 					m.mu.Unlock()
 					if m.leaseCallback != nil {
 						m.leaseCallback(leaderID)

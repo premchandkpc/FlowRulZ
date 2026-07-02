@@ -1,7 +1,7 @@
 package main
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 
@@ -20,8 +20,9 @@ func main() {
 	mux.HandleFunc("/compile", handler.HandleCompile)
 	mux.HandleFunc("/validate", handler.HandleValidate)
 
-	log.Printf("compiler service on %s", addr)
+	slog.Info("compiler service", "addr", addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
-		log.Fatalf("compiler: %v", err)
+		slog.Error("compiler: server error", "error", err)
+		os.Exit(1)
 	}
 }

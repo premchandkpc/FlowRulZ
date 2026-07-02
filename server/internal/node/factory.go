@@ -70,7 +70,7 @@ func DefaultDependencies(cfg Config) Dependencies {
 	// DLQ
 	dlqDir := cfg.DLQDir()
 	os.MkdirAll(dlqDir, 0755)
-	dlqProducer := makeProducerFromCluster(reliability.DefaultDLQTopic, clusterNode, kafkaCfg)
+	dlqProducer := MakeProducerFromCluster(reliability.DefaultDLQTopic, clusterNode, kafkaCfg)
 	dlq := reliability.NewDLQ(cfg.DLQMaxEntries(),
 		reliability.WithDLQProducer(dlqProducer),
 		reliability.WithDLQDir(dlqDir),
@@ -79,8 +79,8 @@ func DefaultDependencies(cfg Config) Dependencies {
 	// Membership + Plan Distribution
 	members := membership.New()
 
-	planProducer := makeProducerFromCluster(plandist.DefaultPlanTopic, clusterNode, kafkaCfg)
-	ackProducer := makeProducerFromCluster(plandist.DefaultAckTopic, clusterNode, kafkaCfg)
+	planProducer := MakeProducerFromCluster(plandist.DefaultPlanTopic, clusterNode, kafkaCfg)
+	ackProducer := MakeProducerFromCluster(plandist.DefaultAckTopic, clusterNode, kafkaCfg)
 	planDist := plandist.New(cfg.NodeID,
 		plandist.WithPlanProducer(planProducer),
 		plandist.WithAckProducer(ackProducer),
@@ -89,7 +89,7 @@ func DefaultDependencies(cfg Config) Dependencies {
 
 	// Partitioning
 	partitions := partition.New(partition.DefaultNumPartitions)
-	partProducer := makeProducerFromCluster(partition.PartitionTopic, clusterNode, kafkaCfg)
+	partProducer := MakeProducerFromCluster(partition.PartitionTopic, clusterNode, kafkaCfg)
 	partitions.SetProducer(partProducer)
 	rebalancer := partition.NewRebalanceNotifier(partitions,
 		func() []string { return members.AliveNodes() },
@@ -160,7 +160,7 @@ func DefaultDependencies(cfg Config) Dependencies {
 	}
 }
 
-func makeProducerFromCluster(topic string, clusterNode *cluster.ClusterNode, kc kafkatransport.Config) transport.MessageProducer {
+func MakeProducerFromCluster(topic string, clusterNode *cluster.ClusterNode, kc kafkatransport.Config) transport.MessageProducer {
 	if len(kc.Brokers) > 0 {
 		return kafkatransport.NewProducer(topic, kc)
 	}
@@ -170,7 +170,7 @@ func makeProducerFromCluster(topic string, clusterNode *cluster.ClusterNode, kc 
 	return transport.NewProducer(topic)
 }
 
-func makeConsumerFromCluster(topic string, handler transport.MessageHandler, clusterNode *cluster.ClusterNode, kc kafkatransport.Config) transport.MessageConsumer {
+func MakeConsumerFromCluster(topic string, handler transport.MessageHandler, clusterNode *cluster.ClusterNode, kc kafkatransport.Config) transport.MessageConsumer {
 	if len(kc.Brokers) > 0 {
 		return kafkatransport.NewConsumer(topic, handler, kc)
 	}

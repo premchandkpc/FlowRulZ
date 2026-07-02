@@ -3,7 +3,8 @@ package loadgen
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
+	"math"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -78,8 +79,7 @@ func New(cfg Config, d *dispatcher.Dispatcher, m *metrics.Collector) *Generator 
 }
 
 func (g *Generator) Start() {
-	log.Printf("loadgen: starting (%d req/s, pattern=%d, duration=%v)",
-		g.cfg.RequestsPerSec, g.cfg.Pattern, g.cfg.Duration)
+	slog.Info("loadgen: starting", "rate", g.cfg.RequestsPerSec, "pattern", g.cfg.Pattern, "duration", g.cfg.Duration)
 
 	switch g.cfg.Pattern {
 	case PatternConstant:
@@ -162,7 +162,7 @@ func (g *Generator) constantRate() {
 			g.sendOne()
 			g.concurrent.Add(-1)
 		case <-timer.C:
-			log.Printf("loadgen: completed (%d requests sent)", g.totalSent.Load())
+			slog.Info("loadgen: completed", "sent", g.totalSent.Load())
 			return
 		case <-g.ctx.Done():
 			return
@@ -228,7 +228,7 @@ func (g *Generator) sineWave() {
 			period := 10.0
 			amplitude := float64(g.cfg.RequestsPerSec) * 0.5
 			base := float64(g.cfg.RequestsPerSec) * 0.5
-			rate := base + amplitude*sin(elapsed/period*2*3.14159)
+			rate := base + amplitude*math.Sin(elapsed/period*2*math.Pi)
 			interval := time.Second / time.Duration(max(1, int(rate)))
 			time.Sleep(interval)
 			g.sendOne()
@@ -238,30 +238,6 @@ func (g *Generator) sineWave() {
 	}
 }
 
-func sin(x float64) float64 {
-	if x < 0 {
-		return -sin(-x)
-	}
-	if x > 3.14159*2 {
-		x -= float64(int(x/(3.14159*2))) * 3.14159 * 2
-	}
-	if x < 3.14159/2 {
-		return x * 2 / 3.14159
-	}
-	if x < 3.14159 {
-		return 1 - (x-3.14159/2)*2/3.14159
-	}
-	if x < 3*3.14159/2 {
-		return -(x - 3.14159) * 2 / 3.14159
-	}
-	return -(1 - (x-3*3.14159/2)*2/3.14159)
-}
 
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
 
 

@@ -136,17 +136,22 @@ func (cn *ClusterNode) Publish(topic, key string, body []byte) error {
 	}
 
 	cn.peersMu.RLock()
+	peers := make([]*Peer, 0, len(cn.peers))
 	for _, p := range cn.peers {
-		go func(peer *Peer) {
-			peer.mu.Lock()
-			defer peer.mu.Unlock()
-			_, err := peer.client.PublishRaw(context.Background(), topic, key, body)
-			if err != nil {
-				slog.Error("cluster node: publish to peer", "peer_id", peer.ID, "error", err)
-			}
-		}(p)
+		peers = append(peers, p)
 	}
 	cn.peersMu.RUnlock()
+
+	for _, peer := range peers {
+		go func(p *Peer) {
+			p.mu.Lock()
+			defer p.mu.Unlock()
+			_, err := p.client.PublishRaw(context.Background(), topic, key, body)
+			if err != nil {
+				slog.Error("cluster node: publish to peer", "peer_id", p.ID, "error", err)
+			}
+		}(peer)
+	}
 
 	return nil
 }

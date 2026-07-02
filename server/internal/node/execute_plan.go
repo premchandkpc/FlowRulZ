@@ -3,7 +3,7 @@ package node
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -169,9 +169,13 @@ func (n *ProdNode) executeAll(ctx context.Context, body []byte) ([][]byte, error
 	results := make([][]byte, len(plans))
 	ch := make(chan planResult, len(plans))
 
+	sem := make(chan struct{}, 16)
+
 	for i, plan := range plans {
 		idx, p := i, plan
+		sem <- struct{}{}
 		go func() {
+			defer func() { <-sem }()
 			task := &scheduler.Task{
 				ID:       fmt.Sprintf("plan-%d", idx),
 				Priority: scheduler.PriorityNormal,
@@ -211,11 +215,8 @@ func (n *ProdNode) handleIncomingMessage(ctx context.Context, msg []byte) ([]byt
 		return nil, nil
 	}
 
-	msgID := make([]byte, 16)
-	if _, err := rand.Read(msgID); err != nil {
-		return nil, fmt.Errorf("message id generation failed: %w", err)
-	}
-	msgIDStr := hex.EncodeToString(msgID)
+	hash := sha256.Sum256(msg)
+	msgIDStr := hex.EncodeToString(hash[:])
 
 	if n.Dedup.Seen(msgIDStr) {
 		observability.RecordExec("dedup_skipped")

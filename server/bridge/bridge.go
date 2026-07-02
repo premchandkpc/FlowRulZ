@@ -112,7 +112,7 @@ func goServiceCaller(ctxID C.uint64_t, svcID C.uint16_t, bodyPtr *C.uchar, bodyL
 	}
 
 	if len(resp) > 65536 {
-		resp = resp[:65536]
+		return -1
 	}
 	copy((*[1 << 30]byte)(unsafe.Pointer(respPtr))[:len(resp):len(resp)], resp)
 	*respLen = C.size_t(len(resp))

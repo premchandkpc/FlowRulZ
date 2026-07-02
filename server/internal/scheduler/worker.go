@@ -21,6 +21,7 @@ type TimerWheel struct {
 	nextID      atomic.Uint64
 	ticker      *time.Ticker
 	done        chan struct{}
+	stopOnce    sync.Once
 	entries     map[uint64]*list.Element
 }
 
@@ -55,10 +56,12 @@ func (tw *TimerWheel) Start() {
 }
 
 func (tw *TimerWheel) Stop() {
-	if tw.ticker != nil {
-		tw.ticker.Stop()
-	}
-	close(tw.done)
+	tw.stopOnce.Do(func() {
+		if tw.ticker != nil {
+			tw.ticker.Stop()
+		}
+		close(tw.done)
+	})
 }
 
 func (tw *TimerWheel) Add(d time.Duration, callback func()) *Timer {

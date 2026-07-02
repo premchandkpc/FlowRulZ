@@ -11,14 +11,10 @@
             "id": "0f4ba861ff97b1c4",
             "type": "leaf",
             "state": {
-              "type": "markdown",
-              "state": {
-                "file": "SDK.md",
-                "mode": "source",
-                "source": false
-              },
-              "icon": "lucide-file",
-              "title": "SDK"
+              "type": "graph",
+              "state": {},
+              "icon": "lucide-git-fork",
+              "title": "Graph view"
             }
           }
         ]
@@ -94,7 +90,6 @@
             "state": {
               "type": "backlink",
               "state": {
-                "file": "SDK.md",
                 "collapseAll": false,
                 "extraContext": false,
                 "sortOrder": "alphabetical",
@@ -104,7 +99,7 @@
                 "unlinkedCollapsed": true
               },
               "icon": "links-coming-in",
-              "title": "Backlinks for SDK"
+              "title": "Backlinks"
             }
           },
           {
@@ -113,12 +108,11 @@
             "state": {
               "type": "outgoing-link",
               "state": {
-                "file": "SDK.md",
                 "linksCollapsed": false,
                 "unlinkedCollapsed": true
               },
               "icon": "links-going-out",
-              "title": "Outgoing links from SDK"
+              "title": "Outgoing links"
             }
           },
           {
@@ -156,13 +150,12 @@
             "state": {
               "type": "outline",
               "state": {
-                "file": "SDK.md",
                 "followCursor": false,
                 "showSearch": false,
                 "searchQuery": ""
               },
               "icon": "lucide-list",
-              "title": "Outline of SDK"
+              "title": "Outline"
             }
           }
         ]
@@ -185,14 +178,18 @@
   },
   "active": "0f4ba861ff97b1c4",
   "lastOpenFiles": [
+    "2026-07-02.md",
+    "Untitled.canvas",
+    "Server.md",
+    "concepts/Bridge.md",
+    "Simulator.md",
+    "Architecture.canvas",
+    "SDK.md",
     "Runtime.md",
     "FlowRulZ.md",
     "Architecture.md",
-    "Architecture.canvas",
     "concepts/Raft Consensus.md",
-    "Server.md",
     "concepts/FlowRULZ DSL.md",
-    "concepts/Message Flow.md",
-    "concepts/Bridge.md"
+    "concepts/Message Flow.md"
   ]
 }

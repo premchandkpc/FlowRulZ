@@ -3,7 +3,7 @@ package simulator
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/premchandkpc/FlowRulZ/server/bridge"
@@ -74,7 +74,7 @@ func New(cfg config.SimConfig) *Simulator {
 		scenarioCfg, scenarioLg := s.Apply(svcs)
 		netCfg = scenarioCfg
 		lgCfg = scenarioLg
-		log.Printf("scenario: %s (%s)", s.Name, s.Description)
+		slog.Info("scenario", "name", s.Name, "description", s.Description)
 	} else {
 		lgCfg = loadgen.DefaultConfig()
 	}
@@ -89,13 +89,13 @@ func New(cfg config.SimConfig) *Simulator {
 		netCfg.MinLatency = time.Duration(float64(netCfg.MinLatency) / cfg.Speed)
 		netCfg.MaxLatency = time.Duration(float64(netCfg.MaxLatency) / cfg.Speed)
 		lgCfg.RequestsPerSec = int(float64(lgCfg.RequestsPerSec) * cfg.Speed)
-		log.Printf("speed: %.1fx (rate=%d, net=%v/%v)", cfg.Speed, lgCfg.RequestsPerSec, netCfg.MinLatency, netCfg.MaxLatency)
+		slog.Info("speed", "multiplier", cfg.Speed, "rate", lgCfg.RequestsPerSec, "min_latency", netCfg.MinLatency, "max_latency", netCfg.MaxLatency)
 	}
 
 	net = network.New(netCfg)
 	if cfg.Chaos.DropPackets || cfg.Chaos.SlowNetwork {
 		net.SetChaos(cfg.Chaos)
-		log.Printf("chaos mode: drop=%v slow=%.1fx", cfg.Chaos.DropPackets, cfg.Chaos.SlowFactor)
+		slog.Info("chaos mode", "drop", cfg.Chaos.DropPackets, "slow_factor", cfg.Chaos.SlowFactor)
 	}
 
 	// Compile default plans from DSL into real bytecode
@@ -114,7 +114,7 @@ func New(cfg config.SimConfig) *Simulator {
 		if dsl, ok := dslPlans[plan.ID]; ok {
 			planBytes, err := bridge.Compile(dsl, plan.ID)
 			if err != nil {
-				log.Printf("warning: compile %s: %v", plan.ID, err)
+				slog.Warn("compile warning", "plan", plan.ID, "error", err)
 				continue
 			}
 			svcNames := make(map[uint16]string)
@@ -125,7 +125,7 @@ func New(cfg config.SimConfig) *Simulator {
 				}
 			}
 			compiled = append(compiled, compiledPlan{plan.ID, planBytes, svcNames})
-			log.Printf("compiled %s (%d bytes, %d services)", plan.ID, len(planBytes), len(svcNames))
+			slog.Info("compiled", "plan", plan.ID, "bytes", len(planBytes), "services", len(svcNames))
 		}
 	}
 
@@ -176,7 +176,7 @@ func New(cfg config.SimConfig) *Simulator {
 
 	if scenario != nil && scenario.Setup != nil {
 		if err := scenario.Setup(sim.Client()); err != nil {
-			log.Printf("scenario setup error: %v", err)
+			slog.Error("scenario setup error", "error", err)
 		}
 	}
 
@@ -184,7 +184,7 @@ func New(cfg config.SimConfig) *Simulator {
 }
 
 func (s *Simulator) Run() error {
-	log.Printf("simulator: starting (%d nodes, %d workers/node)", s.cfg.Nodes, s.cfg.Workers)
+	slog.Info("simulator: starting", "nodes", s.cfg.Nodes, "workers", s.cfg.Workers)
 	s.Dispatcher.StartAll()
 
 	if s.Dashboard != nil {
@@ -224,5 +224,5 @@ func (s *Simulator) Stop() {
 	if s.Dashboard != nil {
 		s.Dashboard.Stop()
 	}
-	log.Printf("simulator: stopped")
+	slog.Info("simulator: stopped")
 }

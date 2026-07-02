@@ -108,8 +108,8 @@ func (e *Engine) Deploy(id, dsl string) error {
 	}
 	r.Versions = append(r.Versions, vp)
 	r.ActiveVersion = len(r.Versions) - 1
-	e.mu.Unlock()
 	e.saveRules()
+	e.mu.Unlock()
 
 	if e.AfterDeploy != nil {
 		e.AfterDeploy(id, dsl, result.Plan, vp.Version)

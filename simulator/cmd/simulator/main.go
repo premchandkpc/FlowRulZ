@@ -4,7 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -16,8 +16,6 @@ import (
 )
 
 func main() {
-	log.SetFlags(0)
-
 	nodes := flag.Int("nodes", 3, "number of execution nodes")
 	workers := flag.Int("workers", 4, "workers per node")
 	scenario := flag.String("scenario", "black-friday", "scenario name")
@@ -80,15 +78,16 @@ func main() {
 		if cfg.Dashboard {
 			sim.Dashboard.Start()
 		}
-		log.Printf("simulator: interactive mode on %s — API at /api/admin/{send,rules,services}", cfg.DashboardAddr)
+		slog.Info("simulator: interactive mode", "addr", cfg.DashboardAddr)
 		<-ctx.Done()
-		log.Printf("shutting down...")
+		slog.Info("shutting down...")
 		sim.Stop()
 		return
 	}
 
 	sim := simulator.New(cfg)
 	if err := sim.Run(); err != nil {
-		log.Fatalf("simulator error: %v", err)
+		slog.Error("simulator error", "error", err)
+		os.Exit(1)
 	}
 }

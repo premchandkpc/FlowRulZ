@@ -3,7 +3,7 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -50,9 +50,9 @@ func (d *Dashboard) Start() {
 
 	d.server = &http.Server{Addr: d.addr, Handler: mux}
 	go func() {
-		log.Printf("dashboard: listening on %s", d.addr)
+		slog.Info("dashboard: listening", "addr", d.addr)
 		if err := d.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("dashboard error: %v", err)
+			slog.Error("dashboard error", "error", err)
 		}
 	}()
 }

@@ -2,7 +2,7 @@ package dispatcher
 
 import (
 	"hash/fnv"
-	"log"
+	"log/slog"
 
 	"github.com/premchandkpc/FlowRulZ/simulator/execution"
 	"github.com/premchandkpc/FlowRulZ/simulator/scheduler"
@@ -46,7 +46,7 @@ func (d *Dispatcher) hashNode(key string, n int) int {
 }
 
 func (d *Dispatcher) StartAll() {
-	log.Printf("dispatcher: starting %d nodes", len(d.Nodes))
+	slog.Info("dispatcher: starting", "nodes", len(d.Nodes))
 	for _, node := range d.Nodes {
 		node.Start()
 	}

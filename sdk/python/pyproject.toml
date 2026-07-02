@@ -2,6 +2,9 @@
 requires = ["setuptools>=64"]
 build-backend = "setuptools.backends._legacy:_Backend"
 
+[tool.pytest.ini_options]
+testpaths = ["flowrulz"]
+
 [project]
 name = "flowrulz"
 version = "0.1.0"

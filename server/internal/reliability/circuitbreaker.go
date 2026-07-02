@@ -40,7 +40,10 @@ func (cb *CircuitBreaker) Allow() bool {
 	case StateClosed:
 		return true
 	case StateOpen:
-		if time.Since(cb.lastFailureTime) > cb.recoveryTimeout {
+		cb.mu.Lock()
+		lft := cb.lastFailureTime
+		cb.mu.Unlock()
+		if time.Since(lft) > cb.recoveryTimeout {
 			atomic.StoreInt32((*int32)(&cb.state), int32(StateHalfOpen))
 			atomic.StoreInt64(&cb.halfOpenReqs, 0)
 			return true

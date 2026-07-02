@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -266,8 +267,10 @@ func (rc *RaftCluster) CurrentTerm() uint64 {
 		return 0
 	}
 	stats := rc.raft.Stats()
-	var term uint64
-	fmt.Sscanf(stats["term"], "%d", &term)
+	term, err := strconv.ParseUint(stats["term"], 10, 64)
+	if err != nil {
+		return 0
+	}
 	return term
 }
 

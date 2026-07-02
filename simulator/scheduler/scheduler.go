@@ -3,7 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -108,7 +108,7 @@ func (s *Scheduler) Start() {
 		s.wg.Add(1)
 		go s.worker(i)
 	}
-	log.Printf("scheduler[%s]: started %d workers", s.ID, s.Workers)
+	slog.Info("scheduler: started workers", "id", s.ID, "workers", s.Workers)
 }
 
 func (s *Scheduler) Stop() {

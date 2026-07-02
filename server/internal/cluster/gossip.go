@@ -48,6 +48,7 @@ func NewGossiper(nodeID, grpcAddr string, node *ClusterNode) *Gossiper {
 		fanout:    2,
 		pushInterval: 2 * time.Second,
 		syncInterval: 10 * time.Second,
+		stopCh:    make(chan struct{}),
 	}
 }
 

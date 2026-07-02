@@ -3,16 +3,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
 
-// -- modes --
-
 pub const MODE_PUBLISH: u8 = 0;
 pub const MODE_REQUEST: u8 = 1;
 pub const MODE_REPLY: u8 = 2;
 pub const MODE_STREAM: u8 = 3;
 pub const MODE_WORKFLOW: u8 = 4;
 pub const MODE_INTERNAL: u8 = 5;
-
-// -- types --
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Event {
@@ -57,8 +53,6 @@ impl Default for ExecuteOpts {
     }
 }
 
-// -- client --
-
 pub struct FlowRulZClient {
     http: Client,
     cfg: Config,
@@ -72,7 +66,7 @@ impl FlowRulZClient {
         }
     }
 
-    pub async fn publish(&self, topic: &str, payload: impl Into<serde_json::Value>) {
+    pub async fn publish(&self, topic: &str, payload: impl Into<serde_json::Value>) -> Result<(), reqwest::Error> {
         let evt = Event {
             id: None,
             topic: topic.into(),
@@ -80,7 +74,7 @@ impl FlowRulZClient {
             headers: None,
             mode: MODE_PUBLISH,
         };
-        self.send_event(&evt).await;
+        self.send_event(&evt).await
     }
 
     pub async fn request(
@@ -88,7 +82,7 @@ impl FlowRulZClient {
         service: &str,
         payload: impl Into<serde_json::Value>,
         timeout: Option<Duration>,
-    ) -> Vec<u8> {
+    ) -> Result<Vec<u8>, reqwest::Error> {
         let evt = Event {
             id: None,
             topic: service.into(),
@@ -104,7 +98,7 @@ impl FlowRulZClient {
         rule_id: &str,
         payload: impl Into<serde_json::Value>,
         opts: Option<ExecuteOpts>,
-    ) -> Vec<u8> {
+    ) -> Result<Vec<u8>, reqwest::Error> {
         let opts = opts.unwrap_or_default();
         let evt = Event {
             id: None,
@@ -135,9 +129,7 @@ impl FlowRulZClient {
         Ok(())
     }
 
-    // -- internal --
-
-    async fn send_event(&self, evt: &Event) {
+    async fn send_event(&self, evt: &Event) -> Result<(), reqwest::Error> {
         let body = serde_json::to_vec(evt).unwrap();
         let mut req = self
             .http
@@ -148,10 +140,11 @@ impl FlowRulZClient {
         if let Some(ref key) = self.cfg.api_key {
             req = req.header("Authorization", format!("Bearer {}", key));
         }
-        req.send().await.ok();
+        req.send().await?;
+        Ok(())
     }
 
-    async fn round_trip(&self, evt: &Event, timeout: Option<Duration>) -> Vec<u8> {
+    async fn round_trip(&self, evt: &Event, timeout: Option<Duration>) -> Result<Vec<u8>, reqwest::Error> {
         let body = serde_json::to_vec(evt).unwrap();
         let mut req = self
             .http
@@ -165,10 +158,9 @@ impl FlowRulZClient {
         if let Some(t) = timeout.or(self.cfg.timeout) {
             req = req.timeout(t);
         }
-        match req.send().await {
-            Ok(r) => r.bytes().await.unwrap_or_default().to_vec(),
-            Err(_) => vec![],
-        }
+        let resp = req.send().await?;
+        let bytes = resp.bytes().await?;
+        Ok(bytes.to_vec())
     }
 }
 

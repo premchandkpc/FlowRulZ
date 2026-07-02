@@ -1,18 +1,22 @@
 package reliability
 
 import (
+	"container/list"
 	"context"
 	"sync"
 	"time"
 )
 
-type DedupEntry struct {
+type dedupEntry struct {
+	key       string
 	timestamp time.Time
+	elem      *list.Element
 }
 
 type DedupTracker struct {
 	mu      sync.RWMutex
-	entries map[string]DedupEntry
+	entries map[string]dedupEntry
+	order   *list.List
 	maxSize int
 	ttl     time.Duration
 }
@@ -25,7 +29,8 @@ func NewDedupTracker(maxSize int, ttl time.Duration) *DedupTracker {
 		ttl = 5 * time.Minute
 	}
 	return &DedupTracker{
-		entries: make(map[string]DedupEntry),
+		entries: make(map[string]dedupEntry),
+		order:   list.New(),
 		maxSize: maxSize,
 		ttl:     ttl,
 	}
@@ -41,18 +46,21 @@ func (dt *DedupTracker) Seen(key string) bool {
 func (dt *DedupTracker) Mark(key string) {
 	dt.mu.Lock()
 	defer dt.mu.Unlock()
-	if len(dt.entries) >= dt.maxSize {
-		var oldestKey string
-		var oldestTime time.Time
-		for k, v := range dt.entries {
-			if oldestTime.IsZero() || v.timestamp.Before(oldestTime) {
-				oldestKey = k
-				oldestTime = v.timestamp
-			}
-		}
-		delete(dt.entries, oldestKey)
+	if existing, ok := dt.entries[key]; ok {
+		existing.timestamp = time.Now()
+		dt.order.MoveToFront(existing.elem)
+		dt.entries[key] = existing
+		return
 	}
-	dt.entries[key] = DedupEntry{timestamp: time.Now()}
+	if len(dt.entries) >= dt.maxSize {
+		oldest := dt.order.Back()
+		if oldest != nil {
+			oldestKey := dt.order.Remove(oldest).(string)
+			delete(dt.entries, oldestKey)
+		}
+	}
+	elem := dt.order.PushFront(key)
+	dt.entries[key] = dedupEntry{key: key, timestamp: time.Now(), elem: elem}
 }
 
 func (dt *DedupTracker) StartCleanup(ctx context.Context, interval time.Duration) {
@@ -68,6 +76,7 @@ func (dt *DedupTracker) StartCleanup(ctx context.Context, interval time.Duration
 				now := time.Now()
 				for k, v := range dt.entries {
 					if now.Sub(v.timestamp) > dt.ttl {
+						dt.order.Remove(v.elem)
 						delete(dt.entries, k)
 					}
 				}
@@ -86,5 +95,6 @@ func (dt *DedupTracker) Len() int {
 func (dt *DedupTracker) Clear() {
 	dt.mu.Lock()
 	defer dt.mu.Unlock()
-	dt.entries = make(map[string]DedupEntry)
+	dt.entries = make(map[string]dedupEntry)
+	dt.order.Init()
 }

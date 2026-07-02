@@ -91,7 +91,6 @@ type ProdNode struct {
 	httpClient      *http.Client
 	circuitBreakers sync.Map
 	mu              sync.Mutex
-	shutdownCh      chan struct{}
 }
 
 func NewNode(cfg Config, deps Dependencies) *ProdNode {
@@ -100,7 +99,6 @@ func NewNode(cfg Config, deps Dependencies) *ProdNode {
 		httpAddr:     cfg.HTTPListenAddr(),
 		config:       cfg,
 		httpClient:   &http.Client{Timeout: 10 * time.Second},
-		shutdownCh:   make(chan struct{}),
 		consumers:    make([]transport.MessageConsumer, 0),
 		producers:    make([]transport.MessageProducer, 0),
 
@@ -263,7 +261,6 @@ func (n *ProdNode) Shutdown(ctx context.Context) error {
 		n.StateStore.Close()
 	}
 
-	close(n.shutdownCh)
 	slog.Info("shutdown: complete", "node_id", n.nodeID)
 	return nil
 }

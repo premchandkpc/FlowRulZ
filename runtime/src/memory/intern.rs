@@ -21,7 +21,10 @@ impl InternTable {
     }
 
     pub fn prefill(&self, strings: &[&str]) {
-        let mut fwd = self.fwd.write().unwrap();
+        let mut fwd = match self.fwd.write() {
+            Ok(f) => f,
+            Err(_) => return,
+        };
         for &s in strings {
             let id = self.next.fetch_add(1, Ordering::Relaxed);
             fwd.insert(s.to_string(), id);
@@ -31,12 +34,18 @@ impl InternTable {
 
     pub fn intern(&self, s: &str) -> u16 {
         {
-            let fwd = self.fwd.read().unwrap();
+            let fwd = match self.fwd.read() {
+                Ok(f) => f,
+                Err(_) => return 0,
+            };
             if let Some(&id) = fwd.get(s) {
                 return id;
             }
         }
-        let mut fwd = self.fwd.write().unwrap();
+        let mut fwd = match self.fwd.write() {
+            Ok(f) => f,
+            Err(_) => return 0,
+        };
         if let Some(&id) = fwd.get(s) {
             return id;
         }

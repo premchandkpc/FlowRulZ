@@ -80,7 +80,10 @@ func (e *Engine) saveRules() {
 	}
 	tmpPath := e.persistPath + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+		slog.Error("saveRules: write tmp failed", "error", err)
 		return
 	}
-	_ = os.Rename(tmpPath, e.persistPath)
+	if err := os.Rename(tmpPath, e.persistPath); err != nil {
+		slog.Error("saveRules: rename failed", "error", err)
+	}
 }

@@ -19,6 +19,12 @@ mod tests;
 
 pub struct Compiler;
 
+impl Default for Compiler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Compiler {
     pub fn new() -> Self {
         Compiler
@@ -110,7 +116,7 @@ impl Compiler {
                 ASTNode::Gate { field, op, value } => {
                     let field_id = plan.const_pool.add(field);
                     let value_id = plan.const_pool.add(value);
-                    let gate_op = GateOp::from_str(op).unwrap_or(GateOp::Eq);
+                    let gate_op = GateOp::parse(op).unwrap_or(GateOp::Eq);
                     instructions.push(Instruction::gate(field_id, gate_op as u8, value_id));
                     instructions.push(Instruction::jump_offset(0));
                 }
@@ -193,16 +199,15 @@ impl Compiler {
         }
 
         if let Some(retry_cfg) = pending_retry {
-            for instr in instructions.iter_mut().rev() {
+            if let Some(instr) = instructions.iter_mut().next_back() {
                 match instr.op {
                     OpCode::Next | OpCode::Async => {
                         instr.flags |= 0x01;
                         let cfg_id = plan.retry_configs.len() as u16;
                         plan.retry_configs.push(retry_cfg);
                         instr.c = cfg_id;
-                        break;
                     }
-                    _ => break,
+                    _ => {}
                 }
             }
         }

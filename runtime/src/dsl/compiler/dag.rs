@@ -45,12 +45,12 @@ impl Compiler {
                         .collect()
                 };
                 for dep in &node_deps {
-                    deps.entry(dep.clone()).or_insert_with(Vec::new);
+                    deps.entry(dep.clone()).or_default();
                 }
                 deps.insert(node, node_deps);
             } else {
                 let node = seg.to_string();
-                deps.entry(node).or_insert_with(Vec::new);
+                deps.entry(node).or_default();
             }
         }
 
@@ -175,12 +175,12 @@ impl Compiler {
 
         for (node, node_deps) in deps {
             in_degree.entry(node.clone()).or_insert(0);
-            adj.entry(node.clone()).or_insert_with(Vec::new);
+            adj.entry(node.clone()).or_default();
 
             for dep in node_deps {
                 in_degree.entry(dep.clone()).or_insert(0);
                 adj.entry(dep.clone())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(node.clone());
             }
         }

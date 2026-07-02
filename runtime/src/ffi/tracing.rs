@@ -1,8 +1,12 @@
+/// # Safety
+/// Returns the size of the Span struct in bytes.
 #[no_mangle]
 pub unsafe extern "C" fn flowrulz_span_size() -> usize {
     std::mem::size_of::<crate::tracing::Span>()
 }
 
+/// # Safety
+/// `out_ptr` must point to a valid buffer of at least `out_cap` bytes.
 #[no_mangle]
 pub unsafe extern "C" fn flowrulz_get_spans(out_ptr: *mut u8, out_cap: usize) -> usize {
     if out_ptr.is_null() || out_cap == 0 {

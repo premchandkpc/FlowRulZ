@@ -182,6 +182,10 @@ mod tests {
     }
 }
 
+/// # Safety
+/// All pointers must be valid and properly aligned. `plan_ptr` must point to a valid plan
+/// of length `plan_len`. `body_ptr` must point to valid data of length `body_len`.
+/// Output buffers must have sufficient capacity.
 #[no_mangle]
 pub unsafe extern "C" fn flowrulz_execute(
     ctx_id: u64,
@@ -212,7 +216,10 @@ pub unsafe extern "C" fn flowrulz_execute(
 
     let plan_key = hash_bytes(plan_slice);
     let plan: Arc<ExecutionPlan> = {
-        let mut cache = PLAN_CACHE.lock().unwrap();
+        let mut cache = match PLAN_CACHE.lock() {
+            Ok(c) => c,
+            Err(_) => return FfiError::Exec.code(),
+        };
         if let Some(cached) = cache.get(&plan_key) {
             Arc::clone(cached)
         } else {
@@ -228,10 +235,7 @@ pub unsafe extern "C" fn flowrulz_execute(
                         return FfiError::VersionMismatch.code();
                     }
                     let arc = Arc::new(p);
-                    if cache.len() >= 64 {
-                        cache.clear();
-                    }
-                    cache.insert(plan_key, Arc::clone(&arc));
+                    cache.put(plan_key, Arc::clone(&arc));
                     arc
                 }
                 Err(e) => {
@@ -296,7 +300,7 @@ pub unsafe extern "C" fn flowrulz_execute(
     ctx.event.metadata.partition = partition;
     ctx.event.metadata.offset = offset;
 
-    let mut vm = VM::new(&plan, ctx, arena, &caller_wrapper);
+    let mut vm = VM::new(&plan, ctx, arena, caller_wrapper);
 
     match vm.run() {
         Ok(()) => {
@@ -326,6 +330,9 @@ pub unsafe extern "C" fn flowrulz_execute(
     }
 }
 
+/// # Safety
+/// All pointers must be valid and properly aligned. `plan_ptr` must point to a valid plan
+/// of length `plan_len`. Output buffers must have sufficient capacity.
 #[no_mangle]
 pub unsafe extern "C" fn flowrulz_execute_step(
     ctx_id: u64,
@@ -359,7 +366,10 @@ pub unsafe extern "C" fn flowrulz_execute_step(
     };
     let plan_key = hash_bytes(plan_slice);
     let plan: Arc<ExecutionPlan> = {
-        let mut cache = PLAN_CACHE.lock().unwrap();
+        let mut cache = match PLAN_CACHE.lock() {
+            Ok(c) => c,
+            Err(_) => return FfiError::Exec.code(),
+        };
         if let Some(cached) = cache.get(&plan_key) {
             Arc::clone(cached)
         } else {
@@ -371,10 +381,7 @@ pub unsafe extern "C" fn flowrulz_execute_step(
                 return FfiError::VersionMismatch.code();
             }
             let arc = Arc::new(p);
-            if cache.len() >= 64 {
-                cache.clear();
-            }
-            cache.insert(plan_key, Arc::clone(&arc));
+            cache.put(plan_key, Arc::clone(&arc));
             arc
         }
     };
@@ -416,7 +423,7 @@ pub unsafe extern "C" fn flowrulz_execute_step(
             })
         };
 
-    let mut vm = VM::new(&plan, ctx, arena, &caller_wrapper);
+    let mut vm = VM::new(&plan, ctx, arena, caller_wrapper);
     let response = if !resp_ptr.is_null() {
         Some(read_slice(resp_ptr, resp_len).unwrap_or(&[]))
     } else {
@@ -522,6 +529,8 @@ pub unsafe extern "C" fn flowrulz_execute_step(
     }
 }
 
+/// # Safety
+/// `body_ptr` must point to valid data of length `body_len`. Output buffers must have sufficient capacity.
 #[no_mangle]
 pub unsafe extern "C" fn flowrulz_init_context(
     body_ptr: *const u8,

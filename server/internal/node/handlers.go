@@ -2,8 +2,11 @@ package node
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	pkgcluster "github.com/premchandkpc/FlowRulZ/server/pkg/cluster"
@@ -11,7 +14,7 @@ import (
 )
 
 func (n *ProdNode) registerHandlers(mux *http.ServeMux) {
-	mux.HandleFunc("/cluster/join", n.handleClusterJoin)
+	mux.HandleFunc("/cluster/join", n.requireClusterAuth(n.handleClusterJoin))
 	mux.HandleFunc("/health", n.handleHealth)
 	mux.HandleFunc("/readyz", n.handleReadyz)
 	mux.HandleFunc("/metrics", n.handleMetrics)
@@ -21,11 +24,28 @@ func (n *ProdNode) registerHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("POST /partitions/rebalance", n.handleRebalance)
 }
 
+func (n *ProdNode) requireClusterAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		apiKey := os.Getenv("FLOWRULZ_API_KEY")
+		if apiKey == "" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		key := r.Header.Get("Authorization")
+		if subtle.ConstantTimeCompare([]byte(key), []byte("Bearer "+apiKey)) != 1 {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
+}
+
 func (n *ProdNode) handleClusterJoin(w http.ResponseWriter, r *http.Request) {
 	if n.RaftCluster == nil {
 		http.Error(w, "raft not configured", http.StatusBadRequest)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		NodeID   string `json:"node_id"`
 		RaftAddr string `json:"raft_addr"`
@@ -35,7 +55,8 @@ func (n *ProdNode) handleClusterJoin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := n.RaftCluster.Join(pkgcluster.MemberID(req.NodeID), req.RaftAddr); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		slog.Error("cluster join failed", "node_id", req.NodeID, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]string{"status": "joined"})
@@ -103,7 +124,8 @@ func (n *ProdNode) handleRebalance(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	if err := n.Partitions.PublishAssignments(ctx, assignments); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		slog.Error("rebalance failed", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{

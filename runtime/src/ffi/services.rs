@@ -149,6 +149,9 @@ mod tests {
     }
 }
 
+/// # Safety
+/// `plan_ptr` must point to a valid plan of length `plan_len`.
+/// Output buffers must have sufficient capacity.
 #[no_mangle]
 pub unsafe extern "C" fn flowrulz_plan_services(
     plan_ptr: *const u8,
@@ -181,6 +184,8 @@ pub unsafe extern "C" fn flowrulz_plan_services(
     0
 }
 
+/// # Safety
+/// `plan_ptr` must point to a valid plan of length `plan_len`.
 #[no_mangle]
 pub unsafe extern "C" fn flowrulz_plan_complexity(plan_ptr: *const u8, plan_len: usize) -> u32 {
     let plan_slice = match read_slice(plan_ptr, plan_len) {

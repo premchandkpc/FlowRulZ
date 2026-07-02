@@ -1,6 +1,8 @@
-use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
+
+use lru::LruCache;
 
 use crate::bytecode::plan::ExecutionPlan;
 use crate::memory::intern::InternTable;
@@ -27,8 +29,8 @@ pub(crate) static INTERN_TABLE: once_cell::sync::Lazy<InternTable> =
         table
     });
 
-pub(crate) static PLAN_CACHE: once_cell::sync::Lazy<Mutex<HashMap<u64, Arc<ExecutionPlan>>>> =
-    once_cell::sync::Lazy::new(|| Mutex::new(HashMap::new()));
+pub(crate) static PLAN_CACHE: once_cell::sync::Lazy<Mutex<LruCache<u64, Arc<ExecutionPlan>>>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(LruCache::new(NonZeroUsize::new(64).unwrap())));
 
 thread_local! {
     static RESP_BUF: std::cell::RefCell<Vec<u8>> =
@@ -195,7 +197,7 @@ mod tests {
         let mut cache = PLAN_CACHE.lock().unwrap();
         let plan = Arc::new(ExecutionPlan::new("cached_rule"));
         let key = 42u64;
-        cache.insert(key, Arc::clone(&plan));
+        cache.put(key, Arc::clone(&plan));
         let retrieved = cache.get(&key).cloned();
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().rule_id, "cached_rule");
@@ -205,12 +207,10 @@ mod tests {
     #[test]
     fn test_plan_cache_eviction() {
         let mut cache = PLAN_CACHE.lock().unwrap();
-        // Insert 65 entries to trigger eviction (clears when >= 64)
-        for i in 0..65u64 {
-            cache.insert(i, Arc::new(ExecutionPlan::new(&format!("rule_{}", i))));
+        for i in 0..100u64 {
+            cache.put(i, Arc::new(ExecutionPlan::new(&format!("rule_{}", i))));
         }
-        // Cache should have been cleared at some point
-        assert!(cache.len() <= 65);
+        assert!(cache.len() <= 64);
         cache.clear();
     }
 

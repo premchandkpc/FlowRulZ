@@ -69,8 +69,7 @@ fn parse_args(input: &str) -> Result<Vec<Expr>, String> {
     let bytes = input.as_bytes();
     let len = input.len();
 
-    for i in 0..len {
-        let c = bytes[i];
+    for (i, &c) in bytes.iter().enumerate().take(len) {
         if in_quote {
             if c == quote_char {
                 in_quote = false;
@@ -214,17 +213,17 @@ fn set_field(
         return Err("root is not an object".to_string());
     }
     let mut current = body;
-    for i in 0..parts.len() - 1 {
+    for part in parts.iter().take(parts.len() - 1) {
         match current {
             Value::Object(ref mut map) => {
                 current = map
-                    .entry(parts[i].to_string())
+                    .entry(part.to_string())
                     .or_insert(Value::Object(serde_json::Map::new()));
             }
             _ => {
                 return Err(format!(
                     "cannot set field in non-object at {}",
-                    parts[i]
+                    part
                 ))
             }
         }

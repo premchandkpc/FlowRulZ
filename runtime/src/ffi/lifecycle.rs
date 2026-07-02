@@ -51,6 +51,9 @@ mod tests {
     }
 }
 
+/// # Safety
+/// `name_ptr` must point to a valid UTF-8 string of length `name_len`.
+/// `wasm_ptr` must point to valid data of length `wasm_len`.
 #[no_mangle]
 pub unsafe extern "C" fn flowrulz_register_plugin(
     name_ptr: *const u8,

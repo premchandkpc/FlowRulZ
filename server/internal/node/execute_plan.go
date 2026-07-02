@@ -3,9 +3,8 @@ package node
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log/slog"
 	"net/http"
@@ -17,6 +16,12 @@ import (
 	"github.com/premchandkpc/FlowRulZ/server/internal/observability"
 	"github.com/premchandkpc/FlowRulZ/server/internal/reliability"
 	"github.com/premchandkpc/FlowRulZ/server/internal/scheduler"
+)
+
+const (
+	maxExecutionSteps   = 1000
+	executeAllSemaphore = 16
+	defaultExecTimeout  = 30 * time.Second
 )
 
 func (n *ProdNode) executePlan(ctx context.Context, plan []byte, body []byte) ([]byte, error) {
@@ -67,7 +72,7 @@ func (n *ProdNode) executePlan(ctx context.Context, plan []byte, body []byte) ([
 func (n *ProdNode) runSteps(ctx context.Context, execID string, plan []byte, names map[uint16]string, startCtx, startResp []byte, st *execstate.State) ([]byte, error) {
 	ctxBytes, respBytes := startCtx, startResp
 
-	for step := 0; step < 1000; step++ {
+	for step := 0; step < maxExecutionSteps; step++ {
 		select {
 		case <-ctx.Done():
 			n.tryCompensate(execID)
@@ -98,7 +103,7 @@ func (n *ProdNode) runSteps(ctx context.Context, execID string, plan []byte, nam
 				st.PendingSvc = out.PendingSvc
 				st.PendingBody = out.PendingBody
 				st.CtxBytes = ctxBytes
-				n.StateStore.Save(context.Background(), st)
+				n.StateStore.Save(ctx, st)
 			}
 
 			rawName, ok := names[out.PendingSvc]
@@ -128,7 +133,7 @@ func (n *ProdNode) runSteps(ctx context.Context, execID string, plan []byte, nam
 				st.PendingSvc = 0
 				st.PendingBody = nil
 				st.CtxBytes = ctxBytes
-				n.StateStore.Save(context.Background(), st)
+				n.StateStore.Save(ctx, st)
 			}
 			respBytes = resp
 
@@ -137,7 +142,7 @@ func (n *ProdNode) runSteps(ctx context.Context, execID string, plan []byte, nam
 			if n.StateStore != nil {
 				st.Status = execstate.StatusRunning
 				st.CtxBytes = ctxBytes
-				n.StateStore.Save(context.Background(), st)
+				n.StateStore.Save(ctx, st)
 			}
 		}
 	}
@@ -169,7 +174,7 @@ func (n *ProdNode) executeAll(ctx context.Context, body []byte) ([][]byte, error
 	results := make([][]byte, len(plans))
 	ch := make(chan planResult, len(plans))
 
-	sem := make(chan struct{}, 16)
+	sem := make(chan struct{}, executeAllSemaphore)
 
 	for i, plan := range plans {
 		idx, p := i, plan
@@ -215,8 +220,9 @@ func (n *ProdNode) handleIncomingMessage(ctx context.Context, msg []byte) ([]byt
 		return nil, nil
 	}
 
-	hash := sha256.Sum256(msg)
-	msgIDStr := hex.EncodeToString(hash[:])
+	h := fnv.New128a()
+	h.Write(msg)
+	msgIDStr := fmt.Sprintf("%x", h.Sum(nil))
 
 	if n.Dedup.Seen(msgIDStr) {
 		observability.RecordExec("dedup_skipped")
@@ -224,7 +230,7 @@ func (n *ProdNode) handleIncomingMessage(ctx context.Context, msg []byte) ([]byt
 	}
 	n.Dedup.Mark(msgIDStr)
 
-	execCtx, execCancel := context.WithTimeout(ctx, 30*time.Second)
+	execCtx, execCancel := context.WithTimeout(ctx, defaultExecTimeout)
 	defer execCancel()
 
 	results, err := n.executeAll(execCtx, msg)

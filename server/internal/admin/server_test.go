@@ -5,15 +5,26 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/premchandkpc/FlowRulZ/server/internal/engine"
 )
 
+func newTestServer(eng *engine.Engine) *Server {
+	os.Setenv("FLOWRULZ_API_KEY", "test-key")
+	s := NewWithCompiler(eng, nil)
+	return s
+}
+
+func authReq(req *http.Request) {
+	req.Header.Set("Authorization", "Bearer test-key")
+}
+
 func TestHealth(t *testing.T) {
 	eng := engine.New("")
-	srv := New(eng)
+	srv := newTestServer(eng)
 
 	req := httptest.NewRequest("GET", "/health", nil)
 	w := httptest.NewRecorder()
@@ -32,11 +43,12 @@ func TestHealth(t *testing.T) {
 
 func TestDeployAndListRules(t *testing.T) {
 	eng := engine.New("")
-	srv := New(eng)
+	srv := newTestServer(eng)
 
 	body := `{"id":"test-1","dsl":"n:validate"}`
 	req := httptest.NewRequest("POST", "/rules", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	authReq(req)
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
 
@@ -45,6 +57,7 @@ func TestDeployAndListRules(t *testing.T) {
 	}
 
 	req = httptest.NewRequest("GET", "/rules", nil)
+	authReq(req)
 	w = httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
 
@@ -64,15 +77,17 @@ func TestDeployAndListRules(t *testing.T) {
 
 func TestRemoveRule(t *testing.T) {
 	eng := engine.New("")
-	srv := New(eng)
+	srv := newTestServer(eng)
 
 	body := `{"id":"test-1","dsl":"n:validate"}`
 	req := httptest.NewRequest("POST", "/rules", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	authReq(req)
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
 
 	req = httptest.NewRequest("DELETE", "/rules/test-1", nil)
+	authReq(req)
 	w = httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
 
@@ -83,11 +98,12 @@ func TestRemoveRule(t *testing.T) {
 
 func TestDeployInvalidDSL(t *testing.T) {
 	eng := engine.New("")
-	srv := New(eng)
+	srv := newTestServer(eng)
 
 	body := `{"id":"bad","dsl":"!!!invalid"}`
 	req := httptest.NewRequest("POST", "/rules", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	authReq(req)
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
 
@@ -98,15 +114,17 @@ func TestDeployInvalidDSL(t *testing.T) {
 
 func TestGetRule(t *testing.T) {
 	eng := engine.New("")
-	srv := New(eng)
+	srv := newTestServer(eng)
 
 	body := `{"id":"test-1","dsl":"n:validate"}`
 	req := httptest.NewRequest("POST", "/rules", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	authReq(req)
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
 
 	req = httptest.NewRequest("GET", "/rules/test-1", nil)
+	authReq(req)
 	w = httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
 
@@ -123,7 +141,7 @@ func TestGetRule(t *testing.T) {
 
 func TestPromoteVersion(t *testing.T) {
 	eng := engine.New("")
-	srv := New(eng)
+	srv := newTestServer(eng)
 
 	srv.engine.Deploy("test-1", "n:validate")
 	rules := eng.Rules()
@@ -132,6 +150,7 @@ func TestPromoteVersion(t *testing.T) {
 	srv.engine.Deploy("test-1", "n:validate")
 
 	req := httptest.NewRequest("POST", "/rules/test-1/promote?version="+fmt.Sprintf("%d", v1), nil)
+	authReq(req)
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
 
@@ -147,12 +166,13 @@ func TestPromoteVersion(t *testing.T) {
 
 func TestListVersions(t *testing.T) {
 	eng := engine.New("")
-	srv := New(eng)
+	srv := newTestServer(eng)
 
 	srv.engine.Deploy("test-1", "n:validate")
 	srv.engine.Deploy("test-1", "n:validate")
 
 	req := httptest.NewRequest("GET", "/rules/test-1/versions", nil)
+	authReq(req)
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
 

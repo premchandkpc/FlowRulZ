@@ -8,6 +8,7 @@ struct ParallelSvc {
     svc_id: u16,
 }
 
+#[allow(clippy::type_complexity)]
 pub fn exec_parallel<'a>(
     body: &[u8],
     instr: &Instruction,

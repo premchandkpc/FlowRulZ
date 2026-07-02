@@ -75,14 +75,14 @@ func (b *GRPCBus) Start() error {
 	return nil
 }
 
-func (b *GRPCBus) Publish(_ context.Context, req *PublishRequest) (*PublishResponse, error) {
+func (b *GRPCBus) Publish(ctx context.Context, req *PublishRequest) (*PublishResponse, error) {
 	b.mu.RLock()
 	subs, ok := b.subscribers[req.Topic]
 	handler := b.handlers[req.Topic]
 	b.mu.RUnlock()
 
 	if handler != nil {
-		handler(context.Background(), req.Msg)
+		handler(ctx, req.Msg)
 	}
 
 	if !ok {
@@ -98,14 +98,14 @@ func (b *GRPCBus) Publish(_ context.Context, req *PublishRequest) (*PublishRespo
 	return &PublishResponse{}, nil
 }
 
-func (b *GRPCBus) deliverToTopic(topic string, msg *BusMessage) {
+func (b *GRPCBus) deliverToTopic(ctx context.Context, topic string, msg *BusMessage) {
 	b.mu.RLock()
 	subs, ok := b.subscribers[topic]
 	handler := b.handlers[topic]
 	b.mu.RUnlock()
 
 	if handler != nil {
-		handler(context.Background(), msg)
+		handler(ctx, msg)
 	}
 	if ok {
 		for _, ch := range subs {
@@ -117,7 +117,7 @@ func (b *GRPCBus) deliverToTopic(topic string, msg *BusMessage) {
 	}
 }
 
-func (b *GRPCBus) Request(_ context.Context, req *RequestRequest) (*RequestResponse, error) {
+func (b *GRPCBus) Request(ctx context.Context, req *RequestRequest) (*RequestResponse, error) {
 	replyCh := make(chan *BusMessage, 1)
 	replyTopic := fmt.Sprintf("__reply_%s", req.Msg.CorrelationId)
 	subID := fmt.Sprintf("req-%s-%d", req.Msg.CorrelationId, time.Now().UnixNano())
@@ -161,18 +161,18 @@ func (b *GRPCBus) Request(_ context.Context, req *RequestRequest) (*RequestRespo
 }
 
 func (b *GRPCBus) Reply(ctx context.Context, req *ReplyRequest) (*ReplyResponse, error) {
-	b.deliverToTopic(fmt.Sprintf("__reply_%s", req.CorrelationId), req.Msg)
+	b.deliverToTopic(ctx, fmt.Sprintf("__reply_%s", req.CorrelationId), req.Msg)
 	return &ReplyResponse{}, nil
 }
 
-func (b *GRPCBus) Broadcast(_ context.Context, req *BroadcastRequest) (*BroadcastResponse, error) {
+func (b *GRPCBus) Broadcast(ctx context.Context, req *BroadcastRequest) (*BroadcastResponse, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
 	for topic, subs := range b.subscribers {
 		if topic == req.Topic {
 			if h, ok := b.handlers[topic]; ok {
-				h(context.Background(), req.Msg)
+				h(ctx, req.Msg)
 			}
 			for _, ch := range subs {
 				select {

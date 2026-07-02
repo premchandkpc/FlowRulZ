@@ -96,20 +96,19 @@ fn classify(word: &str) -> Result<Token, LexError> {
     if word.starts_with("chunk:") {
         return parse_chunk(word);
     }
-    if word.starts_with("dag:") {
-        let body = word[4..].to_string();
+    if let Some(body) = word.strip_prefix("dag:") {
+        let body = body.to_string();
         if body.is_empty() {
             return Err(LexError::InvalidDag(word.to_string()));
         }
         return Ok(Token::Dag(body));
     }
-    if word.starts_with("delay:") {
-        let rest = &word[6..];
+    if let Some(rest) = word.strip_prefix("delay:") {
         let ms: u64 = rest.parse().map_err(|_| LexError::InvalidDelay(word.to_string()))?;
         return Ok(Token::Delay(ms));
     }
-    if word.starts_with("schema:") {
-        let body = word[7..].to_string();
+    if let Some(body) = word.strip_prefix("schema:") {
+        let body = body.to_string();
         if body.is_empty() {
             return Err(LexError::InvalidSchema(word.to_string()));
         }

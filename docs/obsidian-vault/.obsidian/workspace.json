@@ -4,11 +4,11 @@
     "type": "split",
     "children": [
       {
-        "id": "c9db9b02acc31dfa",
+        "id": "6b88d4b0d2da8ac1",
         "type": "tabs",
         "children": [
           {
-            "id": "590cc09268958f1f",
+            "id": "1e10bc241da7afa3",
             "type": "leaf",
             "state": {
               "type": "empty",
@@ -176,7 +176,7 @@
       "bases:Create new base": false
     }
   },
-  "active": "590cc09268958f1f",
+  "active": "1e10bc241da7afa3",
   "lastOpenFiles": [
     "Architecture.md",
     "2026-07-02.md",

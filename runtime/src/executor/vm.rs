@@ -12,6 +12,7 @@ use super::{
 pub struct VM<'a> {
     pub plan: &'a ExecutionPlan,
     pub arena: crate::memory::arena::Arena,
+    #[allow(clippy::type_complexity)]
     pub caller: Arc<dyn Fn(u16, &[u8], u64) -> Result<Vec<u8>, String> + Send + Sync + 'a>,
     pub ctx: ExecutionContext,
 }
@@ -122,6 +123,7 @@ impl<'a> VM<'a> {
         result
     }
 
+    #[allow(clippy::type_complexity)]
     fn op_next(
         &mut self,
         instr: &Instruction,
@@ -142,6 +144,7 @@ impl<'a> VM<'a> {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     fn op_parallel(
         &mut self,
         instr: &Instruction,
@@ -165,6 +168,7 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
+    #[allow(clippy::type_complexity)]
     fn op_fallback(
         &mut self,
         instr: &Instruction,
@@ -194,6 +198,7 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
+    #[allow(clippy::type_complexity)]
     fn op_emit(
         &mut self,
         instr: &Instruction,
@@ -213,6 +218,7 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
+    #[allow(clippy::type_complexity)]
     fn op_dag(
         &mut self,
         instr: &Instruction,
@@ -260,6 +266,7 @@ impl<'a> VM<'a> {
             .map_err(|e| format!("TypeGuard: {}", e))
     }
 
+    #[allow(clippy::type_complexity)]
     fn op_svc_call(
         &mut self,
         instr: &Instruction,

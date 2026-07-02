@@ -88,9 +88,7 @@ impl Optimizer {
             if dead {
                 match node {
                     ASTNode::Label(_) | ASTNode::Jmp(_) => {
-                        for lbl in pending_labels.drain(..) {
-                            result.push(lbl);
-                        }
+                        result.append(&mut pending_labels);
                         result.push(node.clone());
                         dead = false;
                     }
@@ -108,7 +106,7 @@ impl Optimizer {
                     pending_labels.push(node.clone());
                 }
                 _ => {
-                    result.extend(pending_labels.drain(..));
+                    result.append(&mut pending_labels);
                     result.push(node.clone());
                 }
             }

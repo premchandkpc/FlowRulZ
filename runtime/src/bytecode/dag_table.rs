@@ -6,31 +6,21 @@ pub struct DAGNode {
     pub parent_ids: Vec<u16>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum DAGFailurePolicy {
+    #[default]
     AbortAll,
     ContinueOthers,
     SkipDependents,
 }
 
-impl Default for DAGFailurePolicy {
-    fn default() -> Self {
-        DAGFailurePolicy::AbortAll
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum MergeStrategy {
+    #[default]
     LastWins,
     ArrayConcat,
     DeepMerge,
     ExplicitMap,
-}
-
-impl Default for MergeStrategy {
-    fn default() -> Self {
-        MergeStrategy::LastWins
-    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

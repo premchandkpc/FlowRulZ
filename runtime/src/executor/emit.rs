@@ -1,6 +1,7 @@
 use crate::bytecode::instruction::Instruction;
 use crate::bytecode::plan::ExecutionPlan;
 
+#[allow(clippy::type_complexity)]
 pub fn exec_emit(
     body: &[u8],
     instr: &Instruction,
@@ -13,7 +14,7 @@ pub fn exec_emit(
     for offset in 0..count as usize {
         let svc_idx = first_svc + offset;
         caller(
-            plan.services.entries()[svc_idx as usize].id,
+            plan.services.entries()[svc_idx].id,
             body,
             0,
         )?;

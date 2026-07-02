@@ -149,6 +149,10 @@ mod tests {
     }
 }
 
+/// # Safety
+/// Caller must ensure that `dsl_ptr` points to a valid UTF-8 string of length `dsl_len`,
+/// and that `rule_id_ptr` points to a valid UTF-8 string of length `rule_id_len` (or both are null).
+/// Output buffers must be valid with sufficient capacity.
 #[no_mangle]
 pub unsafe extern "C" fn flowrulz_compile(
     dsl_ptr: *const u8,
@@ -167,10 +171,7 @@ pub unsafe extern "C" fn flowrulz_compile(
         None => return FfiError::NullPointer.code(),
     };
 
-    let rule_id = match read_str(rule_id_ptr, rule_id_len) {
-        Some(s) => s,
-        None => "default",
-    };
+    let rule_id = read_str(rule_id_ptr, rule_id_len).unwrap_or("default");
 
     let tokens = match lexer::lex(dsl_str) {
         Ok(t) => t,

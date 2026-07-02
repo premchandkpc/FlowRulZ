@@ -14,6 +14,11 @@ const (
 	DefaultTopic     = "flowrulz-input"
 	DefaultNodeID    = "node-1"
 	DefaultGroupID   = "flowrulz"
+
+	defaultReplyRouterMaxPending = 10000
+	defaultDedupCapacity         = 10000
+	defaultDLQMaxEntries         = 10000
+	defaultNumPartitions         = 64
 )
 
 type Config struct {
@@ -95,11 +100,11 @@ func (c *Config) ReplyRouterCleanupInterval() time.Duration {
 }
 
 func (c *Config) ReplyRouterMaxPending() int {
-	return 10000
+	return defaultReplyRouterMaxPending
 }
 
 func (c *Config) DedupCapacity() int {
-	return 10000
+	return defaultDedupCapacity
 }
 
 func (c *Config) DedupTTL() time.Duration {
@@ -107,7 +112,7 @@ func (c *Config) DedupTTL() time.Duration {
 }
 
 func (c *Config) DLQMaxEntries() int {
-	return 10000
+	return defaultDLQMaxEntries
 }
 
 func (c *Config) RegistryHeartbeatTimeout() time.Duration {
@@ -115,5 +120,5 @@ func (c *Config) RegistryHeartbeatTimeout() time.Duration {
 }
 
 func (c *Config) NumPartitions() int {
-	return 64
+	return defaultNumPartitions
 }

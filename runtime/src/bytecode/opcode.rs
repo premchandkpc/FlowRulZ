@@ -72,7 +72,7 @@ pub enum GateOp {
 }
 
 impl GateOp {
-    pub fn from_str(s: &str) -> Option<GateOp> {
+    pub fn parse(s: &str) -> Option<GateOp> {
         match s {
             "==" => Some(GateOp::Eq),
             "!=" => Some(GateOp::Ne),
@@ -94,7 +94,7 @@ pub enum ChunkMode {
 }
 
 impl ChunkMode {
-    pub fn from_str(s: &str) -> Option<ChunkMode> {
+    pub fn parse(s: &str) -> Option<ChunkMode> {
         match s {
             "seq" => Some(ChunkMode::Sequential),
             "par" => Some(ChunkMode::Parallel),
@@ -112,7 +112,7 @@ pub enum RetryStrategy {
 }
 
 impl RetryStrategy {
-    pub fn from_str(s: &str) -> Option<RetryStrategy> {
+    pub fn parse(s: &str) -> Option<RetryStrategy> {
         match s {
             "exp" => Some(RetryStrategy::Exponential),
             "linear" => Some(RetryStrategy::Linear),
@@ -159,30 +159,30 @@ mod tests {
     }
 
     #[test]
-    fn test_gate_op_from_str() {
-        assert_eq!(GateOp::from_str("=="), Some(GateOp::Eq));
-        assert_eq!(GateOp::from_str("!="), Some(GateOp::Ne));
-        assert_eq!(GateOp::from_str(">"), Some(GateOp::Gt));
-        assert_eq!(GateOp::from_str("<"), Some(GateOp::Lt));
-        assert_eq!(GateOp::from_str(">="), Some(GateOp::Gte));
-        assert_eq!(GateOp::from_str("<="), Some(GateOp::Lte));
-        assert_eq!(GateOp::from_str("contains"), Some(GateOp::Contains));
-        assert_eq!(GateOp::from_str("???"), None);
+    fn test_gate_op_parse() {
+        assert_eq!(GateOp::parse("=="), Some(GateOp::Eq));
+        assert_eq!(GateOp::parse("!="), Some(GateOp::Ne));
+        assert_eq!(GateOp::parse(">"), Some(GateOp::Gt));
+        assert_eq!(GateOp::parse("<"), Some(GateOp::Lt));
+        assert_eq!(GateOp::parse(">="), Some(GateOp::Gte));
+        assert_eq!(GateOp::parse("<="), Some(GateOp::Lte));
+        assert_eq!(GateOp::parse("contains"), Some(GateOp::Contains));
+        assert_eq!(GateOp::parse("???"), None);
     }
 
     #[test]
-    fn test_chunk_mode_from_str() {
-        assert_eq!(ChunkMode::from_str("seq"), Some(ChunkMode::Sequential));
-        assert_eq!(ChunkMode::from_str("par"), Some(ChunkMode::Parallel));
-        assert_eq!(ChunkMode::from_str("invalid"), None);
+    fn test_chunk_mode_parse() {
+        assert_eq!(ChunkMode::parse("seq"), Some(ChunkMode::Sequential));
+        assert_eq!(ChunkMode::parse("par"), Some(ChunkMode::Parallel));
+        assert_eq!(ChunkMode::parse("invalid"), None);
     }
 
     #[test]
-    fn test_retry_strategy_from_str() {
-        assert_eq!(RetryStrategy::from_str("exp"), Some(RetryStrategy::Exponential));
-        assert_eq!(RetryStrategy::from_str("linear"), Some(RetryStrategy::Linear));
-        assert_eq!(RetryStrategy::from_str("fixed"), Some(RetryStrategy::Fixed));
-        assert_eq!(RetryStrategy::from_str("unknown"), None);
+    fn test_retry_strategy_parse() {
+        assert_eq!(RetryStrategy::parse("exp"), Some(RetryStrategy::Exponential));
+        assert_eq!(RetryStrategy::parse("linear"), Some(RetryStrategy::Linear));
+        assert_eq!(RetryStrategy::parse("fixed"), Some(RetryStrategy::Fixed));
+        assert_eq!(RetryStrategy::parse("unknown"), None);
     }
 
     #[test]

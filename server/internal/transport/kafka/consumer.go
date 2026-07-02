@@ -144,7 +144,7 @@ func (kc *Consumer) Cleanup(sarama.ConsumerGroupSession) error { return nil }
 
 func (kc *Consumer) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	for msg := range claim.Messages() {
-		_, err := kc.handler(context.Background(), msg.Value)
+		_, err := kc.handler(sess.Context(), msg.Value)
 		if err != nil {
 			slog.Error("kafka consumer handler error", "topic", kc.topic, "error", err)
 		}

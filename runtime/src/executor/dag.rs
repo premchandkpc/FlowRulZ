@@ -4,6 +4,7 @@ use crate::bytecode::instruction::Instruction;
 use crate::bytecode::plan::ExecutionPlan;
 use crate::bytecode::dag_table::{DAGFailurePolicy, MergeStrategy};
 
+#[allow(clippy::type_complexity)]
 pub fn exec_dag<'a>(
     body: &[u8],
     instr: &Instruction,
@@ -25,11 +26,11 @@ pub fn exec_dag<'a>(
             };
 
             // SkipDependents: skip node if any parent failed
-            if dag.failure_policy == DAGFailurePolicy::SkipDependents {
-                if node.parent_ids.iter().any(|p| failed.contains(p)) {
-                    failed.insert(svc_id);
-                    continue;
-                }
+            if dag.failure_policy == DAGFailurePolicy::SkipDependents
+                && node.parent_ids.iter().any(|p| failed.contains(p))
+            {
+                failed.insert(svc_id);
+                continue;
             }
 
             // Build input body: merge parent results into original body

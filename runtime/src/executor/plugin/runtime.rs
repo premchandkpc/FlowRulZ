@@ -20,13 +20,11 @@ pub fn call(name: &str, func_name: &str, input: &[u8]) -> Result<Vec<u8>, String
         .ok_or_else(|| format!("plugin '{}': no exported memory", name))?;
 
     let mem_size = memory.data_size(&store);
-    let input_offset = mem_size
-        .checked_sub(input.len())
-        .unwrap_or(0);
+    let input_offset = mem_size.saturating_sub(input.len());
 
     if mem_size < input_offset + input.len() {
         let needed = input_offset + input.len() - mem_size;
-        let pages = (needed + 65535) / 65536;
+        let pages = needed.div_ceil(65536);
         memory
             .grow(&mut store, pages as u64)
             .map_err(|e| format!("grow memory: {}", e))?;

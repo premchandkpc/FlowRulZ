@@ -4,6 +4,7 @@ use crate::bytecode::plan::{ExecutionPlan, RetryConfig};
 use rand::Rng;
 use std::time::Duration;
 
+#[allow(clippy::type_complexity)]
 pub fn exec_next(
     body: &[u8],
     instr: &Instruction,
@@ -23,6 +24,7 @@ pub fn exec_next(
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn exec_with_retry(
     svc_id: u16,
     body: &[u8],

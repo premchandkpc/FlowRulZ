@@ -87,6 +87,8 @@ mod tests {
     }
 }
 
+/// # Safety
+/// Allocates a buffer of `size` bytes. Returns null if size is 0 or allocation fails.
 #[no_mangle]
 pub unsafe extern "C" fn flowrulz_msg_alloc(size: usize) -> *mut u8 {
     if size == 0 {
@@ -94,8 +96,10 @@ pub unsafe extern "C" fn flowrulz_msg_alloc(size: usize) -> *mut u8 {
     }
     let header_size = std::mem::size_of::<usize>();
     let total = header_size.checked_add(size).unwrap_or(usize::MAX);
-    let layout =
-        std::alloc::Layout::from_size_align(total, std::mem::align_of::<usize>()).unwrap();
+    let layout = match std::alloc::Layout::from_size_align(total, std::mem::align_of::<usize>()) {
+        Ok(l) => l,
+        Err(_) => return std::ptr::null_mut(),
+    };
     let base = std::alloc::alloc(layout) as *mut usize;
     if base.is_null() {
         return std::ptr::null_mut();
@@ -104,6 +108,8 @@ pub unsafe extern "C" fn flowrulz_msg_alloc(size: usize) -> *mut u8 {
     base.add(1) as *mut u8
 }
 
+/// # Safety
+/// `ptr` must have been returned by `flowrulz_msg_alloc` and not yet freed.
 #[no_mangle]
 pub unsafe extern "C" fn flowrulz_msg_release(ptr: *mut u8) {
     if ptr.is_null() {
@@ -113,11 +119,15 @@ pub unsafe extern "C" fn flowrulz_msg_release(ptr: *mut u8) {
     let size = base.read();
     let header_size = std::mem::size_of::<usize>();
     let total = header_size.checked_add(size).unwrap_or(usize::MAX);
-    let layout =
-        std::alloc::Layout::from_size_align(total, std::mem::align_of::<usize>()).unwrap();
+    let layout = match std::alloc::Layout::from_size_align(total, std::mem::align_of::<usize>()) {
+        Ok(l) => l,
+        Err(_) => return,
+    };
     std::alloc::dealloc(base as *mut u8, layout);
 }
 
+/// # Safety
+/// `s_ptr` must point to a valid UTF-8 string of length `s_len`.
 #[no_mangle]
 pub unsafe extern "C" fn flowrulz_intern(s_ptr: *const u8, s_len: usize) -> u16 {
     let s = match read_str(s_ptr, s_len) {
@@ -127,6 +137,8 @@ pub unsafe extern "C" fn flowrulz_intern(s_ptr: *const u8, s_len: usize) -> u16 
     INTERN_TABLE.intern(s)
 }
 
+/// # Safety
+/// `out_ptr` and `out_len` must be valid pointers with sufficient capacity.
 #[no_mangle]
 pub unsafe extern "C" fn flowrulz_intern_lookup(
     id: u16,

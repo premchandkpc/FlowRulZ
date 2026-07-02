@@ -15,6 +15,8 @@ import (
 	"github.com/premchandkpc/FlowRulZ/server/internal/reliability"
 )
 
+const maxRequestBodySize = 1 << 20
+
 type Server struct {
 	engine   *engine.Engine
 	mux      *http.ServeMux
@@ -32,10 +34,14 @@ func NewWithCompiler(eng *engine.Engine, comp compiler.Compiler) *Server {
 	if comp == nil {
 		comp = compiler.NewLocal()
 	}
+	apiKey := os.Getenv("FLOWRULZ_API_KEY")
+	if apiKey == "" {
+		slog.Warn("FLOWRULZ_API_KEY not set, admin API will require authentication on startup")
+	}
 	s := &Server{
 		engine:   eng,
 		mux:      http.NewServeMux(),
-		apiKey:   os.Getenv("FLOWRULZ_API_KEY"),
+		apiKey:   apiKey,
 		compiler: comp,
 		rules:    newRuleService(eng, comp),
 	}
@@ -66,35 +72,46 @@ func (s *Server) Handler() http.Handler {
 	return s.mux
 }
 
+func writeJSON(w http.ResponseWriter, status int, v interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		slog.Error("json encode error", "error", err)
+	}
+}
+
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.apiKey != "" {
-			key := r.Header.Get("Authorization")
-			if subtle.ConstantTimeCompare([]byte(key), []byte("Bearer "+s.apiKey)) != 1 {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
-				return
-			}
+		if s.apiKey == "" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		key := r.Header.Get("Authorization")
+		if subtle.ConstantTimeCompare([]byte(key), []byte("Bearer "+s.apiKey)) != 1 {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
 		}
 		next(w, r)
 	}
 }
 
 func (s *Server) deployRule(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 	var req struct {
 		ID  string `json:"id"`
 		DSL string `json:"dsl"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 	slog.Info("deploy rule", "id", req.ID)
 	if err := s.rules.DeployRule(req.ID, req.DSL); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		slog.Error("deploy rule failed", "id", req.ID, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(map[string]string{"id": req.ID})
+	writeJSON(w, http.StatusCreated, map[string]string{"id": req.ID})
 }
 
 func (s *Server) removeRule(w http.ResponseWriter, r *http.Request) {
@@ -104,13 +121,13 @@ func (s *Server) removeRule(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listRules(w http.ResponseWriter, r *http.Request) {
-	_ = json.NewEncoder(w).Encode(s.rules.ListRules())
+	writeJSON(w, http.StatusOK, s.rules.ListRules())
 }
 
 func (s *Server) getRule(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if detail, ok := s.rules.RuleDetail(id); ok {
-		_ = json.NewEncoder(w).Encode(detail)
+		writeJSON(w, http.StatusOK, detail)
 		return
 	}
 	http.Error(w, "rule not found", http.StatusNotFound)
@@ -118,23 +135,20 @@ func (s *Server) getRule(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listVersions(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	_ = json.NewEncoder(w).Encode(s.rules.RuleVersions(id))
+	writeJSON(w, http.StatusOK, s.rules.RuleVersions(id))
 }
 
 func (s *Server) validateRule(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 	var req struct {
 		DSL string `json:"dsl"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	result, err := s.rules.ValidateDSL(req.DSL)
-	if err != nil {
-		_ = json.NewEncoder(w).Encode(result)
-		return
-	}
-	_ = json.NewEncoder(w).Encode(result)
+	result, _ := s.rules.ValidateDSL(req.DSL)
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) promoteVersion(w http.ResponseWriter, r *http.Request) {
@@ -150,10 +164,11 @@ func (s *Server) promoteVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.rules.PromoteVersion(id, ver); err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		slog.Error("promote version failed", "id", id, "version", ver, "error", err)
+		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "active_version": ver})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"id": id, "active_version": ver})
 }
 
 func (s *Server) rollbackVersion(w http.ResponseWriter, r *http.Request) {
@@ -161,11 +176,11 @@ func (s *Server) rollbackVersion(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listLanes(w http.ResponseWriter, r *http.Request) {
-	_ = json.NewEncoder(w).Encode(s.rules.Lanes())
+	writeJSON(w, http.StatusOK, s.rules.Lanes())
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
-	_ = json.NewEncoder(w).Encode(s.rules.HealthSnapshot())
+	writeJSON(w, http.StatusOK, s.rules.HealthSnapshot())
 }
 
 func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
@@ -194,17 +209,16 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) debug(w http.ResponseWriter, r *http.Request) {
-	_ = json.NewEncoder(w).Encode(s.rules.DebugSnapshot())
+	writeJSON(w, http.StatusOK, s.rules.DebugSnapshot())
 }
 
 func (s *Server) listDLQ(w http.ResponseWriter, r *http.Request) {
 	if s.dlq == nil {
-		_ = json.NewEncoder(w).Encode([]interface{}{})
+		writeJSON(w, http.StatusOK, []interface{}{})
 		return
 	}
 	entries := s.dlq.List()
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(entries)
+	writeJSON(w, http.StatusOK, entries)
 }
 
 func (s *Server) replayDLQ(w http.ResponseWriter, r *http.Request) {
@@ -214,11 +228,11 @@ func (s *Server) replayDLQ(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.dlq.Replay(r.Context(), id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		slog.Error("dlq replay failed", "id", id, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "replayed", "id": id})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "replayed", "id": id})
 }
 
 func (s *Server) replayAllDLQ(w http.ResponseWriter, r *http.Request) {
@@ -227,7 +241,7 @@ func (s *Server) replayAllDLQ(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	count := s.dlq.ReplayAll(r.Context())
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": "replayed", "count": count})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "replayed", "count": count})
 }
 
 func (s *Server) clearDLQ(w http.ResponseWriter, r *http.Request) {

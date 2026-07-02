@@ -51,8 +51,7 @@ pub fn type_check_map(schema: &Schema, expr: &str) -> Result<(), CompileError> {
         let args_str = &rhs[7..rhs.len() - 1];
         for arg in args_str.split(',') {
             let arg = arg.trim();
-            if arg.starts_with('.') {
-                let field_name = &arg[1..];
+            if let Some(field_name) = arg.strip_prefix('.') {
                 if let Some(ft) = schema.field_type(field_name) {
                     if !matches!(ft, ResolvedType::String) {
                         return Err(CompileError::TypeMismatch(format!(
@@ -69,8 +68,7 @@ pub fn type_check_map(schema: &Schema, expr: &str) -> Result<(), CompileError> {
         let parts: Vec<&str> = rhs.split('+').collect();
         for part in &parts {
             let part = part.trim();
-            if part.starts_with('.') {
-                let field_name = &part[1..];
+            if let Some(field_name) = part.strip_prefix('.') {
                 if let Some(ft) = schema.field_type(field_name) {
                     if !matches!(ft, ResolvedType::String) {
                         return Err(CompileError::TypeMismatch(format!(

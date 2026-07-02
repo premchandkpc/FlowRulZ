@@ -1,10 +1,11 @@
 package registry
 
 import (
+	"crypto/subtle"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -29,15 +30,31 @@ type HeartbeatRequest struct {
 	InstanceID string `json:"instance_id"`
 }
 
+const maxRequestBodySize = 1 << 20
+
+func (r *ServiceRegistry) checkAuth(req *http.Request) bool {
+	apiKey := os.Getenv("FLOWRULZ_API_KEY")
+	if apiKey == "" {
+		return false
+	}
+	key := req.Header.Get("Authorization")
+	return subtle.ConstantTimeCompare([]byte(key), []byte("Bearer "+apiKey)) == 1
+}
+
 func (r *ServiceRegistry) RegisterHTTPHandler(w http.ResponseWriter, req *http.Request) {
 	if req.Method != "POST" {
 		http.Error(w, "POST required", 405)
 		return
 	}
+	if !r.checkAuth(req) {
+		http.Error(w, "unauthorized", 401)
+		return
+	}
 
+	req.Body = http.MaxBytesReader(w, req.Body, maxRequestBodySize)
 	var regReq RegisterRequest
 	if err := json.NewDecoder(req.Body).Decode(&regReq); err != nil {
-		http.Error(w, fmt.Sprintf("bad request: %v", err), 400)
+		http.Error(w, "bad request", 400)
 		return
 	}
 	if regReq.Name == "" {
@@ -78,7 +95,8 @@ func (r *ServiceRegistry) RegisterHTTPHandler(w http.ResponseWriter, req *http.R
 	}
 
 	if err := r.RegisterInstance(inst); err != nil {
-		http.Error(w, err.Error(), 500)
+		slog.Error("registry: register failed", "name", inst.Name, "error", err)
+		http.Error(w, "internal error", 500)
 		return
 	}
 
@@ -95,10 +113,15 @@ func (r *ServiceRegistry) HeartbeatHTTPHandler(w http.ResponseWriter, req *http.
 		http.Error(w, "POST required", 405)
 		return
 	}
+	if !r.checkAuth(req) {
+		http.Error(w, "unauthorized", 401)
+		return
+	}
 
+	req.Body = http.MaxBytesReader(w, req.Body, maxRequestBodySize)
 	var hbReq HeartbeatRequest
 	if err := json.NewDecoder(req.Body).Decode(&hbReq); err != nil {
-		http.Error(w, fmt.Sprintf("bad request: %v", err), 400)
+		http.Error(w, "bad request", 400)
 		return
 	}
 	if hbReq.Name == "" || hbReq.InstanceID == "" {
@@ -107,7 +130,7 @@ func (r *ServiceRegistry) HeartbeatHTTPHandler(w http.ResponseWriter, req *http.
 	}
 
 	if err := r.Heartbeat(hbReq.Name, hbReq.InstanceID); err != nil {
-		http.Error(w, err.Error(), 404)
+		http.Error(w, "not found", 404)
 		return
 	}
 

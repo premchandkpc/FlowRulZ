@@ -34,7 +34,7 @@ flowrulz:
     FLOWRULZ_HTTP_ADDR: ":8080"
     FLOWRULZ_EXEC_STATE_DIR: /data/execstate
 
-  apiKey: changeme-in-production
+  apiKey: ""
 
   hpa:
     enabled: true

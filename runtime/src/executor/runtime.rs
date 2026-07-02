@@ -3,18 +3,10 @@ use crate::bytecode::plan::ExecutionPlan;
 use crate::executor::VM;
 use std::sync::Arc;
 
-/// ExecutionRuntime wraps the VM with higher-level orchestration:
-///
-/// - Buffer opcode (9): accumulates messages, flushes when full
-/// - Chunk opcode (15): splits body, runs full pipeline per chunk
-/// - Retry: handled within VM (exec_with_retry on Next/Async)
-///
-/// The runtime owns the plan and manages per-message VM execution
-/// with support for stateful operations (buffer accumulation).
 pub struct ExecutionRuntime {
     plan: ExecutionPlan,
+    #[allow(clippy::type_complexity)]
     caller: Arc<dyn Fn(u16, &[u8], u64) -> Result<Vec<u8>, String> + Send + Sync>,
-    // Buffer state
     buffer_body: Vec<u8>,
     buffer_count: u8,
     buffer_target: u8,

@@ -61,7 +61,14 @@ node_modules/
 # Build
 flowrulz
 *.o
-*.so
-*.dylib
-*.dll
 *.a
+
+# SDK build artifacts
+sdk/flow/flowrulz
+sdk/java/target/
+sdk/python/dist/
+sdk/python/build/
+sdk/python/*.egg-info/
+sdk/javascript/node_modules/
+sdk/javascript/dist/
+sdk/rust/target/

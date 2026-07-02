@@ -198,7 +198,6 @@ func TestExecuteStepMultiCall(t *testing.T) {
 		if err != nil {
 			t.Fatalf("step %d failed: %v", i, err)
 		}
-		t.Logf("step %d: Result=%d PendingSvc=%d CtxBytes(len=%d)", i, out.Result, out.PendingSvc, len(out.CtxBytes))
 		ctxBytes = out.CtxBytes
 		switch out.Result {
 		case StepDone:
@@ -211,15 +210,9 @@ func TestExecuteStepMultiCall(t *testing.T) {
 			respBytes = resp
 		case StepContinue:
 			respBytes = nil
-		default:
-			t.Logf("unhandled result: %d", out.Result)
-			if out.Error != "" {
-				t.Logf("error: %s", out.Error)
-			}
 		}
 	}
 done:
-	t.Logf("total callIDs: %v", callIDs)
 	if len(callIDs) != 3 {
 		t.Fatalf("expected 3 service calls, got %d", len(callIDs))
 	}

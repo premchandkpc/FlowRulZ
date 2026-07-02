@@ -59,10 +59,10 @@ docs/obsidian-vault/  Obsidian vault (arch map, 26 notes, 1 canvas)
 6. **DI migration**: `NodeBuilder.WithDefaults()` delegates to `DefaultDependencies()` factory
 
 ## Tests
-- Go: `cd server && go test ./internal/...` (28 packages, all pass)
+- Go: `cd server && go test ./internal/... ./bridge/...` (19 packages, 274 tests, all pass)
 - Rust: `cd runtime && cargo test` (401 tests, all pass)
-- Known pre-existing failure: `bridge/TestExecuteStepMultiCall` (expected 3 calls, got 2 — timing-dependent)
-- Scheduler `TestPriorityOrdering` is flaky under cache; use `-count=1` for reliable results
+- **Bridge `TestExecuteStepMultiCall`**: Fixed — root cause was `sync.Pool` buffer aliasing in `Compile`, `Execute`, `InitContext` returning pool slices directly (`outBuf[:outLen]`). `ExecuteStep` reused the same pool buffer, overwriting plan data before Rust deserialized it. Fixed by `make+copy` in all 3 functions. 10/10 passes.
+- **Scheduler `TestPriorityOrdering`**: Fixed — root cause was data race on `execOrder` slice appended from multiple goroutines without synchronization. Added `sync.Mutex`. 50/50 passes.
 
 ## Obsidian Vault
 `docs/obsidian-vault/` — 26 notes + 1 `.canvas` map. Architecture, modules, concepts, all linked via wikilinks.

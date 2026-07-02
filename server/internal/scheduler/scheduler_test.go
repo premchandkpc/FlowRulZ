@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -74,6 +75,7 @@ func TestPriorityOrdering(t *testing.T) {
 	defer cancel()
 	defer s.Stop()
 
+	var mu sync.Mutex
 	var execOrder []string
 	done := make(chan struct{})
 
@@ -87,24 +89,32 @@ func TestPriorityOrdering(t *testing.T) {
 	s.EnqueueTask(task)
 
 	s.EnqueueTask(&Task{ID: "heavy", Priority: PriorityHeavy, Execute: func(ctx context.Context, task *Task) ([]byte, error) {
+		mu.Lock()
 		execOrder = append(execOrder, "heavy")
+		mu.Unlock()
 		return nil, nil
 	}})
 	s.EnqueueTask(&Task{ID: "normal", Priority: PriorityNormal, Execute: func(ctx context.Context, task *Task) ([]byte, error) {
+		mu.Lock()
 		execOrder = append(execOrder, "normal")
+		mu.Unlock()
 		return nil, nil
 	}})
 	s.EnqueueTask(&Task{ID: "fast", Priority: PriorityFast, Execute: func(ctx context.Context, task *Task) ([]byte, error) {
+		mu.Lock()
 		execOrder = append(execOrder, "fast")
+		mu.Unlock()
 		return nil, nil
 	}})
 
-	time.Sleep(50 * time.Millisecond)
 	close(done)
 	time.Sleep(200 * time.Millisecond)
 
-	if len(execOrder) != 3 {
-		t.Fatalf("expected 3 executions, got %d", len(execOrder))
+	mu.Lock()
+	count := len(execOrder)
+	mu.Unlock()
+	if count != 3 {
+		t.Fatalf("expected 3 executions, got %d", count)
 	}
 }
 

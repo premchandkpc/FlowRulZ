@@ -48,7 +48,9 @@ func Compile(dsl string, ruleID string) ([]byte, error) {
 	if rc != 0 {
 		return nil, fmt.Errorf("compile failed: %s", string(errBuf[:errLen]))
 	}
-	return outBuf[:outLen], nil
+	out := make([]byte, outLen)
+	copy(out, outBuf[:outLen])
+	return out, nil
 }
 
 func Intern(s string) uint16 {

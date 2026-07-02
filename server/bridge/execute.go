@@ -70,7 +70,9 @@ func InitContext(body []byte) ([]byte, error) {
 	if rc != 0 {
 		return nil, fmt.Errorf("init context failed: %s", string(errBuf[:errLen]))
 	}
-	return outBuf[:outLen], nil
+	out := make([]byte, outLen)
+	copy(out, outBuf[:outLen])
+	return out, nil
 }
 
 func Execute(plan []byte, body []byte, caller ServiceCaller, ctx *ExecContext) ([]byte, error) {
@@ -144,7 +146,9 @@ func Execute(plan []byte, body []byte, caller ServiceCaller, ctx *ExecContext) (
 	if rc != 0 {
 		return nil, fmt.Errorf("execute failed: %s", string(errBuf[:errLen]))
 	}
-	return outBuf[:outLen], nil
+	out := make([]byte, outLen)
+	copy(out, outBuf[:outLen])
+	return out, nil
 }
 
 type StepResult int

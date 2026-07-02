@@ -132,7 +132,7 @@ resp, err := client.Request("payment", paymentReq, 5*time.Second)
 Client → FlowRulZ → Route to Payment Worker → Wait → Response → Client
 ```
 
-Mode: `Mode::Request`. FlowRulZ tracks reply_to + correlation_id. Replies are routed via the `_flowrulz_replies` cluster bus topic, keyed by `hash(correlation_id)`, handled by `go/internal/replyrouter/`.
+Mode: `Mode::Request`. FlowRulZ tracks reply_to + correlation_id. Replies are routed via the `_flowrulz_replies` cluster bus topic, keyed by `hash(correlation_id)`, handled by `server/internal/replyrouter/`.
 
 ### 3. Rule Execution
 
@@ -273,13 +273,13 @@ Client                  Control Plane                Data Plane
 
 | Step | File | What It Does |
 |------|------|-------------|
-| HTTP handler | `go/internal/admin/admin.go` | Parses JSON, calls `engine.Deploy(id, dsl)` |
-| Engine | `go/internal/engine/engine.go` | `Deploy()`: compile, assign lane, persist |
-| Plan Distribution | `go/internal/plandist/plandist.go` | Leader publishes plan to `_flowrulz_plans`, waits for ACK quorum on `_flowrulz_acks` |
-| Bridge | `go/bridge/bridge.go` | `Compile()`: C FFI call to `flowrulz_compile()` |
-| Rust FFI | `rust/src/ffi.rs` | `flowrulz_compile()`: lex → parse → optimize → compile |
-| DSL Compiler | `rust/src/dsl/compiler.rs` | Compiles AST → `ExecutionPlan`, type checking |
-| Persistence | `go/internal/engine/engine.go` | `saveRules()`: atomic `.tmp` → `os.Rename` |
+| HTTP handler | `server/internal/admin/` | Parses JSON, calls `engine.Deploy(id, dsl)` |
+| Engine | `server/internal/engine/` | `Deploy()`: compile, assign lane, persist |
+| Plan Distribution | `server/internal/plandist/` | Leader publishes plan to `_flowrulz_plans`, waits for ACK quorum on `_flowrulz_acks` |
+| Bridge | `server/bridge/bridge.go` | `Compile()`: C FFI call to `flowrulz_compile()` |
+| Rust FFI | `runtime/src/ffi.rs` | `flowrulz_compile()`: lex → parse → optimize → compile |
+| DSL Compiler | `runtime/src/dsl/compiler.rs` | Compiles AST → `ExecutionPlan`, type checking |
+| Persistence | `server/internal/engine/` | `saveRules()`: atomic `.tmp` → `os.Rename` |
 
 ---
 
@@ -314,17 +314,15 @@ Kafka      Partition Worker         Engine              ExecutionRuntime        
 
 | File | What It Does |
 |------|-------------|
-| `go/pkg/transport/eventbus.go` | Canonical `EventBus` interface — `Publish`, `Subscribe`, `Request`, `Reply`, `Broadcast` |
-| `go/internal/cluster/` | Cluster Bus — gRPC p2p overlay (`ClusterNode`, `ClusterProducer`/`ClusterConsumer`), invokes handler with event bytes |
-| `go/internal/execnode/` | ExecutionNode: engine + scheduler + transport + admin + lifecycle |
-| `go/internal/engine/` | `ActivePlanBytes()`: collect active plan bytes; `executePlan()`: cooperative step loop via `bridge.ExecuteStep` |
-| `go/internal/scheduler/` | Priority queue lanes (fast/normal/heavy), concurrency limits, backpressure |
-| `go/internal/reliability/ratelimit.go` | Token bucket rate limiter per name, ingress throttling |
-| `go/internal/reliability/circuitbreaker.go` | Per-svcID circuit breaker in callService (threshold=5, recovery=30s) |
-| `go/internal/reliability/dlq.go` | Dead-letter queue with replay, bounded size |
-| `rust/src/ffi.rs` | `flowrulz_execute()` (sync callback-based) + `flowrulz_execute_step()` (cooperative step-based): deserialize plan, create VM with ExecutionContext |
-| `rust/src/executor/mod.rs` | VM dispatch loop, opcode handlers |
-| `rust/src/executor/runtime.rs` | ExecutionRuntime: Chunk/Buffer orchestration |
+| `server/pkg/transport/eventbus.go` | Canonical `EventBus` interface — `Publish`, `Subscribe`, `Request`, `Reply`, `Broadcast` |
+| `server/internal/cluster/` | Cluster Bus — gRPC p2p overlay + Raft consensus, invokes handler with event bytes |
+| `server/internal/node/prod.go` | ProdNode: engine + scheduler + transport + admin + lifecycle |
+| `server/internal/engine/` | `ActivePlanBytes()`: collect active plan bytes; `executePlan()`: cooperative step loop via `bridge.ExecuteStep` |
+| `server/internal/scheduler/` | Priority lane queues + work stealing (fast/normal/heavy), concurrency limits, backpressure |
+| `server/internal/reliability/` | Token bucket rate limiter, circuit breaker, DLQ with replay |
+| `runtime/src/ffi.rs` | `flowrulz_execute_step()`: deserialize plan, create VM with ExecutionContext |
+| `runtime/src/executor/mod.rs` | VM dispatch loop, opcode handlers |
+| `runtime/src/executor/runtime.rs` | ExecutionRuntime: Chunk/Buffer orchestration |
 
 ---
 
@@ -360,11 +358,11 @@ ServiceCaller returns ([]byte, error)
 
 | File | Layer | Role |
 |------|-------|------|
-| `rust/src/executor/next.rs` | Rust | `exec_next()`: service call with retry logic |
-| `rust/src/ffi.rs` | Rust | Closure calling `caller_cb` function pointer |
-| `go/bridge/caller_bridge.c` | C | Static C function forwarding to `goServiceCaller` |
-| `go/bridge/bridge.go` | Go | `//export goServiceCaller`: dispatches to `ServiceCaller` |
-| `go/internal/registry/` | Go | `ServiceRegistry`: service name → healthy endpoints, LB, health checks |
+| `runtime/src/executor/next.rs` | Rust | `exec_next()`: service call with retry logic |
+| `runtime/src/ffi.rs` | Rust | Closure calling `caller_cb` function pointer |
+| `server/bridge/caller_bridge.c` | C | Static C function forwarding to `goServiceCaller` |
+| `server/bridge/bridge.go` | Go | `//export goServiceCaller`: dispatches to `ServiceCaller` |
+| `server/internal/registry/` | Go | `ServiceRegistry`: service name → healthy endpoints, LB, health checks |
 
 ---
 
@@ -395,8 +393,8 @@ exec_dag(ctx.body, instr, plan, caller, arena)
 
 | File | What It Does |
 |------|-------------|
-| `rust/src/executor/dag.rs` | `exec_dag()`: topological execution, parent merging, failure policies |
-| `rust/src/bytecode/dag_table.rs` | `DAGNode` with `parent_ids`, `DAGFailurePolicy`, `MergeStrategy` |
+| `runtime/src/executor/dag.rs` | `exec_dag()`: topological execution, parent merging, failure policies |
+| `runtime/src/bytecode/dag_table.rs` | `DAGNode` with `parent_ids`, `DAGFailurePolicy`, `MergeStrategy` |
 
 ---
 
@@ -434,9 +432,9 @@ Compile-time validation:
 
 | File | What It Does |
 |------|-------------|
-| `rust/src/bytecode/resolved_type.rs` | `ResolvedType::Enum(Vec<String>)`, `Schema::is_valid()` |
-| `rust/src/dsl/compiler.rs` | `compile_schema()`, `type_check_gate()`, `type_check_map()` |
-| `rust/src/executor/mod.rs` | `op_type_guard()` validates body against schema |
+| `runtime/src/bytecode/resolved_type.rs` | `ResolvedType::Enum(Vec<String>)`, `Schema::is_valid()` |
+| `runtime/src/dsl/compiler.rs` | `compile_schema()`, `type_check_gate()`, `type_check_map()` |
+| `runtime/src/executor/mod.rs` | `op_type_guard()` validates body against schema |
 
 ---
 
@@ -474,9 +472,9 @@ pub struct Span {
 
 | File | What It Does |
 |------|-------------|
-| `rust/src/tracing/mod.rs` | `Span` struct, `emit_span()`, inline `SpanRingBuffer` |
-| `rust/src/ffi.rs` | `flowrulz_get_spans()` drains buffer |
-| `go/bridge/bridge.go` | `GetSpans()` calls `C.flowrulz_get_spans` |
+| `runtime/src/tracing/mod.rs` | `Span` struct, `emit_span()`, inline `SpanRingBuffer` |
+| `runtime/src/ffi.rs` | `flowrulz_get_spans()` drains buffer |
+| `server/bridge/bridge.go` | `GetSpans()` calls `C.flowrulz_get_spans` |
 
 ---
 
@@ -506,9 +504,9 @@ All endpoints (except `/health`, `/metrics`) require `Authorization: Bearer <FLO
 
 | File | What It Does |
 |------|-------------|
-| `go/internal/admin/admin.go` | Route handlers, `auth()` middleware, DLQ endpoints |
-| `go/internal/execnode/execnode.go` | Mounts admin + metrics + health handlers |
-| `go/internal/reliability/dlq.go` | `DLQ`: Send, Replay, ReplayAll, Clear |
+| `server/internal/admin/` | Route handlers, `auth()` middleware, DLQ endpoints |
+| `server/internal/node/prod.go` | Mounts admin + metrics + health handlers |
+| `server/internal/reliability/` | `DLQ`: Send, Replay, ReplayAll, Clear |
 
 ---
 
@@ -535,7 +533,7 @@ engine.New(persistPath)
 
 | File | What It Does |
 |------|-------------|
-| `go/internal/engine/engine.go` | `New()`, `loadRules()`, `saveRules()` |
+| `server/internal/engine/` | `New()`, `loadRules()`, `saveRules()` |
 
 ---
 
@@ -597,30 +595,29 @@ pub struct ExecutionContext {
 
 | File | Scenarios |
 |------|-----------|
-| `rust/src/bytecode/event.rs` | Event, Mode core types |
-| `rust/src/bytecode/execution.rs` | ExecutionContext |
-| `rust/src/ffi.rs` | 1, 2, 3 |
-| `rust/src/executor/mod.rs` | 2, 3, 4, 5 |
-| `rust/src/executor/runtime.rs` | 2 |
-| `rust/src/executor/next.rs` | 2, 3 |
-| `rust/src/executor/dag.rs` | 4 |
-| `rust/src/executor/gate.rs` | 5 |
-| `rust/src/executor/map.rs` | 5 |
-| `rust/src/executor/plugin.rs` | 5 |
-| `rust/src/executor/expr.rs` | 5 |
-| `rust/src/dsl/compiler.rs` | 1, 5 |
-| `rust/src/bytecode/resolved_type.rs` | 5 |
-| `rust/src/tracing/mod.rs` | 6 |
-| `go/internal/admin/admin.go` | 1, 7 |
-| `go/internal/engine/engine.go` | 1, 2, 8 |
-| `go/bridge/bridge.go` | 1, 2, 3 |
-| `go/internal/execnode/execnode.go` | 2 |
-| `go/internal/scheduler/` | 2 |
-| `go/internal/registry/` | 3 |
-| `go/internal/replyrouter/` | 2, 3 |
-| `go/internal/plandist/` | 1 |
-| `go/internal/observability/` | 2, 6 |
-| `go/internal/plugins/loader.go` | 5 |
-| `go/internal/reliability/dlq.go` | 2 |
-| `go/internal/reliability/ratelimit.go` | 2 |
-| `go/cmd/flowrulz/main.go` | 2, 8 |
+| `runtime/src/bytecode/event.rs` | Event, Mode core types |
+| `runtime/src/bytecode/execution.rs` | ExecutionContext |
+| `runtime/src/ffi.rs` | 1, 2, 3 |
+| `runtime/src/executor/mod.rs` | 2, 3, 4, 5 |
+| `runtime/src/executor/runtime.rs` | 2 |
+| `runtime/src/executor/next.rs` | 2, 3 |
+| `runtime/src/executor/dag.rs` | 4 |
+| `runtime/src/executor/gate.rs` | 5 |
+| `runtime/src/executor/map.rs` | 5 |
+| `runtime/src/executor/plugin.rs` | 5 |
+| `runtime/src/executor/expr.rs` | 5 |
+| `runtime/src/dsl/compiler.rs` | 1, 5 |
+| `runtime/src/bytecode/resolved_type.rs` | 5 |
+| `runtime/src/tracing/mod.rs` | 6 |
+| `server/internal/admin/` | 1, 7 |
+| `server/internal/engine/` | 1, 2, 8 |
+| `server/bridge/bridge.go` | 1, 2, 3 |
+| `server/internal/node/prod.go` | 2 |
+| `server/internal/scheduler/` | 2 |
+| `server/internal/registry/` | 3 |
+| `server/internal/replyrouter/` | 2, 3 |
+| `server/internal/plandist/` | 1 |
+| `server/internal/observability/` | 2, 6 |
+| `server/internal/plugins/loader.go` | 5 |
+| `server/internal/reliability/` | 2 |
+| `server/cmd/flowrulz/main.go` | 2, 8 |

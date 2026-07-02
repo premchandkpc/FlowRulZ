@@ -1,13 +1,13 @@
 # Kafka Transport (Legacy)
 
-**Status:** Legacy fallback. FlowRulZ no longer requires Kafka. The default production transport is the gRPC-based **Cluster Bus** (`go/internal/cluster/`). Kafka remains available as a transport option when `FLOWRULZ_KAFKA_BROKERS` is explicitly set.
+**Status:** Legacy fallback. FlowRulZ no longer requires Kafka. The default production transport is the gRPC-based **Cluster Bus** (`server/internal/cluster/`). Kafka remains available as a transport option when `FLOWRULZ_KAFKA_BROKERS` is explicitly set.
 
 ## Files
 
 | File | Role |
 |------|------|
-| `go/internal/transport/kafka/` | Sarama-backed Kafka consumer/producer (3 files) |
-| `go/internal/transport/transport.go` | `MessageConsumer`/`MessageProducer` interfaces |
+| `server/internal/transport/kafka/` | Sarama-backed Kafka consumer/producer (3 files) |
+| `server/internal/transport/` | `MessageConsumer`/`MessageProducer` interfaces |
 
 > **Note:** The following topics are also managed over the Cluster Bus in non-legacy mode:
 > `_flowrulz_gossip` (gossip protocol push/pull) and `_flowrulz_partitions` (partition assignment).

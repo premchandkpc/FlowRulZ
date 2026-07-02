@@ -42,7 +42,7 @@ Leader responsibilities
     └── Monitor node health via heartbeat liveness
 ```
 
-**Files:** `go/internal/execnode/execnode.go`, `docs/specs/cluster-model.md`
+**Files:** `server/internal/node/prod.go`, `server/internal/cluster/`, `docs/cluster-model.md`
 
 ---
 
@@ -82,7 +82,7 @@ CRASH / REJOIN
     └── Resume normal execution
 ```
 
-**Files:** `go/internal/execnode/execnode.go` (`Start`, `Shutdown`)
+**Files:** `server/internal/node/prod.go` (`Start`, `Shutdown`) + `server/internal/node/lifecycle.go`
 
 ---
 
@@ -122,7 +122,7 @@ LEADER                                   FOLLOWER(s)
   │                                          │  └── Mark version active
 ```
 
-**Files:** `go/internal/plandist/plandist.go`, `go/internal/engine/engine.go`
+**Files:** `server/internal/plandist/`, `server/internal/engine/`
 
 ---
 
@@ -157,8 +157,8 @@ Client                              Admin Server
   │                                      │       ActivatePlan(...)
 ```
 
-**Files:** `go/internal/admin/admin.go`, `go/internal/engine/engine.go`,
-`go/bridge/bridge.go`, `rust/src/dsl/compiler.rs`, `rust/src/ffi.rs`
+**Files:** `server/internal/admin/`, `server/internal/engine/`,
+`server/bridge/bridge.go`, `runtime/src/dsl/compiler.rs`, `runtime/src/ffi.rs`
 
 ---
 
@@ -220,9 +220,9 @@ laneWorker loop
     └── <-sem                  (release concurrency slot)
 ```
 
-**Files:** `go/internal/cluster/transport.go`, `go/internal/execnode/execnode.go`,
-`go/internal/scheduler/scheduler.go`, `go/internal/engine/engine.go`,
-`go/bridge/bridge.go`, `go/internal/reliability/ratelimit.go`
+**Files:** `server/internal/cluster/`, `server/internal/node/prod.go`,
+`server/internal/scheduler/`, `server/internal/engine/`,
+`server/bridge/bridge.go`, `server/internal/reliability/`
 
 ---
 
@@ -262,7 +262,7 @@ PriorityForScore(score):
     score > 50  → Heavy
 ```
 
-**Files:** `go/internal/scheduler/scheduler.go`
+**Files:** `server/internal/scheduler/`
 
 ---
 
@@ -335,9 +335,9 @@ VM::run()
                            → thread_local ring buffer
 ```
 
-**Files:** `rust/src/executor/mod.rs`, `rust/src/executor/runtime.rs`,
-`rust/src/executor/next.rs`, `rust/src/executor/gate.rs`, `rust/src/executor/map.rs`,
-`rust/src/executor/dag.rs`, `rust/src/executor/emit.rs`, `rust/src/executor/parallel.rs`
+**Files:** `runtime/src/executor/mod.rs`, `runtime/src/executor/runtime.rs`,
+`runtime/src/executor/next.rs`, `runtime/src/executor/gate.rs`, `runtime/src/executor/map.rs`,
+`runtime/src/executor/dag.rs`, `runtime/src/executor/emit.rs`, `runtime/src/executor/parallel.rs`
 
 ---
 
@@ -392,9 +392,9 @@ Result replaces ctx.body
                         merged later with siblings
 ```
 
-**Files:** `rust/src/executor/next.rs`, `rust/src/ffi.rs`,
-`go/bridge/caller_bridge.c`, `go/bridge/bridge.go`,
-`go/internal/registry/registry.go`
+**Files:** `runtime/src/executor/next.rs`, `runtime/src/ffi.rs`,
+`server/bridge/caller_bridge.c`, `server/bridge/bridge.go`,
+`server/internal/registry/`
 
 ---
 
@@ -448,8 +448,8 @@ Client                                              FlowRulZ Node
   │  └── (caller receives nil, detects timeout)          │
 ```
 
-**Files:** `go/internal/replyrouter/replyrouter.go`,
-`go/internal/cluster/node.go`, `go/internal/execnode/execnode.go`
+**Files:** `server/internal/replyrouter/`,
+`server/internal/cluster/`, `server/internal/node/prod.go`
 
 ---
 
@@ -514,7 +514,7 @@ Result written to arena, returned as &mut [u8]
 Stored in ctx.body, hop_count incremented
 ```
 
-**Files:** `rust/src/executor/dag.rs`, `rust/src/bytecode/dag_table.rs`
+**Files:** `runtime/src/executor/dag.rs`, `runtime/src/bytecode/dag_table.rs`
 
 ---
 
@@ -546,7 +546,7 @@ Admin API replay:
     │   │   ├── Unlock
     │   │   ├── entry.RetryCount++
     │   │   └── replayFn(ctx, entry)
-    │   │       (replayFn is set by execnode: re-runs executeAll)
+    │   │       (replayFn is set by ProdNode: re-runs executeAll)
     │   │
     │   └── on success: entry removed from DLQ
     │       on error:   (entry already removed — not re-added)
@@ -568,7 +568,7 @@ Admin API replay:
     └── DELETE /dlq → DLQ.Clear()
 ```
 
-**Files:** `go/internal/reliability/dlq.go`, `go/internal/admin/server.go`
+**Files:** `server/internal/reliability/`, `server/internal/admin/`
 
 ---
 
@@ -603,7 +603,7 @@ RateLimiter.Allow(name)
                  Metrics.RecordError("rate_limited")
 ```
 
-**Files:** `go/internal/reliability/ratelimit.go`, `go/internal/execnode/execnode.go`
+**Files:** `server/internal/reliability/`, `server/internal/node/prod.go`
 
 ---
 
@@ -665,8 +665,8 @@ Global shortcuts:
     RecordTiming(name)  → GetHistogram(name).Observe(duration_seconds)
 ```
 
-**Files:** `rust/src/tracing/mod.rs`, `rust/src/ffi.rs`,
-`go/bridge/bridge.go`, `go/internal/observability/metrics.go`
+**Files:** `runtime/src/tracing/mod.rs`, `runtime/src/ffi.rs`,
+`server/bridge/bridge.go`, `server/internal/observability/`
 
 ---
 
@@ -723,7 +723,7 @@ Runtime receives message Body
     └── NO: delegate to run_vm(body) or other first-opcode logic
 ```
 
-**Files:** `rust/src/executor/runtime.rs`, `rust/src/executor/chunk.rs`
+**Files:** `runtime/src/executor/runtime.rs`, `runtime/src/executor/chunk.rs`
 
 ---
 
@@ -815,9 +815,9 @@ admin.ServeHTTP(w, r)
     └── Response (JSON, appropriate status code)
 ```
 
-**Files:** `go/internal/admin/server.go`, `go/internal/engine/engine.go`,
-`go/internal/reliability/dlq.go`, `go/internal/observability/metrics.go`,
-`go/internal/replyrouter/replyrouter.go`
+**Files:** `server/internal/admin/`, `server/internal/engine/`,
+`server/internal/reliability/`, `server/internal/observability/`,
+`server/internal/replyrouter/`
 
 ---
 
@@ -877,7 +877,7 @@ admin.ServeHTTP(w, r)
 | # | Flow | Entry Point | Key Components | Persistence |
 |---|------|-------------|----------------|-------------|
 | 1 | Cluster Membership | Node startup | `_flowrulz_members`, gossip protocol | Cluster bus |
-| 2 | Node Lifecycle | `execnode.Start()` | Consumer, scheduler, HTTP server | In-memory |
+| 2 | Node Lifecycle | `node.ProdNode.Start()` | Consumer, scheduler, HTTP server | In-memory |
 | 3 | Plan Distribution | `plandist.PublishPlan()` | `_flowrulz_plans`, `_flowrulz_acks`, quorum | Cluster bus |
 | 4 | Rule Deployment | `POST /rules` | Admin, engine, bridge, plandist | JSON file |
 | 5 | Message Ingestion | Transport handler | Rate limiter, scheduler, `executeAll`/`executePlan`/`callService` | Cluster bus |

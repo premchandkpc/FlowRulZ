@@ -124,7 +124,7 @@ int flowrulz_plan_services(
 );
 ```
 
-Deserializes the plan and returns JSON array of `{"id":uint16,"name":"service.method"}` entries from the plan's service table. Used by Go execnode to build the `svcID → svcName` map for resolving method-coded service names like `n:payment.authorize`.
+Deserializes the plan and returns JSON array of `{"id":uint16,"name":"service.method"}` entries from the plan's service table. Used by Go ProdNode to build the `svcID → svcName` map for resolving method-coded service names like `n:payment.authorize`.
 
 ### Observability
 

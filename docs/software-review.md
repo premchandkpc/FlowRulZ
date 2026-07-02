@@ -34,15 +34,15 @@ Strong Rust/Go language split: Rust owns the hot path (compiler, VM, expression 
 - **Bytecode compilation**: DSL compiles to versionable, serializable, cacheable bytecode.
 - **ExecutionContext model**: Services enrich context instead of replacing it — enables stateful workflows.
 - **DAG sub-language**: Complex orchestration expressed declaratively, validated at compile time.
-- **Documentation**: 12 docs files (DSL spec, bytecode format, VM architecture, cluster model, flows, etc.) plus interactive HTML visual guide.
-- **Testing**: 111 Rust tests, Go unit tests, 8 e2e cluster tests (leader failover, partition rebalance, plan distribution).
+- **Documentation**: 15 docs files + 26-note Obsidian vault at `docs/obsidian-vault/`.
+- **Testing**: 401 Rust tests, Go unit tests (28 packages), Go SDK tests (13), Rust SDK tests (3).
 - **K8s deployment**: Both kustomize and Helm charts, kind config for local testing.
 - **WASM plugin system**: Sandboxed plugins via wasmtime, though surface area is narrow.
 
 ## Architecture Concerns
 
-### 1. `execnode.go` is a God object (1049 lines)
-Wires 15+ subsystems in one constructor + orchestration file. Highest refactoring priority — needs control plane / data plane split.
+### 1. ~~`execnode.go` is a God object (1049 lines)~~
+**✅ RESOLVED** — `server/internal/execnode/` was deleted (11 files removed). Replaced by `server/internal/node/` (ProdNode, 13 files) + `server/internal/bootstrap/` (NodeBuilder.WithDefaults()). DI constructor delegates to `DefaultDependencies()`, all subsystems wired via `Dependencies` struct.
 
 ### 2. Single-leader bottleneck
 Lowest-ID leader election. No formal consensus (no Raft/Paxos). Leader does all compilation, plan distribution, partition assignment.
@@ -80,7 +80,7 @@ Missing: runbooks, DR procedures, structured logging, alert config.
 
 ## Recommended Priorities
 
-1. **Refactor `execnode.go`** — split control plane from data plane
-2. **Formalize compiler↔planner↔scheduler↔runtime contracts** before adding features
-3. **Document operational runbooks** — DR, backup, incident response
-4. **Add structured logging** — replace `log.Printf` with leveled, JSON-capable logger
+1. ~~**Refactor `execnode.go`** — split control plane from data plane~~ ✅ Done
+2. ~~**Add structured logging** — replace `log.Printf` with leveled, JSON-capable logger~~ ✅ Done (64 call sites migrated to `slog`)
+3. **Formalize compiler↔planner↔scheduler↔runtime contracts** before adding features
+4. **Document operational runbooks** — DR, backup, incident response

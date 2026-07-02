@@ -1,6 +1,6 @@
 # FlowRulZ Go Architecture — SOLID Restructure
 
-> **Status:** Phase 1 complete. Phase 2 (interface extraction) complete — 13 packages in `go/pkg/`. Phase 3a (adapter layer) complete — 6 `pkgsupport.go` files implementing `pkg/` interfaces from `internal/` types, all with compile-time assertions. Phase 3b (ProdNode DI wiring) partial — `Dependencies` struct + `NewNode(cfg, deps)` + `DefaultDependencies()` created, 6 fields migrated to `pkg/` interfaces, 11+ fields remain concrete. Next: migrate remaining ProdNode fields (`Engine`, `Registry`, `DLQ`, `RateLimiter`, `Dedup`, `Saga`, `StateStore`, `ClusterNode`, `GRPCBus`, `PlanDist`, `AdminSrv`) to interfaces, migrate `execnode/execnode.go` and `admin/api.go`.
+> **Status:** ✅ **COMPLETED** — All phases done. `server/pkg/` has 13 public interface packages. `server/internal/node/ProdNode` wired via `server/internal/bootstrap/NodeBuilder.WithDefaults()` → `DefaultDependencies()`. Adapter layer (`server/internal/adapters/`) implements `pkg/` interfaces from `internal/` types. `server/internal/execnode/` deleted (11 files removed). All ProdNode fields migrated to interfaces. This document served as the plan; the implementation mirrors it.
 
 ## Package Dependency Hierarchy (top→bottom)
 
@@ -14,9 +14,9 @@ cmd/              — wiring, config parsing, main()
 
 ---
 
-## Layer 1: `go/pkg/` — Interfaces + Domain Types
+## Layer 1: `server/pkg/` — Interfaces + Domain Types
 
-Zero imports from `go/internal/`. Zero creation logic. Only interfaces, enums, pure data types.
+Zero imports from `server/internal/`. Zero creation logic. Only interfaces, enums, pure data types.
 
 ### 1.1 `go/pkg/node/` — Node Interface
 
@@ -725,7 +725,7 @@ type ExecuteOptions struct {
 
 ---
 
-## Layer 2: `go/internal/` — Implementations
+## Layer 2: `server/internal/` — Implementations
 
 Each sub-package implements exactly ONE interface from `pkg/`.
 
@@ -1105,9 +1105,9 @@ func (b *BridgeVM) ParseServiceMethod(raw string) (string, string) { ... }
 
 ---
 
-## Layer 3: `go/cmd/` — Wiring & Assembly
+## Layer 3: `server/cmd/` — Wiring & Assembly
 
-### 3.1 `go/cmd/flowrulz/main.go` — Production Entrypoint
+### 3.1 `server/cmd/flowrulz/main.go` — Production Entrypoint
 
 ```go
 func main() {
@@ -1218,66 +1218,58 @@ func main() {
 ## Actual Current File Tree
 
 ```
-go/
-├── pkg/                                          # Interfaces + domain types (no impls)
-│   ├── cluster/cluster.go, gossiper.go, types.go
-│   ├── engine/engine.go, types.go
-│   ├── membership/membership.go, types.go
-│   ├── node/node.go, types.go, errors.go
-│   ├── partition/partition.go, rebalance.go, types.go
-│   ├── plandist/plandist.go, types.go
-│   ├── registry/registry.go, types.go
-│   ├── reliability/circuitbreaker.go, ratelimiter.go, dedup.go, dlq.go, saga.go
-│   ├── replyrouter/replyrouter.go
-│   ├── scheduler/scheduler.go, types.go, lane.go, errors.go
-│   ├── store/store.go, types.go
-│   ├── transport/interfaces.go, types.go, errors.go, eventbus.go
-│   └── vm/vm.go, types.go
+server/
+├── pkg/                                          # Interfaces + domain types (13 packages)
+│   ├── cluster/      # Raft + membership interfaces
+│   ├── engine/       # Rule lifecycle interfaces
+│   ├── membership/   # Node membership interfaces
+│   ├── node/         # Node interface
+│   ├── partition/    # Partition mgmt interfaces
+│   ├── plandist/     # Plan distribution interfaces
+│   ├── registry/     # Service registry interfaces
+│   ├── reliability/  # CB, DLQ, RL, dedup, saga interfaces
+│   ├── replyrouter/  # Reply router interface
+│   ├── scheduler/    # Task scheduling + lane interfaces
+│   ├── store/        # Execution state persistence interfaces
+│   ├── transport/    # EventBus interface
+│   └── vm/           # Plan compilation + execution interfaces
 │
 ├── internal/                                      # Implementations
-│   ├── admin/api.go, service.go
-│   ├── cluster/node.go, raft.go, gossip.go, transport.go
-│   ├── compiler/compiler.go
-│   ├── engine/engine.go, persistence.go
-│   ├── execnode/              # Legacy node — 11 files
-│   ├── execstate/             # Execution file store
-│   ├── flow/flow.go
-│   ├── logger/logger.go
-│   ├── membership/membership.go, lease.go
-│   ├── node/                  # ProdNode DI assembler — 10 files
-│   │   ├── prod.go, config.go, lifecylce.go
-│   │   ├── grpc.go, cluster.go, http.go
-│   │   ├── handlers.go, messages.go, recovery.go
-│   │   └── exec_registry.go, execute_plan.go
-│   ├── observability/metrics.go, tracer.go
-│   ├── partition/manager.go, rebalance.go
-│   ├── plandist/distributor.go, ack.go
-│   ├── plugins/loader.go
-│   ├── registry/registry.go, lookup.go, health.go, http.go
-│   ├── reliability/circuitbreaker.go, ratelimit.go, dedup.go, dlq.go, saga.go
-│   ├── replyrouter/router.go
-│   ├── scheduler/prod.go, lane.go, worker.go
-│   └── transport/
-│       ├── producer.go, consumer.go, types.go
-│       ├── kafka/config.go, consumer.go, producer.go
-│       ├── grpc/bus.go, client.go, *.pb.go
-│       └── memory/bus.go
+│   ├── admin/          # HTTP API handlers
+│   ├── adapters/       # pkg/ interface implementations
+│   ├── bootstrap/      # NodeBuilder — DI composition root
+│   ├── cluster/        # Raft + gRPC p2p + Gossip
+│   ├── compiler/       # DSL compiler abstraction
+│   ├── engine/         # Rule lifecycle, versioning
+│   ├── execstate/      # FileStore execution records
+│   ├── flowengine/     # Flow orchestration
+│   ├── logger/         # Structured logging
+│   ├── membership/     # Heartbeat, lease, eviction
+│   ├── node/           # ProdNode DI assembler — 13 files
+│   ├── observability/  # Metrics, OTel tracing
+│   ├── partition/      # Manager, rebalance
+│   ├── plandist/       # Distributor, ack
+│   ├── plugins/        # WASM loader
+│   ├── ports/          # Port interfaces
+│   ├── registry/       # Service registry
+│   ├── reliability/    # DLQ, saga, CB, RL, dedup
+│   ├── replyrouter/    # Reply correlation
+│   ├── scheduler/      # Prod scheduler + work stealing
+│   └── transport/      # Kafka + gRPC adapters
 │
 ├── bridge/                                         # CGo (FlowRulZ C core)
-│   ├── bridge.go, caller_bridge.c                  # CGo declarations
-│   ├── vm_adapter.go                               # BridgeVM adapter
-│   ├── compile.go, execute.go, plan.go, memory.go  # helpers
+│   ├── bridge.go, caller_bridge.c
+│   ├── vm_adapter.go, compile.go, execute.go
+│   ├── plan.go, memory.go
 │   └── bridge_test.go
 │
-├── cmd/
-│   ├── flowrulz/main.go
-│   └── flowrulz-compiler/main.go
-│
-└── flow/client.go                                   # Client SDK
+└── cmd/
+    └── flowrulz/main.go
 
+sdk/ (5 client SDKs: Go, Java, Python, JS/TS, Rust)
 simulator/ (unchanged external project)
 
-> **Completed restructuring** (Phase 2-3): All file renames done (`raft_cluster.go→raft.go`, `plan.go→distributor.go`, `scheduler.go→prod.go`, `timerwheel.go→worker.go`, `server.go→api.go`). Kafka moved to subdirectory (`kafka/producer.go+consumer.go+config.go`). Node package expanded to 10 files (grpc.go+cluster.go extracted). Phase 3a: 6 adapter files (`pkgsupport.go`) in `internal/{execstate,scheduler,registry,cluster,engine,reliability}/`. Phase 3b: `Dependencies` struct + `NewNode(cfg,deps)` + `DefaultDependencies()` in `internal/node/`. Remaining: migrate `execnode/execnode.go` and `admin/api.go` to DI pattern, switch remaining 8+ concrete ProdNode fields to interfaces, create `pkg/transport` interfaces.
+> **✅ Restructuring COMPLETE.** Phases 1-3 fully implemented. `server/pkg/` has 13 interface packages. `server/internal/execnode/` deleted (11 files removed, replaced by `node/ProdNode` + `bootstrap/NodeBuilder`). All ProdNode fields migrated to interfaces. Adapter layer (`adapters/`) bridges `pkg/` interfaces ↔ `internal/` implementations. DI via `NodeBuilder.WithDefaults()` → `DefaultDependencies()`.
 
 ---
 
@@ -1291,4 +1283,4 @@ simulator/ (unchanged external project)
 | **I**nterface Segregation | `Publisher != Subscriber != Requester`. No 9-method god interface. Each consumer takes exactly what it needs. `ExecutionNode` declares 8 role interfaces, not one god interface. |
 | **D**ependency Inversion | `cmd/` wires concrete impls → constructs `Dependencies` struct → injects into `ProdNode`. High-level `ProdNode` never says `kafka.NewProducer(...)`. |
 | **DRY** | Single `ExecutionContext` in `pkg/scheduler/`. Single `Message` in `pkg/transport/`. No parallel scheduler implementations with different types. |
-| **DI** | `NewNode(cfg, deps)` — everything passed in. No hidden `new()` calls inside constructors. Test provides `deps` with mocks. |
+| **DI** | `NewNode(cfg, deps)` + `DefaultDependencies()` — everything passed in. No hidden `new()` calls inside constructors. Test provides `deps` with mocks. |

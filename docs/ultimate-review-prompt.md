@@ -11,7 +11,7 @@ Review this repository as a distributed execution runtime built with Go and Rust
 ### Context
 
 - FlowRulZ combines rule execution, workflow orchestration, service discovery, routing, scheduling, cluster transport, persistence, and admin APIs.
-- The architecture spans Go components such as the execution node, engine, scheduler, registry, reply router, plan distributor, cluster layer, and admin API, as well as Rust components for the DSL compiler and VM.
+- The architecture spans Go components such as ProdNode (wired via NodeBuilder DI), engine, scheduler, registry, reply router, plan distributor, cluster layer with Raft, and admin API, as well as Rust components for the DSL compiler and VM.
 - The system is intentionally split across control-plane and data-plane responsibilities, but this split may be imperfect and should be evaluated carefully.
 
 ### Review Objectives
@@ -46,11 +46,11 @@ Review this repository as a distributed execution runtime built with Go and Rust
 
 ### Areas to Inspect Closely
 
-- The execution node orchestration layer
+- ProdNode orchestration layer + NodeBuilder DI composition
 - Engine and execution lifecycle
-- Scheduler and concurrency control
+- Scheduler and work stealing
 - Registry and service lookup
-- Cluster and transport layers
+- Cluster + Raft consensus + gossip layers
 - Reply router and correlation handling
 - Admin API and runtime configuration
 - Rust compiler, bytecode, and VM boundaries
@@ -92,4 +92,4 @@ Do not focus only on style issues. Emphasize architecture-level problems that wo
 
 ## Short Version
 
-Review FlowRulZ for decoupling, loose coupling, separation of concerns, SOLID, DRY, OOP design quality, and design patterns. Focus on architecture-level issues in the Go execution node, engine, scheduler, cluster, registry, reply router, admin API, and Rust compiler/VM bridge. For each issue, explain the problem, why it matters, and how to refactor it using cleaner abstractions and appropriate patterns.
+Review FlowRulZ for decoupling, loose coupling, separation of concerns, SOLID, DRY, OOP design quality, and design patterns. Focus on architecture-level issues in Go ProdNode (DI via NodeBuilder), engine, scheduler (work stealing), cluster (Raft), registry, reply router, admin API, and Rust compiler/VM bridge. For each issue, explain the problem, why it matters, and how to refactor it using cleaner abstractions and appropriate patterns.

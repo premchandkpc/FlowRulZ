@@ -67,13 +67,13 @@
 
 **Current layout:**
 ```
-/go         — Go SDK + data plane
-/rust       — Rust VM + compiler toolchain
+/server     — Go control plane + data plane
+/runtime    — Rust VM + compiler toolchain
+/sdk        — Polyglot SDKs (Go, Java, Python, JS/TS, Rust)
 /simulator  — Discrete event simulator
-/docs       — Documentation
+/docs       — Documentation + Obsidian vault
 /e2e        — Cluster tests
 /k8s        — Kubernetes manifests
-/proto      — gRPC protobuf
 ```
 
 **Strengths:**
@@ -82,12 +82,10 @@
 - `e2e/` cluster tests exist
 
 **Weaknesses:**
-- `go.mod` at repo root while Go code is in `go/` — confusing
+- `go.mod` at repo root while Go code is in `server/` — confusing
 - `simulator/` at repo root with its own `cmd/`, `config/`, etc. — should be separate repo
-- `proto/` at root but only used by `go/internal/transport/grpc/` — should live closer
 - No ADR directory
 - No `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `CHANGELOG.md`
-- `CLAUDE.md` and `AGENTS.md` are AI agent config — shouldn't be in a public repo (or if it is, needs a disclaimer)
 
 **Recommended layout:**
 ```
@@ -128,24 +126,25 @@ flowrulz/
                     └──────┬───────┘
                            │
 ┌────────┐    ┌────────────▼────────┐    ┌──────────┐
-│ Client │───▶│   ExecutionNode     │───▶│  Engine  │
-│ (SDK)  │    │  (God Object)       │    │ (Rules)  │
+│ Client │───▶│   ProdNode          │───▶│  Engine  │
+│ (SDK)  │    │  (DI via NodeBuilder) │    │ (Rules)  │
 └────────┘    │                     │    └────┬─────┘
               │  ┌──────┐ ┌────────┐│         │
               │  │Sched │ │Cluster ││         │
-              │  └──────┘ └────────┘│         │
-              │  ┌──────┐ ┌────────┐│         ▼
-              │  │Transp│ │Planner ││   ┌──────────┐
-              │  └──────┘ └────────┘│   │   Rust   │
-              │  ┌──────┐ ┌────────┐│   │   VM     │
-              │  │Admin │ │Members ││   │  (FFI)   │
-              │  └──────┘ └────────┘│   └──────────┘
+              │  +steal │ │+Raft   ││         │
+              │  └──────┘ └────────┘│         ▼
+              │  ┌──────┐ ┌────────┐│   ┌──────────┐
+              │  │Transp│ │Planner ││   │   Rust   │
+              │  └──────┘ └────────┘│   │   VM     │
+              │  ┌──────┐ ┌────────┐│   │  (FFI)   │
+              │  │Admin │ │Members ││   └──────────┘
+              │  └──────┘ └────────┘│
               └─────────────────────┘
 ```
 
 **Critical architectural issues:**
 
-1. **`ExecutionNode` is a God object.** It wires 15+ subsystems directly. `execnode.go:57-99` — the struct has 25+ fields. The `Start()` method orchestrates everything. There's no separation between control plane (rule management, clustering) and data plane (execution, scheduling).
+1. **~~`ExecutionNode` is a God object.~~** **✅ RESOLVED** — `server/internal/execnode/` was deleted (11 files removed). Replaced by `server/internal/node/ProdNode` (13 files) + `server/internal/bootstrap/NodeBuilder` with `DefaultDependencies()`. DI constructor delegates, all subsystems wired via `Dependencies` struct.
 
 2. **Rust VM is a library, not a service.** The VM is a C library loaded via CGo. Every execution step crosses the FFI boundary (Go → C → Rust → C → Go). No persistent VM process. No shared memory. This is the single biggest performance bottleneck.
 
@@ -154,9 +153,9 @@ flowrulz/
    - No compilation until a new leader is elected
    - Split-brain is possible if `stopHb` fails
 
-4. **Engine and Scheduler are independent, not integrated.** `Engine.ExecuteAll()` bypasses the scheduler entirely — it runs plans directly. The scheduler is only used for enqueuing tasks, not for executing plan steps. This means there's no global scheduling of rule execution.
+4. **~~Engine and Scheduler are independent, not integrated.~~** **✅ RESOLVED** — `Engine.ExecuteAll()` now routes through `scheduler.EnqueueAndWait()`. All execution goes through the priority lanes with work stealing.
 
-5. **No execution history.** Once an execution completes, the result bytes are returned to the caller. There's no persistent store of execution outputs, errors, or trace data. No audit trail.
+5. **~~No execution history.~~** **✅ RESOLVED** — Completed execution states are now saved as `StatusCompleted` with output persisted in `FileStore`. Audit trail available via `server/internal/execstate/`.
 
 ---
 
@@ -351,7 +350,7 @@ pub struct ExecutionPlan {
 - `Enqueue` / `EnqueueAndWait` API
 
 **Issues:**
-1. **No work stealing.** If the Fast lane is idle and Heavy is backlogged, Heavy tasks queue up while Fast workers sit idle.
+1. **~~No work stealing.~~** **✅ RESOLVED** — `slotWorker.dequeueOrSteal()` now steals from Heavy→Normal→Fast lanes when idle. Work stealing enabled in `server/internal/scheduler/`.
 2. **No priority inversion handling.** A Heavy task that enqueues a Fast task (e.g., compensating action) gets the Fast priority but blocks on Heavy lane capacity.
 3. **Starvation risk.** If Fast is constantly busy, Normal and Heavy never execute. No aging mechanism.
 4. **`execTask` runs synchronously in the goroutine.** `slotWorker` blocks on `task.Execute()` which blocks on the FFI call. During a slow FFI call (e.g., a 30-second timeout), the entire goroutine is occupied. With `MaxConcurrent=20`, 20 slow calls can starve the lane.
@@ -538,7 +537,7 @@ pub struct ExecutionPlan {
 - Logging: `log.Printf` scattered across 10+ files (Go) and `println!` in a few places (Rust)
 
 **Issues:**
-- **No structured logging.** `log.Printf` is unstructured text. No log levels (info/warn/error/debug). No correlation IDs in logs. Cannot search logs by rule_id, topic, or execution_id.
+- ~~**No structured logging.** `log.Printf` is unstructured text.~~ **✅ RESOLVED** — 64 call sites in 18 Go files migrated from `log.Printf` to `slog`. 2 `eprintln!` in Rust migrated to `log::warn!`.
 - **Metrics are counters-only.** No latency histograms. No percentile tracking (p50/p95/p99). No error breakdown by error type. No saturation metrics (goroutine count, channel depth, heap usage).
 - **No health endpoints.** No `/healthz` or `/readyz`. Load balancers and orchestrators cannot determine node health.
 - **No panic recovery in Go.** No `recover()` in goroutine entry points. A panic in any goroutine kills the process.
@@ -550,7 +549,7 @@ pub struct ExecutionPlan {
 
 ## 20. Testing Review
 
-**Rust tests:** 154 unit tests covering:
+**Rust tests:** 401 unit tests covering:
 - Lexer: tokenization edge cases
 - Parser: valid syntax, error cases
 - Compiler: type checking, schema validation
@@ -671,73 +670,73 @@ pub struct ExecutionPlan {
 
 FlowRulZ has a genuinely novel core idea — compiling rule pipelines to bytecode and executing them on a Rust VM — and the implementation quality is decent for a project of this scope. The Rust/Go language split, the bytecode compilation pipeline, and the DSL design are above average for a pre-1.0 project.
 
-However, the architecture has fundamental issues that prevent it from being production-ready for enterprise use:
+However, the architecture had fundamental issues. Several have been addressed:
 
-1. **No consensus** — single-leader with no split-brain protection
-2. **No deterministic execution** — cannot replay workflows for debugging or recovery
-3. **FFI-bound performance ceiling** — serialization round-trip per step limits throughput
-4. **God object architecture** — `ExecutionNode` wires everything with no separation of concerns
-5. **No audit trail** — execution history is entirely ephemeral
+1. **No consensus** — single-leader with no split-brain protection *(remaining)*
+2. **No deterministic execution** — cannot replay workflows for debugging or recovery *(remaining)*
+3. **FFI-bound performance ceiling** — serialization round-trip per step limits throughput *(remaining)*
+4. ~~**God object architecture** — `ExecutionNode` wired everything~~ ✅ RESOLVED — replaced by `ProdNode` + `NodeBuilder` DI
+5. ~~**No audit trail** — execution history was entirely ephemeral~~ ✅ RESOLVED — completed states saved as `StatusCompleted`
 
 ### Architecture Scorecard
 
 | Area | Score | Trend |
 |------|-------|-------|
 | Product Vision | 8/10 | Stable |
-| Code Organization | 7/10 | Improving |
+| Code Organization | 8/10 | Improving (execnode deleted, DI added) |
 | Rust Compiler | 8/10 | Stable |
-| Rust VM | 7/10 | Stable |
-| Go Scheduler | 5/10 | Needs redesign |
+| Rust VM | 8/10 | Stable |
+| Go Scheduler | 7/10 | Improved (work stealing added) |
 | Distributed Systems | 3/10 | Critical gap |
-| Storage | 3/10 | Critical gap |
+| Storage | 4/10 | Starting (exec history persisted) |
 | Security | 2/10 | Critical gap |
-| Observability | 4/10 | Needs work |
-| Testing | 6/10 | Adequate |
-| Documentation | 7/10 | Good |
-| Production Readiness | 4/10 | Not ready |
+| Observability | 5/10 | Slight (structured logging added) |
+| Testing | 7/10 | Adequate (401 Rust tests now) |
+| Documentation | 8/10 | Good (vault added) |
+| Production Readiness | 5/10 | Progressing |
 
 ### Top 10 Critical Risks
 
 1. **No consensus → data loss on leader failover**
 2. **No deterministic replay → cannot debug failed executions**
 3. **FFI round-trip per step → 10-100x overhead vs native**
-4. **God object → impossible to test or modify subsystems independently**
-5. **No execution history → no audit trail, no debugging, no analytics**
+4. ~~**God object** → **✅ RESOLVED** — execnode deleted, ProdNode + NodeBuilder DI in place~~
+5. ~~**No execution history** → **✅ RESOLVED** — completed states persisted in FileStore~~
 6. **No TLS/mTLS → all traffic in cleartext**
 7. **Memory state only → all exec state lost on crash**
-8. **No work stealing → hot lanes starve while idle lanes wait**
-9. **`ExecuteAll` bypasses scheduler → no global execution control**
+8. ~~**No work stealing** → **✅ RESOLVED** — dequeueOrSteal() added~~
+9. ~~**`ExecuteAll` bypasses scheduler** → **✅ RESOLVED** — routes through EnqueueAndWait()~~
 10. **Hardcoded 64 partitions → no elastic scaling**
 
 ### Top 10 Immediate Fixes (<1 week each)
 
-| # | Fix | Effort | Impact |
+| # | Fix | Effort | Status |
 |---|-----|--------|--------|
-| 1 | Add Raft consensus (embed etcd or use HashiCorp Raft) | 2 weeks | Eliminates split-brain, enables HA |
-| 2 | Strip no-op opcodes from runtime bytecode | 2 days | Reduces bytecode size ~30% |
-| 3 | Add structured logging (zerolog/slog) | 2 days | Replace `log.Printf` |
-| 4 | Heartbeat + lease-based leader detection | 3 days | Faster failover |
-| 5 | Execution history append-log (file or SQLite) | 1 week | Audit trail + debugging |
-| 6 | Execution budget (max_instructions, max_time, max_memory) | 3 days | Prevents runaway rules |
-| 7 | Add caret-position error messages to DSL compiler | 2 days | Better developer experience |
-| 8 | Persistent dedup (replace in-memory tracker) | 3 days | Reliable dedup across restarts |
-| 9 | Add OpenAPI spec for admin API | 2 days | Enables client generation |
-| 10 | TLS everywhere (Kafka, gRPC, HTTP) | 1 week | Baseline security |
+| 1 | Add Raft consensus (embed etcd or use HashiCorp Raft) | 2 weeks | Pending |
+| 2 | Strip no-op opcodes from runtime bytecode | 2 days | Pending |
+| 3 | Add structured logging (zerolog/slog) | 2 days | ✅ Done (64 `log.Printf` → `slog`) |
+| 4 | Heartbeat + lease-based leader detection | 3 days | ✅ Done (`LeaderLease`, eviction) |
+| 5 | Execution history append-log (file or SQLite) | 1 week | ✅ Done (`FileStore` with `StatusCompleted`) |
+| 6 | Execution budget (max_instructions, max_time, max_memory) | 3 days | Pending |
+| 7 | Add caret-position error messages to DSL compiler | 2 days | Pending |
+| 8 | Persistent dedup (replace in-memory tracker) | 3 days | Pending |
+| 9 | Add OpenAPI spec for admin API | 2 days | Pending |
+| 10 | TLS everywhere (Kafka, gRPC, HTTP) | 1 week | Pending |
 
 ### Top 10 Medium-term Improvements (1-4 weeks each)
 
-| # | Improvement | Effort | Impact |
+| # | Improvement | Effort | Status |
 |---|-------------|--------|--------|
-| 11 | Work-stealing scheduler | 3 weeks | Eliminates lane starvation |
-| 12 | Rust VM as persistent daemon (unix socket) | 4 weeks | Eliminates FFI round-trip |
-| 13 | Deterministic execution recorder | 3 weeks | Enables replay debugging |
-| 14 | Split `ExecutionNode` into control + data plane | 3 weeks | Testability + maintainability |
-| 15 | HIR in compiler pipeline | 2 weeks | Enables cross-step optimizations |
-| 16 | Consistent hashing for partitions | 3 weeks | Elastic scaling |
-| 17 | DSL comments + named pipelines | 1 week | Developer ergonomics |
-| 18 | RBAC for admin API | 2 weeks | Multi-tenant isolation |
-| 19 | Property-based testing (quickcheck) | 2 weeks | Find edge cases |
-| 20 | Benchmark suite for FFI vs native | 1 week | Performance baselines |
+| 11 | Work-stealing scheduler | 3 weeks | ✅ Done (`dequeueOrSteal()` added) |
+| 12 | Rust VM as persistent daemon (unix socket) | 4 weeks | Pending |
+| 13 | Deterministic execution recorder | 3 weeks | Pending |
+| 14 | Split `ExecutionNode` into control + data plane | 3 weeks | ✅ Done (execnode deleted, ProdNode + NodeBuilder) |
+| 15 | HIR in compiler pipeline | 2 weeks | Pending |
+| 16 | Consistent hashing for partitions | 3 weeks | Pending |
+| 17 | DSL comments + named pipelines | 1 week | Pending |
+| 18 | RBAC for admin API | 2 weeks | Pending |
+| 19 | Property-based testing (quickcheck) | 2 weeks | Pending |
+| 20 | Benchmark suite for FFI vs native | 1 week | Pending |
 
 ### FlowRulZ v2 Architecture (Recommended)
 

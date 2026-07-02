@@ -6,7 +6,7 @@ Distributed execution runtime. Pub/Sub, RPC, workflows, and rules are all execut
 
 ```
 FlowRulZ/
-├── rust/          # Core: DSL toolchain, bytecode VM, event model, memory management
+├── runtime/        # Rust bytecode VM + DSL compiler
 │   ├── src/
 │   │   ├── bytecode/   # Event, ExecutionContext, Instruction set, plan format, type system
 │   │   ├── dsl/        # Lexer, parser, optimizer, compiler (with type checking)
@@ -15,32 +15,57 @@ FlowRulZ/
 │   │   └── memory/     # Arena allocator, string interning
 │   ├── benches/        # Criterion benchmarks
 │   └── Cargo.toml
-├── go/            # Go data plane + SDK
+├── server/         # Go control plane + data plane
 │   ├── bridge/          # cgo bindings to Rust FFI (sync.Map caller dispatch)
-│   ├── cmd/flowrulz/    # Entry point (ExecutionNode)
-│   ├── flow/            # Client SDK (Publish, Request, Execute, Stream)
-│   ├── pkg/transport/   # EventBus interface (canonical pub/sub abstraction)
+│   ├── cmd/flowrulz/    # Entry point (ProdNode via NodeBuilder)
+│   ├── pkg/             # Public interfaces (for DI/testability) — 13 packages
+│   │   ├── cluster/     # Raft consensus + membership interfaces
+│   │   ├── transport/   # EventBus interface (canonical pub/sub abstraction)
+│   │   ├── scheduler/   # Task scheduling + lane interfaces
+│   │   ├── engine/      # Rule lifecycle interfaces
+│   │   ├── node/        # Node interface
+│   │   ├── plandist/    # Plan distribution interfaces
+│   │   ├── partition/   # Partition management interfaces
+│   │   ├── membership/  # Node membership interfaces
+│   │   ├── store/       # Execution state persistence interfaces
+│   │   ├── registry/    # Service registry interfaces
+│   │   ├── reliability/ # Circuit breaker, DLQ, rate limit, dedup, saga interfaces
+│   │   ├── replyrouter/ # Reply router interface
+│   │   └── vm/          # Plan compilation + execution interfaces
 │   └── internal/
-│       ├── engine/         # Rule lifecycle, versioning, lane routing, persistence
-│       ├── execnode/       # ExecutionNode process (engine + transport + admin lifecycle)
-│       ├── cluster/        # Cluster Bus — gRPC p2p overlay (Publish/Subscribe, peer mgmt)
-│       ├── transport/      # Legacy Kafka transport (Sarama) + in-memory stubs
-│       ├── admin/          # HTTP API (rules CRUD, validate, promote, lanes)
-│       ├── flow/           # Flow orchestration
-│       ├── plugins/        # WASM plugin loader — .wasm files → FFI registration
-│       ├── registry/       # ServiceRegistry — service name → healthy endpoints, LB
-│       ├── replyrouter/    # ReplyRouter — correlation ID → pending request channel
-│       ├── scheduler/      # Priority queue (fast/normal/heavy), concurrency limits, backpressure
-│       ├── plandist/       # PlanDistributor — plan/ack topics, versioned ACK quorum, activation
-│       ├── observability/  # MetricsCollector — counters, gauges, histograms
-│       └── reliability/    # DLQ, rate limiter, circuit breaker
-├── simulator/      # Simulator for testing rules, services, and cluster behavior
-│   ├── cmd/simulator/ # CLI entry point (--scenario, --interactive)
-│   ├── config/        # SimConfig, ChaosConfig
-│   ├── dashboard/     # HTTP dashboard + admin API
-│   ├── client.go      # Programmatic Client (Send, AddRule, RegisterService)
-│   ├── admin.go       # Admin HTTP handlers
-│   └── ...            # scheduler, dispatcher, services, loadgen, network, etc.
+│       ├── node/         # ProdNode — central struct wiring all modules
+│       ├── bootstrap/    # NodeBuilder — DI composition root
+│       ├── engine/       # Rule lifecycle, versioning, lane routing, persistence
+│       ├── scheduler/    # Priority lanes + work stealing
+│       ├── cluster/      # Raft + gRPC p2p Cluster Bus + Gossip
+│       ├── transport/    # Kafka (Sarama) + gRPC transport adapters
+│       ├── admin/        # HTTP API (rules CRUD, validate, promote, lanes)
+│       ├── plandist/     # Plan distribution + ack protocol
+│       ├── partition/    # Key-space shard mgmt + rebalancing
+│       ├── membership/   # Gossip, leader lease, heartbeat eviction
+│       ├── execstate/    # FileStore — JSON execution records
+│       ├── reliability/  # DLQ, saga, circuit breaker, dedup, rate limiter
+│       ├── registry/     # Service registry via HTTP heartbeat
+│       ├── replyrouter/  # ReplyRouter — correlation ID → pending request channel
+│       ├── observability/ # OTel tracing, Prometheus metrics
+│       ├── compiler/     # DSL compiler abstraction (local/remote)
+│       ├── plugins/      # WASM plugin loader
+│       ├── flowengine/   # Flow orchestration state machine
+│       ├── adapters/     # Adapters implementing pkg/ interfaces from internal/ types
+│       └── ports/        # Port interfaces
+├── sdk/             # Polyglot SDKs
+│   ├── flow/            # Go client library
+│   ├── java/            # Java SDK (Maven, com.flowrulz)
+│   ├── python/          # Python SDK (pip, flowrulz)
+│   ├── javascript/      # JS/TS SDK (npm, flowrulz)
+│   └── rust/            # Rust SDK (cargo, flowrulz-sdk)
+├── simulator/       # Simulator for testing rules, services, and cluster behavior
+│   ├── cmd/simulator/   # CLI entry point (--scenario, --interactive)
+│   ├── config/          # SimConfig, ChaosConfig
+│   ├── dashboard/       # HTTP dashboard + admin API
+│   ├── client.go        # Programmatic Client (Send, AddRule, RegisterService)
+│   ├── admin.go         # Admin HTTP handlers
+│   └── ...              # scheduler, dispatcher, services, loadgen, network, etc.
 ├── docs/
 │   ├── flow-architecture.md  # Distributed Event Runtime — architecture, Event model, ExecutionContext, flows
 │   ├── dsl-syntax.md         # DSL language specification
@@ -55,8 +80,9 @@ FlowRulZ/
 │   ├── software-review.md    # Multi-layer codebase review (architecture, bugs, security, ops)
 │   ├── ultimate-review-prompt.md # Architecture review prompt for decoupling, SOLID, DRY, and OOP design
 │   ├── development.md
+│   ├── obsidian-vault/       # Obsidian vault (26 notes, arch map, canvas)
 │   └── README.md
-├── CLAUDE.md
+├── AGENTS.md
 ├── Makefile
 ├── go.mod
 └── README.md
@@ -96,7 +122,7 @@ make bench
 | Seed-based membership | Nodes discover via seed peers; heartbeat on `_flowrulz_members` via Cluster Bus |
 | Service Registry | Services self-register via POST /register with methods/version/protocol/zone/weight; heartbeat expiry (30s TTL) marks unhealthy; LookupInstance(name, method) selects method-aware endpoints |
 | Reply Router | Per-node pending request tracker by correlation_id; timeout/cleanup goroutine; routed via Cluster Bus |
-| Scheduler | Lane-based priority queues; Fast (50 concurrent, 5k), Normal (20, 2k), Heavy (5, 500) |
+| Scheduler | Lane-based priority queues + work stealing; Fast (50 concurrent, 5k), Normal (20, 2k), Heavy (5, 500); idle workers steal from Heavy→Normal→Fast |
 | Plan Distribution | `PlanDistributor` publishes plans on `_flowrulz_plans`; followers ACK on `_flowrulz_acks`; quorum-based activation |
 | Rate Limiter | Token bucket per name; configurable rate/burst for ingress control |
 | Dead Letter Queue | Bounded queue with replay support; JSON export, per-entry retry count |

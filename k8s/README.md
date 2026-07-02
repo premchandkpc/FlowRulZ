@@ -61,7 +61,7 @@ Add to `/etc/hosts` for local kind:
 
 ## Env vars
 
-See [docs/](/docs/) and CLAUDE.md for the full env var reference.
+See [docs/](/docs/) for the full env var reference.
 
 ## Images
 

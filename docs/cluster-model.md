@@ -35,14 +35,14 @@ A node starts as Follower. If no leader exists, it transitions to Leader. Exactl
 
 ## Transport: Cluster Bus
 
-The **Cluster Bus** (`go/internal/cluster/`) is a gRPC-based peer-to-peer overlay:
+The **Cluster Bus** (`server/internal/cluster/`) is a gRPC-based peer-to-peer overlay:
 
 - **ClusterNode**: manages Publish/Subscribe, peer membership, topic handlers
 - **ClusterProducer** / **ClusterConsumer**: adapters implementing `transport.MessageProducer` / `transport.MessageConsumer`
 - **Topics**: in-memory per-node routing tables — messages published to a topic are delivered to all subscribers across the cluster via gRPC streams
 - **No external deps**: no Kafka, no ZK, no Raft — pure gRPC p2p
 
-Kafka (`go/internal/transport/kafka/`) remains as a legacy fallback when `FLOWRULZ_KAFKA_BROKERS` is explicitly set.
+Kafka (`server/internal/transport/kafka/`) remains as a legacy fallback when `FLOWRULZ_KAFKA_BROKERS` is explicitly set.
 
 ## Node Identity
 
@@ -120,7 +120,7 @@ Algorithm:
 
 **Term persistence**: Term and current leader ID are persisted to `cluster-term.json` in the exec state directory (`TermStore`). On restart, the node restores its known term to avoid accepting stale plans from a previous term.
 
-**Lease-based detection**: A `LeaderLease` (default 8s, ~2.5× heartbeat interval) triggers re-election if the leader's heartbeat hasn't been seen. The `Membership.StartLeaderLeaseChecker` goroutine runs every heartbeat interval and marks the leader dead if its last seen exceeds the lease. A callback notifies `execnode.runLeaderElection()` which promotes the next candidate.
+**Lease-based detection**: A `LeaderLease` (default 8s, ~2.5× heartbeat interval) triggers re-election if the leader's heartbeat hasn't been seen. The `Membership.StartLeaderLeaseChecker` goroutine runs every heartbeat interval and marks the leader dead if its last seen exceeds the lease. A callback notifies `ProdNode.runLeaderElection()` which promotes the next candidate.
 
 **Fencing on heartbeat receive**: When a non-leader heartbeat carries a higher term, the current leader steps down immediately (`handleMembershipMessage` compares `hb.Term > CurrentTerm()`).
 
@@ -136,7 +136,7 @@ t=10 Node A restarts → sees leader=B → stays follower
 
 ## Partition Ownership
 
-Partition ownership is managed by `partition.Manager` (`go/internal/partition/`):
+Partition ownership is managed by `partition.Manager` (`server/internal/partition/`):
 
 - **Fixed N partitions**: Default 64 (configurable via `FLOWRULZ_NUM_PARTITIONS`)
 - **Round-robin assignment**: Leader assigns partitions across alive nodes
@@ -209,11 +209,11 @@ Partition ownership is managed by `partition.Manager` (`go/internal/partition/`)
 
 Services self-register via HTTP (`POST /register`). Every node runs its own `ServiceRegistry` instance. The leader aggregates and publishes the combined registry.
 
-See `go/internal/registry/` and `docs/specs/flow-architecture.md` for full details.
+See `server/internal/registry/` and `docs/flow-architecture.md` for full details.
 
 ## Reply Router
 
-Per-node component (`go/internal/replyrouter/`). Tracks pending request/reply by correlation_id. Replies route via cluster bus topic to origin node.
+Per-node component (`server/internal/replyrouter/`). Tracks pending request/reply by correlation_id. Replies route via cluster bus topic to origin node.
 
 ## Node Lifecycle
 

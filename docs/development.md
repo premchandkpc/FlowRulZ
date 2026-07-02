@@ -13,7 +13,7 @@
 make
 
 # Rust only
-cd rust && cargo build --release
+cd runtime && cargo build --release
 
 # Go only (requires prebuilt Rust cdylib)
 make go
@@ -24,20 +24,20 @@ The Rust library is built as both `cdylib` and `rlib`. The `cdylib` (`libflowrul
 ## Test
 
 ```bash
-# All tests (Rust 154 + Go all packages)
+# All tests (Rust 401 + Go all packages)
 make test
 
 # Rust only
-cd rust && cargo test
+cd runtime && cargo test
 
 # Go only
-CGO_ENABLED=1 go test -count=1 ./go/... ./simulator/...
+CGO_ENABLED=1 go test -count=1 ./server/... ./simulator/...
 
 # E2E cluster tests (3-node docker-compose)
 make e2e
 
 # Go lint
-CGO_ENABLED=1 go vet ./go/... ./simulator/...
+CGO_ENABLED=1 go vet ./server/... ./simulator/...
 ```
 
 ## Bench
@@ -51,7 +51,7 @@ Criterion benchmarks: compile (5 DSL variants), VM execute, full pipeline, gate 
 ## Project Layout
 
 ```
-rust/src/
+runtime/src/
 ├── lib.rs              # C FFI exports, module declarations
 ├── bytecode/           # Instruction set, plan types, event model, type system
 │   ├── mod.rs
@@ -92,31 +92,47 @@ rust/src/
     ├── arena.rs        # Bump allocator
     └── intern.rs       # String interning
 
-go/
+server/
 ├── bridge/                 # cgo bindings to Rust FFI
 │   ├── bridge.go           # Go wrappers + sync.Map caller dispatch
 │   ├── caller_bridge.c     # C helper for function pointer callback
 │   └── bridge_test.go      # Integration tests
-├── cmd/flowrulz/           # Entry point (uses execnode package)
-├── flow/                   # Client SDK (Publish, Request, Execute, Stream)
-│   └── client.go
-├── pkg/transport/          # Public EventBus interface — canonical pub/sub abstraction
-│   └── eventbus.go         # EventBus, Message, Handler, Subscription types
+├── cmd/flowrulz/           # Entry point (uses bootstrap.NodeBuilder)
+├── pkg/                    # Public interfaces (13 packages for DI/testability)
+│   ├── transport/eventbus.go  # EventBus, Message, Handler, Subscription types
+│   ├── cluster/               # Raft + membership interfaces
+│   ├── scheduler/             # Task scheduling + lane interfaces
+│   ├── engine/                # Rule lifecycle interfaces
+│   ├── node/                  # Node interface
+│   ├── plandist/              # Plan distribution interfaces
+│   ├── partition/             # Partition management interfaces
+│   ├── membership/            # Node membership interfaces
+│   ├── store/                 # Execution state persistence interfaces
+│   ├── registry/              # Service registry interfaces
+│   ├── reliability/           # Circuit breaker, DLQ, rate limit, dedup, saga interfaces
+│   ├── replyrouter/           # Reply router interface
+│   └── vm/                    # Plan compilation + execution interfaces
 └── internal/
+    ├── node/               # ProdNode — central struct wiring all modules
+    ├── bootstrap/          # NodeBuilder — DI composition root
     ├── engine/             # Rule lifecycle, versioning, lane routing, persistence
-    ├── execnode/           # ExecutionNode, ExecRegistry, TermStore — all process orchestrations
-    ├── cluster/            # ClusterNode (gRPC p2p), Gossiper (epidemic gossip), ClusterProducer/Consumer
-    ├── transport/          # Kafka consumer/producer (Sarama-backed) + gRPC transport, MessageConsumer/MessageProducer interfaces
+    ├── scheduler/          # Priority lanes + work stealing
+    ├── cluster/            # Raft + gRPC p2p Cluster Bus + Gossip
+    ├── transport/          # Kafka (Sarama) + gRPC transport adapters
     ├── admin/              # HTTP API (rules CRUD, validate, promote, lanes)
-    ├── flow/               # Flow orchestrator with state machine
-    ├── plugins/            # WASM plugin loader — scans .wasm files, registers via FFI
-    ├── registry/           # ServiceRegistry — service name → healthy endpoints, LB, health checks
-    ├── replyrouter/        # ReplyRouter — correlation ID → pending request channel, timeout/cleanup
-    ├── scheduler/          # Priority queue (fast/normal/heavy), concurrency limits, backpressure
-    ├── plandist/           # PlanDistributor — plan/ack topics, versioned ACK quorum, activation
-    ├── observability/      # MetricsCollector — counters, gauges, histograms, global shortcuts
-    ├── reliability/        # DLQ, rate limiter, circuit breaker, saga tracker, dedup
-    └── membership/         # Membership — alive tracking, leader election, lease detection, eviction
+    ├── plandist/           # Plan distribution + ack protocol
+    ├── partition/          # Key-space shard mgmt + rebalancing
+    ├── membership/         # Gossip, leader lease, heartbeat eviction
+    ├── execstate/          # FileStore — JSON execution records
+    ├── reliability/        # DLQ, saga, circuit breaker, dedup, rate limiter
+    ├── registry/           # Service registry via HTTP heartbeat
+    ├── replyrouter/        # ReplyRouter — correlation ID → pending request channel
+    ├── observability/      # OTel tracing, Prometheus metrics
+    ├── compiler/           # DSL compiler abstraction (local/remote)
+    ├── plugins/            # WASM plugin loader
+    ├── flowengine/         # Flow orchestration state machine
+    ├── adapters/           # Adapters implementing pkg/ interfaces
+    └── ports/              # Port interfaces
 
 simulator/                  # Simulator for testing rules, services, and cluster behavior
 ├── cmd/simulator/          # CLI entry point (--scenario, --interactive, --dashboard)

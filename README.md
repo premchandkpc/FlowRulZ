@@ -11,25 +11,28 @@
 
 ```bash
 make          # build Rust cdylib + Go binary
-make test     # run all tests (Rust 111 + Go vet)
+make test     # run all tests (Rust 401 + Go vet)
 ./flowrulz    # start node on :8080
 ```
 
-## Client SDK
+## Client SDKs
+
+All SDKs expose the same four operations: **Publish** (fire-and-forget), **Request** (sync RPC), **Execute** (rule), **Stream** (subscription).
+
+| Language | Package | Source |
+|----------|---------|--------|
+| Go | `github.com/premchandkpc/FlowRulZ/sdk/flow` | `sdk/flow/` |
+| Java | `com.flowrulz:flowrulz-sdk` | `sdk/java/` |
+| Python | `flowrulz` | `sdk/python/` |
+| JavaScript/TypeScript | `flowrulz` | `sdk/javascript/` |
+| Rust | `flowrulz-sdk` | `sdk/rust/` |
 
 ```go
 client := flow.New(flow.Config{Address: "localhost:8080"})
 
-// Fire-and-forget
 client.Publish(ctx, "orders", orderPayload)
-
-// Synchronous RPC
 resp, err := client.Request(ctx, "payment", paymentReq, 5*time.Second)
-
-// Rule execution (DSL pipeline)
 result, err := client.Execute(ctx, "order-flow", order)
-
-// Stream subscription
 stream, err := client.Stream(ctx, "events", handler)
 ```
 
@@ -37,18 +40,19 @@ stream, err := client.Stream(ctx, "events", handler)
 
 ```
 FlowRulZ/
-├── rust/          # Core: DSL toolchain + bytecode VM + Event types + type system
-├── go/            # SDK + Engine + Bridge + Admin + Transport
-├── go/flow/       # Client SDK (Publish, Request, Execute, Stream)
-├── docs/          # Specs: architecture, DSL syntax, bytecode format, VM
+├── runtime/        # Rust bytecode VM + DSL compiler
+├── server/         # Go control plane + data plane
+├── sdk/            # Polyglot SDKs (Go, Java, Python, JS/TS, Rust)
+├── docs/           # Specs + architecture + Obsidian vault
+├── simulator/      # Load gen + scenario testing
 └── Makefile
 ```
 
-Go module: `github.com/premchandkpc/FlowRulZ`
+Go module: `github.com/premchandkpc/FlowRulZ/server`
 Rust crate: `flowrulz-core` (cdylib + rlib)
 Binary: `flowrulz`
 
-### Rust (Core)
+### Rust — `runtime/`
 
 | Module | Description |
 |--------|-------------|
@@ -60,16 +64,26 @@ Binary: `flowrulz`
 | `executor/` | VM dispatching 23 opcodes, ExecutionRuntime for Chunk/Buffer |
 | `ffi.rs` | C FFI: `flowrulz_compile`, `flowrulz_execute`, `flowrulz_get_spans` |
 
-### Go (SDK + Data Plane)
+### Go — `server/`
 
 | Module | Description |
 |--------|-------------|
-| `flow/` | Client SDK: `New()`, `Publish()`, `Request()`, `Execute()`, `Stream()` |
-| `internal/engine/` | `Engine`: versioned plans, lane routing, persistence, `ExecuteAll()` |
-| `internal/bridge/` | CGo bindings: `Compile()`, `Execute()`, `GetSpans()` |
-| `internal/execnode/` | `ExecutionNode`: process wrapping engine + transport + admin lifecycle |
+| `bridge/` | CGo bindings: `Compile()`, `Execute()`, `GetSpans()` |
+| `cmd/flowrulz/` | Entry point using `bootstrap.NodeBuilder.WithDefaults()` |
 | `internal/admin/` | HTTP API: rule CRUD, validate, promote, lanes |
-| `internal/transport/` | Kafka consumer/producer |
+| `internal/engine/` | `Engine`: versioned plans, lane routing, persistence |
+| `internal/scheduler/` | Priority lanes (Fast/Normal/Heavy) + work stealing |
+| `internal/cluster/` | gRPC p2p Cluster Bus + gossip membership |
+| `internal/node/` | `ProdNode` — central struct wiring all modules |
+| `internal/bootstrap/` | `NodeBuilder` — DI composition root |
+| `internal/plandist/` | Plan distribution + ack protocol |
+| `internal/partition/` | Key-space shard mgmt + rebalancing |
+| `internal/membership/` | Gossip, leader lease, heartbeat eviction |
+| `internal/execstate/` | FileStore — JSON execution records |
+| `internal/reliability/` | DLQ, Saga, Circuit Breaker, Dedup, Rate Limiter |
+| `internal/registry/` | Service registry via HTTP heartbeat |
+| `internal/observability/` | OTel tracing, Prometheus metrics |
+| `pkg/` | Public interfaces (for DI/testability) |
 
 ## Architecture
 
@@ -106,6 +120,7 @@ Binary: `flowrulz`
 - **Versioned rules**: promote/rollback with active execution draining
 - **Admin API**: rule CRUD, validate, promote, rollback, lanes — API key auth
 - **Span tracing**: per-opcode lock-free ring buffer, drained via `flowrulz_get_spans`
+- **Documentation**: Obsidian vault at `docs/obsidian-vault/` — 26 notes, architecture map, cross-linked
 - **Zero-alloc message path**: slab pool + bump arena + string interning
 - **22 expression builtins**: uuid, now, epoch, lower, upper, trim, length, concat, base64, json, substring, replace, to_string, parse_int, parse_float, coalesce, default, contains, keys, merge, hash
 
@@ -188,7 +203,7 @@ Event {
 
 ```bash
 make all       # rust release + go binary
-make test      # all rust (111) + go tests
+make test      # all rust (401) + go tests (28 packages)
 make bench     # criterion benchmarks
 make vet       # go vet
 make clean     # cargo clean + remove binary

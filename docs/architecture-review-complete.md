@@ -45,7 +45,7 @@ The main improvement opportunity is to continue moving the codebase toward:
 The repository already has meaningful domain packages such as:
 
 - engine
-- execnode
+- ProdNode (via NodeBuilder)
 - scheduler
 - registry
 - replyrouter
@@ -155,7 +155,7 @@ Responsibilities:
 Examples:
 
 - engine
-- execnode
+- ProdNode (via NodeBuilder)
 - scheduler
 - registry
 - replyrouter
@@ -218,40 +218,43 @@ Recommended direction:
 - keep long-term docs and architecture guidance in docs/
 - keep build/test conventions in Makefile and CI configuration
 
-### 6.2 go/
+### 6.2 server/
 This is the heart of the control plane and runtime orchestration.
 
 Recommended structure:
 
-- go/cmd/ : application entrypoints only
-- go/internal/admin/ : admin API concerns only
-- go/internal/engine/ : rule/plan orchestration logic
-- go/internal/execnode/ : runtime node orchestration and lifecycle
-- go/internal/scheduler/ : scheduling policy and queueing
-- go/internal/registry/ : service registry and lookup
-- go/internal/replyrouter/ : correlation and reply routing
-- go/internal/plandist/ : plan propagation and activation
-- go/internal/cluster/ : cluster transport and membership
-- go/internal/transport/ : low-level transport adapters
-- go/internal/reliability/ : circuit breaker, DLQ, rate limit, dedup, saga
-- go/internal/observability/ : metrics and tracing
-- go/internal/execstate/ : execution state persistence
-- go/internal/partition/ : partitioning and rebalance
-- go/flow/ : SDK/client layer
-- go/bridge/ : FFI bridge and Go-to-Rust integration
+- server/cmd/ : application entrypoints only
+- server/internal/admin/ : admin API concerns only
+- server/internal/engine/ : rule/plan orchestration logic
+- server/internal/scheduler/ : scheduling policy and queueing
+- server/internal/registry/ : service registry and lookup
+- server/internal/replyrouter/ : correlation and reply routing
+- server/internal/plandist/ : plan propagation and activation
+- server/internal/cluster/ : cluster transport + Raft consensus + membership
+- server/internal/transport/ : low-level transport adapters
+- server/internal/reliability/ : circuit breaker, DLQ, rate limit, dedup, saga
+- server/internal/observability/ : metrics and tracing
+- server/internal/execstate/ : execution state persistence
+- server/internal/partition/ : partitioning and rebalance
+- server/internal/node/ : ProdNode assembly
+- server/internal/bootstrap/ : DI composition root
+- server/internal/compiler/ : DSL compiler abstraction
+- server/pkg/ : public interfaces (13 packages)
+- sdk/flow/ : Go client SDK
+- server/bridge/ : FFI bridge and Go-to-Rust integration
 
-### 6.3 rust/
+### 6.3 runtime/
 This is the execution core and should remain relatively isolated.
 
 Recommended structure:
 
-- rust/src/bytecode/ : instruction and bytecode model
-- rust/src/dsl/ : parser, lexer, optimizer, compiler
-- rust/src/executor/ : runtime execution engine
-- rust/src/ffi/ or rust/src/ffi.rs : FFI boundary
-- rust/src/tracing/ : tracing and spans
-- rust/src/memory/ : allocation and memory helpers
-- rust/src/error.rs : shared errors
+- runtime/src/bytecode/ : instruction and bytecode model
+- runtime/src/dsl/ : parser, lexer, optimizer, compiler
+- runtime/src/executor/ : runtime execution engine
+- runtime/src/ffi.rs : FFI boundary
+- runtime/src/tracing/ : tracing and spans
+- runtime/src/memory/ : allocation and memory helpers
+- runtime/src/error.rs : shared errors
 
 The Rust layer should stay focused on execution semantics and avoid becoming a dumping ground for Go-side orchestration concerns.
 
@@ -464,7 +467,7 @@ Shared mutable state should be minimized or wrapped by well-defined abstractions
 ### Priority 1: Split large orchestrators
 Focus on:
 
-- execnode
+- ProdNode (via NodeBuilder)
 - engine
 - scheduler
 - admin server
@@ -505,15 +508,13 @@ Make rule deploy, plan activation, execution recovery, and failure handling expl
 A more explicit future layout could look like this:
 
 ```text
-go/
+server/
   cmd/
     flowrulz/
-    flowrulz-compiler/
   internal/
     admin/
     app/
       engine/
-      execnode/
       scheduler/
       registry/
       replyrouter/
@@ -538,7 +539,7 @@ go/
 And for Rust:
 
 ```text
-rust/src/
+runtime/src/
   core/
   bytecode/
   dsl/
@@ -776,7 +777,7 @@ Recommendation:
 ## 18. Recommended Refactoring Priorities Across the Whole Project
 
 ### Priority 1: Split large orchestrators
-- execnode
+- ProdNode (via NodeBuilder)
 - engine
 - admin server
 - scheduler

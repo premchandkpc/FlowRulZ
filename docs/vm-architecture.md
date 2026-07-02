@@ -91,7 +91,7 @@ Key differences from `run()`:
 - **Never blocks**: service opcodes yield `Pending` instead of calling the callback
 - **Response injection**: caller provides service response on the next `step()` call
 - **Context serialization**: the caller stores the serialized `ExecutionContext` between steps
-- **Used by**: `bridge.ExecuteStep()` in Go execnode and simulator for cooperative execution loops
+- **Used by**: `bridge.ExecuteStep()` in Go ProdNode and simulator for cooperative execution loops
 
 ## Event Model
 

@@ -91,6 +91,6 @@ mod tests {
     #[test]
     fn test_arena_default() {
         let arena = Arena::default();
-        assert!(arena.allocated_bytes() >= 0);
+        assert_eq!(arena.allocated_bytes(), 0);
     }
 }

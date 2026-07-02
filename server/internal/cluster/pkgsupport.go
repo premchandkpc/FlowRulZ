@@ -2,17 +2,13 @@ package cluster
 
 import (
 	"context"
-	"log/slog"
 
 	"github.com/hashicorp/raft"
 
 	pkgcluster "github.com/premchandkpc/FlowRulZ/server/pkg/cluster"
 )
 
-var (
-	_ pkgcluster.ClusterMember = (*ClusterMember)(nil)
-	_ pkgcluster.Gossiper     = (*GossiperAdapter)(nil)
-)
+var _ pkgcluster.ClusterMember = (*ClusterMember)(nil)
 
 type ClusterMember struct {
 	inner *RaftCluster
@@ -93,52 +89,4 @@ func (cm *ClusterMember) BootstrapCluster() error {
 	return cm.inner.BootstrapCluster()
 }
 
-type GossiperAdapter struct {
-	inner *Gossiper
-}
 
-func NewGossiperAdapter(g *Gossiper) *GossiperAdapter {
-	return &GossiperAdapter{inner: g}
-}
-
-func (ga *GossiperAdapter) Start(ctx context.Context) error {
-	return nil
-}
-
-func (ga *GossiperAdapter) Stop() error {
-	ga.inner.Stop()
-	return nil
-}
-
-func (ga *GossiperAdapter) OnNodeJoin(fn func(nodeID, addr string)) pkgcluster.CancelFunc {
-	ga.inner.OnNodeJoin(fn)
-	return func() {}
-}
-
-func (ga *GossiperAdapter) OnNodeLeave(fn func(nodeID string)) pkgcluster.CancelFunc {
-	return func() {}
-}
-
-func (ga *GossiperAdapter) Publish(topic string, key string, data []byte) error {
-	if ga.inner.node == nil {
-		return nil
-	}
-	ga.inner.node.Publish(topic, key, data)
-	return nil
-}
-
-func (ga *GossiperAdapter) AddPeer(id, addr string) error {
-	if ga.inner.node == nil {
-		slog.Warn("gossiper: AddPeer called but no cluster node")
-		return nil
-	}
-	return ga.inner.node.AddPeer(id, addr)
-}
-
-func (ga *GossiperAdapter) RemovePeer(id string) error {
-	if ga.inner.node == nil {
-		return nil
-	}
-	ga.inner.node.RemovePeer(id)
-	return nil
-}

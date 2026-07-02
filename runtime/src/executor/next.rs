@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn test_exec_next_async_ack_with_retry() {
-        let mut plan = make_plan_with_retry();
+        let plan = make_plan_with_retry();
         let mut instr = Instruction::next(1, 5000);
         instr.flags = 0x01; // has_retry
         instr.c = 0;

@@ -32,10 +32,6 @@ type MessageProducer interface {
 	Close() error
 }
 
-type MessageProducerFactory interface {
-	CreateProducer(ctx context.Context, topic string) (MessageProducer, error)
-}
-
 type MessageConsumer interface {
 	Topic() string
 	Start(ctx context.Context) error

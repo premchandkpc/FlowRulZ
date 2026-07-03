@@ -2,6 +2,7 @@ package reliability
 
 import (
 	"context"
+	"time"
 
 	pkgreliability "github.com/premchandkpc/FlowRulZ/server/pkg/reliability"
 )
@@ -51,5 +52,47 @@ func (dt *DedupTracker) MarkSeen(ctx context.Context, id string) error {
 	return nil
 }
 
-func (dt *DedupTracker) StopCleanup() {
+func (dt *DedupTracker) StopCleanup() {}
+
+// RateLimiter pkg adapter helpers
+
+func (rl *RateLimiter) AllowWithCtx(_ context.Context, key string) bool {
+	return rl.Allow(key)
+}
+
+func (rl *RateLimiter) WaitCtx(ctx context.Context, key string) error {
+	for {
+		if rl.Allow(key) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+func (rl *RateLimiter) SetBucketRate(key string, rate float64, burst int) {
+	rl.SetBucket(key, rate, burst)
+}
+
+// SagaTracker pkg adapter helpers
+
+func (st *SagaTracker) CompensateCtx(_ context.Context, sagaID string) error {
+	return st.Compensate(sagaID)
+}
+
+func (st *SagaTracker) StatusInfo(ctx context.Context, sagaID string) (*pkgreliability.SagaStatus, error) {
+	_ = ctx
+	steps := st.StepsFor(sagaID)
+	completed := make([]string, 0, len(steps))
+	for _, s := range steps {
+		completed = append(completed, s.ServiceName)
+	}
+	return &pkgreliability.SagaStatus{
+		SagaID:    sagaID,
+		State:     "active",
+		Completed: completed,
+	}, nil
 }

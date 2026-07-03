@@ -2,6 +2,7 @@ package execution
 
 import (
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -46,11 +47,13 @@ func (s State) String() string {
 var nextExecID atomic.Uint64
 
 type ExecutionContext struct {
-	ID               string
-	Plan             *Plan
-	IP               int
-	State            State
-	Variables        map[string]any
+	mu   sync.Mutex
+	ID   string
+	Plan *Plan
+	IP   int
+
+	state            State
+	variables        map[string]any
 	IncomingBody     []byte
 	Output           []byte
 	WaitingService   string
@@ -78,31 +81,81 @@ func NewContext(plan *Plan, body []byte) *ExecutionContext {
 		ID:           id,
 		Plan:         plan,
 		IP:           0,
-		State:        StateCreated,
-		Variables:    make(map[string]any),
+		state:        StateCreated,
+		variables:    make(map[string]any),
 		IncomingBody: body,
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	}
 }
 
+func (ec *ExecutionContext) State() State {
+	ec.mu.Lock()
+	defer ec.mu.Unlock()
+	return ec.state
+}
+
+func (ec *ExecutionContext) SetVariable(key string, val any) {
+	ec.mu.Lock()
+	defer ec.mu.Unlock()
+	ec.variables[key] = val
+}
+
+func (ec *ExecutionContext) Variable(key string) any {
+	ec.mu.Lock()
+	defer ec.mu.Unlock()
+	return ec.variables[key]
+}
+
+func (ec *ExecutionContext) VariablesMap() map[string]any {
+	ec.mu.Lock()
+	defer ec.mu.Unlock()
+	m := make(map[string]any, len(ec.variables))
+	for k, v := range ec.variables {
+		m[k] = v
+	}
+	return m
+}
+
 func (ec *ExecutionContext) Transition(to State, meta string) {
+	ec.mu.Lock()
+	defer ec.mu.Unlock()
 	ec.StateChanges = append(ec.StateChanges, StateChange{
-		From: ec.State,
+		From: ec.state,
 		To:   to,
 		At:   time.Now(),
 		Meta: meta,
 	})
-	ec.State = to
+	ec.state = to
 	ec.UpdatedAt = time.Now()
 }
 
 func (ec *ExecutionContext) MarkDone() {
+	ec.mu.Lock()
 	ec.Duration = time.Since(ec.CreatedAt)
-	ec.Transition(StateCompleted, "execution completed")
+	prev := ec.state
+	ec.state = StateCompleted
+	ec.StateChanges = append(ec.StateChanges, StateChange{
+		From: prev,
+		To:   StateCompleted,
+		At:   time.Now(),
+		Meta: "execution completed",
+	})
+	ec.UpdatedAt = time.Now()
+	ec.mu.Unlock()
 }
 
 func (ec *ExecutionContext) MarkFailed(err error) {
+	ec.mu.Lock()
 	ec.Duration = time.Since(ec.CreatedAt)
-	ec.Transition(StateFailed, err.Error())
+	prev := ec.state
+	ec.state = StateFailed
+	ec.StateChanges = append(ec.StateChanges, StateChange{
+		From: prev,
+		To:   StateFailed,
+		At:   time.Now(),
+		Meta: err.Error(),
+	})
+	ec.UpdatedAt = time.Now()
+	ec.mu.Unlock()
 }

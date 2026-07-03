@@ -88,12 +88,9 @@ func (rr *ReplyRouter) Cancel(correlationID string) {
 	pr, ok := rr.pending[correlationID]
 	if ok {
 		delete(rr.pending, correlationID)
-	}
-	rr.mu.Unlock()
-
-	if ok {
 		close(pr.ReplyCh)
 	}
+	rr.mu.Unlock()
 }
 
 func (rr *ReplyRouter) Deliver(ctx context.Context, correlationID string, msg *transport.Message) bool {
@@ -101,20 +98,15 @@ func (rr *ReplyRouter) Deliver(ctx context.Context, correlationID string, msg *t
 	pr, ok := rr.pending[correlationID]
 	if ok {
 		delete(rr.pending, correlationID)
+		select {
+		case pr.ReplyCh <- msg:
+		default:
+		}
+		close(pr.ReplyCh)
 	}
 	rr.mu.Unlock()
 
-	if !ok {
-		return false
-	}
-
-	select {
-	case pr.ReplyCh <- msg:
-	default:
-	}
-
-	close(pr.ReplyCh)
-	return true
+	return ok
 }
 
 func (rr *ReplyRouter) PendingCount() int {
@@ -145,11 +137,16 @@ func (rr *ReplyRouter) StopCleanup() {
 func (rr *ReplyRouter) cleanup() {
 	now := time.Now()
 	rr.mu.Lock()
+	var expired []chan<- *transport.Message
 	for corrID, pr := range rr.pending {
 		if now.After(pr.Deadline) {
 			delete(rr.pending, corrID)
-			close(pr.ReplyCh)
+			expired = append(expired, pr.ReplyCh)
 		}
 	}
 	rr.mu.Unlock()
+
+	for _, ch := range expired {
+		close(ch)
+	}
 }

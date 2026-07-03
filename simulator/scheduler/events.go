@@ -54,30 +54,30 @@ func (s *Scheduler) executeContext(ctx *execution.ExecutionContext, workerID int
 				s.sendResult(ctx)
 				return
 			}
-			ctx.Variables[instr.Service+"_result"] = string(result.Body)
-			ctx.Variables[instr.Service+"_latency"] = result.Latency.Milliseconds()
+			ctx.SetVariable(instr.Service+"_result", string(result.Body))
+			ctx.SetVariable(instr.Service+"_latency", result.Latency.Milliseconds())
 			s.Metrics.RecordServiceCall(instr.Service, result.Latency, false)
 
 		case execution.OpValidate:
-			ctx.Variables["validated"] = true
+			ctx.SetVariable("validated", true)
 
 		case execution.OpBranch:
 			condition := instr.Args[0]
-			val, ok := ctx.Variables[condition]
-			if !ok {
-				ctx.Variables["branch_taken"] = false
+			val := ctx.Variable(condition)
+			if val == nil {
+				ctx.SetVariable("branch_taken", false)
 				ctx.IP++
 				continue
 			}
 			strVal := fmt.Sprintf("%v", val)
 			if strVal == "true" || strVal == "1" || strVal == "high" {
-				ctx.Variables["branch_taken"] = true
+				ctx.SetVariable("branch_taken", true)
 			} else {
-				ctx.Variables["branch_taken"] = false
+				ctx.SetVariable("branch_taken", false)
 			}
 
 		case execution.OpPublish:
-			ctx.Variables["published"] = instr.Args[0]
+			ctx.SetVariable("published", instr.Args[0])
 
 		case execution.OpReturn:
 			ctx.MarkDone()

@@ -79,6 +79,9 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	s.started = true
 	s.mu.Unlock()
 
+	for _, l := range s.lanes {
+		l.wg.Add(l.cfg.MaxConcurrent)
+	}
 	for p, l := range s.lanes {
 		go s.laneWorker(ctx, p, l)
 	}
@@ -131,13 +134,15 @@ func (s *Scheduler) EnqueueAndWait(ctx context.Context, task *Task) ([]byte, err
 	case res := <-task.ResultCh:
 		return res.Output, res.Error
 	case <-ctx.Done():
+		go func() {
+			<-task.ResultCh
+		}()
 		return nil, ctx.Err()
 	}
 }
 
 func (s *Scheduler) laneWorker(ctx context.Context, p Priority, l *lane) {
 	for i := 0; i < l.cfg.MaxConcurrent; i++ {
-		l.wg.Add(1)
 		go s.slotWorker(ctx, l)
 	}
 }

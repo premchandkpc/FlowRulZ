@@ -172,16 +172,20 @@ func TestMessageIDAutoAssign(t *testing.T) {
 	b := New(10)
 	defer b.Close()
 
-	var msgID string
+	ch := make(chan string, 1)
 	b.Subscribe("test", func(ctx context.Context, msg *transport.Message) {
-		msgID = msg.ID
+		ch <- msg.ID
 	})
 
 	b.Publish("test", &transport.Message{Body: []byte("hello")})
-	time.Sleep(50 * time.Millisecond)
 
-	if msgID == "" {
-		t.Fatal("expected auto-assigned message ID")
+	select {
+	case id := <-ch:
+		if id == "" {
+			t.Fatal("expected non-empty message ID")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for message")
 	}
 }
 

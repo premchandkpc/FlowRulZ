@@ -79,22 +79,20 @@ func (b *GRPCBus) Publish(ctx context.Context, req *PublishRequest) (*PublishRes
 	b.mu.RLock()
 	subs, ok := b.subscribers[req.Topic]
 	handler := b.handlers[req.Topic]
+	if ok {
+		for _, ch := range subs {
+			select {
+			case ch <- req.Msg:
+			default:
+			}
+		}
+	}
 	b.mu.RUnlock()
 
 	if handler != nil {
 		handler(ctx, req.Msg)
 	}
 
-	if !ok {
-		return &PublishResponse{}, nil
-	}
-
-	for _, ch := range subs {
-		select {
-		case ch <- req.Msg:
-		default:
-		}
-	}
 	return &PublishResponse{}, nil
 }
 
@@ -102,11 +100,6 @@ func (b *GRPCBus) deliverToTopic(ctx context.Context, topic string, msg *BusMess
 	b.mu.RLock()
 	subs, ok := b.subscribers[topic]
 	handler := b.handlers[topic]
-	b.mu.RUnlock()
-
-	if handler != nil {
-		handler(ctx, msg)
-	}
 	if ok {
 		for _, ch := range subs {
 			select {
@@ -114,6 +107,11 @@ func (b *GRPCBus) deliverToTopic(ctx context.Context, topic string, msg *BusMess
 			default:
 			}
 		}
+	}
+	b.mu.RUnlock()
+
+	if handler != nil {
+		handler(ctx, msg)
 	}
 }
 

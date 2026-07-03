@@ -1,26 +1,62 @@
+###############################################################################
+# Project
+###############################################################################
+
 RUST_DIR := runtime
+
 GO_PKG   := ./server/cmd/flowrulz
 SIM_PKG  := ./simulator/cmd/simulator
+
 BIN      := flowrulz
 SIM_BIN  := sim
-CGO      := CGO_ENABLED=1
 
-.PHONY: all rust go sim test test-local bench clean vet run-flowrulz run-sim \
-        docker docker-sim kind-up kind-load kind-deploy helm-install helm-uninstall k8s-deploy k8s-delete \
-        full file deploy
+IMAGE     := flowrulz:latest
+SIM_IMAGE := flowrulz-sim:latest
 
-all: rust go
+CLUSTER := flowrulz
 
-full: clean rust go sim test vet bench
-	@echo "=== All done ==="
+CGO := CGO_ENABLED=1
 
-file: full
+###############################################################################
+# PHONY
+###############################################################################
 
-deploy: full docker kind-up
-	kubectl apply -k k8s/base
+.PHONY: \
+all build rust go sim \
+run-flowrulz run-sim \
+test test-rust test-go test-local bench vet clean \
+docker docker-sim \
+kind-up kind-down kind-load \
+k8s-deploy k8s-delete \
+helm-install helm-uninstall \
+e2e-up e2e-test e2e-down e2e \
+logs pods svc describe shell port-forward restart status \
+up down rebuild reset deploy full
+
+###############################################################################
+# Build
+###############################################################################
+
+all: build
+
+build: rust go sim
+
+full: clean build test vet bench
+	@echo ""
+	@echo "==================================="
+	@echo " Build Completed Successfully"
+	@echo "==================================="
+
+###############################################################################
+# Rust
+###############################################################################
 
 rust:
 	cd $(RUST_DIR) && cargo build --release
+
+###############################################################################
+# Go
+###############################################################################
 
 go: rust
 	$(CGO) go build -o $(BIN) $(GO_PKG)
@@ -28,13 +64,19 @@ go: rust
 sim: rust
 	$(CGO) go build -o $(SIM_BIN) $(SIM_PKG)
 
+###############################################################################
+# Run
+###############################################################################
+
 run-flowrulz: go
-	@echo "=== starting flowrulz production node ==="
 	./$(BIN)
 
 run-sim: sim
-	@echo "=== starting simulator with dashboard on :8081 ==="
 	./$(SIM_BIN) --interactive --dashboard-addr :8081
+
+###############################################################################
+# Tests
+###############################################################################
 
 test-rust:
 	cd $(RUST_DIR) && cargo test
@@ -44,11 +86,9 @@ test-go:
 
 test: test-rust test-go
 
-test-local: go sim
+test-local: build
 	$(CGO) go test ./server/... ./simulator/... -count=1
-	@echo "--- smoke: sim --scenarios ---"
 	./$(SIM_BIN) --scenarios
-	@echo "--- smoke: sim 1s run ---"
 	./$(SIM_BIN) --scenario ramp-up --duration 1s --rate 10 --dashboard=false
 
 bench:
@@ -57,15 +97,90 @@ bench:
 vet:
 	$(CGO) go vet ./server/... ./simulator/...
 
-clean:
-	cd $(RUST_DIR) && cargo clean
-	rm -f $(BIN) $(SIM_BIN) simulator/simulator
-	rm -rf runtime/target
+###############################################################################
+# Docker
+###############################################################################
+
+docker:
+	docker build --target flowrulz -t $(IMAGE) .
+
+docker-sim:
+	docker build --target sim -t $(SIM_IMAGE) .
+
+###############################################################################
+# Kind
+###############################################################################
+
+kind-up:
+	kind create cluster \
+		--name $(CLUSTER) \
+		--config k8s/kind-config.yaml 2>/dev/null || true
+
+kind-load:
+	kind load docker-image $(IMAGE) --name $(CLUSTER)
+
+kind-down:
+	kind delete cluster --name $(CLUSTER)
+
+###############################################################################
+# Kubernetes
+###############################################################################
+
+k8s-deploy:
+	kubectl apply -k k8s/base
+
+k8s-delete:
+	kubectl delete -k k8s/base
+
+status:
+	kubectl get all -A
+
+pods:
+	kubectl get pods -A
+
+svc:
+	kubectl get svc -A
+
+logs:
+	kubectl logs -f deployment/flowrulz
+
+describe:
+	kubectl describe deployment flowrulz
+
+restart:
+	kubectl rollout restart deployment/flowrulz
+	kubectl rollout status deployment/flowrulz
+
+wait:
+	kubectl rollout status deployment/flowrulz --timeout=300s
+
+shell:
+	kubectl exec -it $$(kubectl get pod -l app=flowrulz -o jsonpath='{.items[0].metadata.name}') -- sh
+
+port-forward:
+	kubectl port-forward svc/flowrulz 8080:8080
+
+###############################################################################
+# Helm
+###############################################################################
+
+helm-install:
+	helm upgrade \
+		--install flowrulz \
+		k8s/helm \
+		--namespace flowrulz \
+		--create-namespace
+
+helm-uninstall:
+	helm uninstall flowrulz --namespace flowrulz
+
+###############################################################################
+# End-to-End
+###############################################################################
 
 e2e-up:
 	docker compose up -d --build
-	@echo "Waiting for cluster..."
-	@sleep 8
+	sleep 8
 
 e2e-test: e2e-up
 	E2E=1 go test ./e2e/... -v -count=1 -timeout=120s
@@ -75,27 +190,38 @@ e2e-down:
 
 e2e: e2e-test e2e-down
 
-docker:
-	docker build --target flowrulz -t flowrulz:latest .
+###############################################################################
+# Cleanup
+###############################################################################
 
-docker-sim:
-	docker build --target sim -t flowrulz-sim:latest .
+clean:
+	cd $(RUST_DIR) && cargo clean
+	rm -rf runtime/target
+	rm -f $(BIN)
+	rm -f $(SIM_BIN)
+	rm -f simulator/simulator
 
-kind-up:
-	kind create cluster --name flowrulz --config k8s/kind-config.yaml 2>/dev/null || true
-	kind load docker-image flowrulz:latest --name flowrulz
+###############################################################################
+# One Command Local Kubernetes
+###############################################################################
 
-kind-deploy: docker kind-up
-	kubectl apply -k k8s/base
+up: full docker kind-up kind-load k8s-deploy wait
+	@echo ""
+	@echo "=========================================="
+	@echo " FlowRulZ Successfully Deployed"
+	@echo "=========================================="
+	@kubectl get pods -A
 
-helm-install: docker
-	helm upgrade --install flowrulz k8s/helm --namespace flowrulz --create-namespace
+down:
+	kubectl delete -k k8s/base || true
+	kind delete cluster --name $(CLUSTER) || true
 
-helm-uninstall:
-	helm uninstall flowrulz --namespace flowrulz
+reset: down clean
 
-k8s-deploy: docker
-	kubectl apply -k k8s/base
+rebuild: reset up
 
-k8s-delete:
-	kubectl delete -k k8s/base
+###############################################################################
+# Default Deploy
+###############################################################################
+
+deploy: up

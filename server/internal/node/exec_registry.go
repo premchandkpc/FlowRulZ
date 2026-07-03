@@ -36,12 +36,12 @@ func (er *ExecRegistry) Unregister(id string) {
 func (er *ExecRegistry) Cancel(id string) bool {
 	er.mu.Lock()
 	entry, ok := er.exec[id]
-	er.mu.Unlock()
-	if !ok {
-		return false
+	if ok {
+		delete(er.exec, id)
+		entry.cancel()
 	}
-	entry.cancel()
-	return true
+	er.mu.Unlock()
+	return ok
 }
 
 func (er *ExecRegistry) CancelAll() {

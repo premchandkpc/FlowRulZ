@@ -221,6 +221,9 @@ func (s *Simulator) Run() error {
 func (s *Simulator) Stop() {
 	s.LoadGen.Stop()
 	s.Dispatcher.StopAll()
+	if s.Bus != nil {
+		s.Bus.Close()
+	}
 	if s.Dashboard != nil {
 		s.Dashboard.Stop()
 	}

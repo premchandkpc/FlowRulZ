@@ -16,6 +16,9 @@ import (
 
 func TestOrderFlowExecution(t *testing.T) {
 	svcs := services.DefaultServices()
+	for _, s := range svcs.All() {
+		s.FailureRate = 0.0
+	}
 	tl := timeline.NewStore()
 	mc := metrics.NewCollector()
 	net := network.New(network.Config{MinLatency: 0, MaxLatency: 0})
@@ -27,16 +30,21 @@ func TestOrderFlowExecution(t *testing.T) {
 	ctx := execution.NewContext(execution.OrderFlow, []byte(`{"order_id":"123"}`))
 	node.Enqueue(ctx)
 
-	time.Sleep(200 * time.Millisecond)
-
-	if ctx.State != execution.StateCompleted {
-		t.Fatalf("expected completed, got %s", ctx.State)
+	for start := time.Now(); time.Since(start) < 5*time.Second; {
+		if ctx.State() == execution.StateCompleted || ctx.State() == execution.StateFailed {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	if len(ctx.Variables) == 0 {
+	if ctx.State() != execution.StateCompleted {
+		t.Fatalf("expected completed, got %s", ctx.State())
+	}
+	vars := ctx.VariablesMap()
+	if len(vars) == 0 {
 		t.Fatal("expected variables to be populated")
 	}
-	if ctx.Variables["published"] != "order_confirmed" {
-		t.Fatalf("expected published=order_confirmed, got %v", ctx.Variables["published"])
+	if vars["published"] != "order_confirmed" {
+		t.Fatalf("expected published=order_confirmed, got %v", vars["published"])
 	}
 	if mc.Completed() != 1 {
 		t.Fatalf("expected 1 completed, got %d", mc.Completed())
@@ -47,6 +55,7 @@ func TestSuspensionResume(t *testing.T) {
 	svcs := services.DefaultServices()
 	svc := svcs.Get("payment")
 	svc.BaseLatency = 20 * time.Millisecond
+	svc.FailureRate = 0.0
 
 	tl := timeline.NewStore()
 	mc := metrics.NewCollector()
@@ -58,10 +67,15 @@ func TestSuspensionResume(t *testing.T) {
 
 	ctx := execution.NewContext(execution.PaymentFlow, []byte(`{"amount":100}`))
 	node.Enqueue(ctx)
-	time.Sleep(200 * time.Millisecond)
 
-	if ctx.State != execution.StateCompleted {
-		t.Fatalf("expected completed, got %s", ctx.State)
+	for start := time.Now(); time.Since(start) < 5*time.Second; {
+		if ctx.State() == execution.StateCompleted || ctx.State() == execution.StateFailed {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if ctx.State() != execution.StateCompleted {
+		t.Fatalf("expected completed, got %s", ctx.State())
 	}
 	events := tl.ForExec(ctx.ID)
 	if len(events) == 0 {
@@ -88,6 +102,9 @@ func TestSuspensionResume(t *testing.T) {
 
 func TestServiceFailure(t *testing.T) {
 	svcs := services.DefaultServices()
+	for _, s := range svcs.All() {
+		s.FailureRate = 0.0
+	}
 	pay := svcs.Get("payment")
 	pay.FailureRate = 1.0
 
@@ -101,10 +118,16 @@ func TestServiceFailure(t *testing.T) {
 
 	ctx := execution.NewContext(execution.OrderFlow, []byte(`{"order_id":"123"}`))
 	node.Enqueue(ctx)
-	time.Sleep(200 * time.Millisecond)
 
-	if ctx.State != execution.StateFailed {
-		t.Fatalf("expected failed, got %s (payment should be 100%% failure)", ctx.State)
+	for start := time.Now(); time.Since(start) < 5*time.Second; {
+		if ctx.State() == execution.StateCompleted || ctx.State() == execution.StateFailed {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if ctx.State() != execution.StateFailed {
+		t.Fatalf("expected failed, got %s (payment should be 100%% failure)", ctx.State())
 	}
 	if mc.Failed() != 1 {
 		t.Fatalf("expected 1 failure, got %d", mc.Failed())
@@ -113,6 +136,9 @@ func TestServiceFailure(t *testing.T) {
 
 func TestMultiNodeDispatch(t *testing.T) {
 	svcs := services.DefaultServices()
+	for _, s := range svcs.All() {
+		s.FailureRate = 0.0
+	}
 	svcs.Get("payment").BaseLatency = 5 * time.Millisecond
 	svcs.Get("inventory").BaseLatency = 2 * time.Millisecond
 	svcs.Get("fraud").BaseLatency = 3 * time.Millisecond

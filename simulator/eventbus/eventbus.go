@@ -37,6 +37,21 @@ func (b *EventBus) nextID() string {
 	return fmt.Sprintf("msg-%d", b.msgID.Add(1))
 }
 
+func (b *EventBus) handlersFor(topic string) map[string]transport.Handler {
+	b.mu.RLock()
+	handlers, ok := b.topics[topic]
+	if !ok {
+		b.mu.RUnlock()
+		return nil
+	}
+	cpy := make(map[string]transport.Handler, len(handlers))
+	for k, v := range handlers {
+		cpy[k] = v
+	}
+	b.mu.RUnlock()
+	return cpy
+}
+
 func (b *EventBus) Publish(topic string, msg *transport.Message) error {
 	if b.closed.Load() {
 		return fmt.Errorf("eventbus closed")
@@ -50,11 +65,8 @@ func (b *EventBus) Publish(topic string, msg *transport.Message) error {
 	msg.Topic = topic
 	msg.Type = transport.TypePublish
 
-	b.mu.RLock()
-	handlers, ok := b.topics[topic]
-	b.mu.RUnlock()
-
-	if !ok {
+	handlers := b.handlersFor(topic)
+	if handlers == nil {
 		return nil
 	}
 

@@ -98,6 +98,7 @@ func (d *DLQ) Send(entry *DeadLetterEntry) error {
 		}
 		if err := d.producer.Send(context.Background(), []byte(entry.ID), data); err != nil {
 			slog.Error("dlq: kafka produce error", "error", err)
+			return err
 		}
 	}
 	return nil

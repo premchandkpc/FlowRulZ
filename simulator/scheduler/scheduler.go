@@ -149,7 +149,7 @@ func (s *Scheduler) sendResult(ctx *execution.ExecutionContext) {
 		return
 	}
 	var err error
-	if ctx.State == execution.StateFailed {
+	if ctx.State() == execution.StateFailed {
 		if len(ctx.StateChanges) > 0 {
 			err = fmt.Errorf("%s", ctx.StateChanges[len(ctx.StateChanges)-1].Meta)
 		} else {

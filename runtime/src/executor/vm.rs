@@ -284,7 +284,7 @@ impl<'a> VM<'a> {
             Err(e) => {
                 self.ctx.failed = true;
                 self.ctx.errors.push(e.clone());
-                Err(e)
+                Ok(())
             }
         }
     }

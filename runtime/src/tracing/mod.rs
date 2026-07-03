@@ -1,4 +1,5 @@
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -17,6 +18,9 @@ pub struct SpanRingBuffer {
     head: AtomicU64,
     tail: AtomicU64,
 }
+
+unsafe impl Send for SpanRingBuffer {}
+unsafe impl Sync for SpanRingBuffer {}
 
 impl SpanRingBuffer {
     pub fn new() -> Self {
@@ -81,15 +85,27 @@ impl SpanRingBuffer {
     }
 }
 
-thread_local! {
-    pub static SPAN_BUFFER: std::cell::RefCell<SpanRingBuffer> =
-        std::cell::RefCell::new(SpanRingBuffer::new());
-}
+use once_cell::sync::Lazy;
+pub static SPAN_BUFFER: Lazy<Mutex<SpanRingBuffer>> =
+    Lazy::new(|| Mutex::new(SpanRingBuffer::new()));
 
 pub fn emit_span(span: Span) {
-    SPAN_BUFFER.with(|buf| {
-        buf.borrow_mut().push(span);
-    });
+    if let Ok(mut buf) = SPAN_BUFFER.lock() {
+        buf.push(span);
+    }
+}
+
+#[cfg(test)]
+fn drain_global_buffer() {
+    if let Ok(mut guard) = SPAN_BUFFER.lock() {
+        let mut dummy = [0u8; 256];
+        loop {
+            let written = guard.drain(&mut dummy);
+            if written == 0 {
+                break;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -171,10 +187,12 @@ mod tests {
 
     #[test]
     fn test_emit_span() {
+        drain_global_buffer();
         emit_span(make_span(42, 7, 500, 1));
         let span_size = std::mem::size_of::<Span>();
         let mut out = vec![0u8; span_size];
-        let written = SPAN_BUFFER.with(|buf| buf.borrow_mut().drain(&mut out));
+        let mut guard = SPAN_BUFFER.lock().unwrap();
+        let written = guard.drain(out.as_mut_slice());
         assert_eq!(written, span_size);
     }
 

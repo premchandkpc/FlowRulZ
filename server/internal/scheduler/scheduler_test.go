@@ -242,13 +242,25 @@ func TestTimerWheelOrder(t *testing.T) {
 	tw.Start()
 	defer tw.Stop()
 
+	var mu sync.Mutex
 	var order []int
 	done := make(chan struct{})
-	tw.Add(50*time.Millisecond, func() { order = append(order, 2); close(done) })
-	tw.Add(20*time.Millisecond, func() { order = append(order, 1) })
+	tw.Add(50*time.Millisecond, func() { mu.Lock(); order = append(order, 2); mu.Unlock(); close(done) })
+	tw.Add(20*time.Millisecond, func() { mu.Lock(); order = append(order, 1); mu.Unlock() })
 
 	<-done
-	if len(order) != 2 || order[0] != 1 || order[1] != 2 {
+	mu.Lock()
+	got := len(order)
+	first := -1
+	second := -1
+	if got >= 1 {
+		first = order[0]
+	}
+	if got >= 2 {
+		second = order[1]
+	}
+	mu.Unlock()
+	if got != 2 || first != 1 || second != 2 {
 		t.Fatalf("expected [1 2], got %v", order)
 	}
 }
@@ -257,6 +269,8 @@ func TestContextCancellation(t *testing.T) {
 	s := New(nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	s.Start(ctx)
+	defer cancel()
+	defer s.Stop()
 
 	task := &Task{
 		ID:       "cancel-test",
@@ -281,6 +295,4 @@ func TestContextCancellation(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("timeout waiting for cancellation")
 	}
-
-	s.Stop()
 }

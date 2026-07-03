@@ -13,7 +13,10 @@ pub unsafe extern "C" fn flowrulz_get_spans(out_ptr: *mut u8, out_cap: usize) ->
         return 0;
     }
     let out_slice = unsafe { std::slice::from_raw_parts_mut(out_ptr, out_cap) };
-    crate::tracing::SPAN_BUFFER.with(|buf| buf.borrow_mut().drain(out_slice))
+    match crate::tracing::SPAN_BUFFER.lock() {
+        Ok(mut buf) => buf.drain(out_slice),
+        Err(_) => 0,
+    }
 }
 
 #[cfg(test)]
@@ -28,6 +31,7 @@ mod tests {
 
     #[test]
     fn test_get_spans_empty() {
+        crate::tracing::drain_global_buffer();
         let mut buf = [0u8; 128];
         let written = unsafe { flowrulz_get_spans(buf.as_mut_ptr(), buf.len()) };
         assert_eq!(written, 0);

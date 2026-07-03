@@ -314,6 +314,7 @@ func (n *ProdNode) callService(svcName, method string, body []byte, timeoutMs ui
 		defer resp.Body.Close()
 
 		if resp.StatusCode >= 500 {
+			_, _ = io.ReadAll(resp.Body)
 			cb.Failure()
 			n.Registry.MarkUnhealthy(svcName, inst.Endpoint.NodeID)
 			return nil, fmt.Errorf("service %s: status %d", svcName, resp.StatusCode)

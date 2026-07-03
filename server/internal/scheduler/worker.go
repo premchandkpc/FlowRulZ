@@ -23,6 +23,7 @@ type TimerWheel struct {
 	done        chan struct{}
 	stopOnce    sync.Once
 	entries     map[uint64]*list.Element
+	wg          sync.WaitGroup
 }
 
 type timerEntry struct {
@@ -62,6 +63,7 @@ func (tw *TimerWheel) Stop() {
 		}
 		close(tw.done)
 	})
+	tw.wg.Wait()
 }
 
 func (tw *TimerWheel) Add(d time.Duration, callback func()) *Timer {
@@ -121,8 +123,8 @@ func (tw *TimerWheel) run() {
 
 func (tw *TimerWheel) tickOnce() {
 	tw.mu.Lock()
-	defer tw.mu.Unlock()
 
+	var fire []func()
 	slot := tw.slots[tw.currentSlot]
 	next := slot.Front()
 	for next != nil {
@@ -134,7 +136,7 @@ func (tw *TimerWheel) tickOnce() {
 			elem := tw.slots[targetSlot].PushBack(entry)
 			tw.entries[entry.id] = elem
 		} else {
-			go entry.callback()
+			fire = append(fire, entry.callback)
 		}
 		tmp := next
 		next = next.Next()
@@ -143,4 +145,13 @@ func (tw *TimerWheel) tickOnce() {
 	}
 
 	tw.currentSlot = (tw.currentSlot + 1) % tw.slotCount
+	tw.mu.Unlock()
+
+	for _, cb := range fire {
+		tw.wg.Add(1)
+		go func(fn func()) {
+			defer tw.wg.Done()
+			fn()
+		}(cb)
+	}
 }

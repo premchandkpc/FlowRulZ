@@ -6,13 +6,13 @@ import (
 )
 
 type Config struct {
-	Type        string
-	Brokers     []string
-	GroupID     string
-	ClientID    string
-	Timeout     time.Duration
-	Acks        string
-	Idempotent  bool
+	Type       string
+	Brokers    []string
+	GroupID    string
+	ClientID   string
+	Timeout    time.Duration
+	Acks       string
+	Idempotent bool
 }
 
 func (c Config) Validate() error {
@@ -27,8 +27,8 @@ func (c Config) Validate() error {
 
 func DefaultConfig() Config {
 	return Config{
-		Type:       "memory",
-		Timeout:    30 * time.Second,
-		Acks:       "all",
+		Type:    "memory",
+		Timeout: 30 * time.Second,
+		Acks:    "all",
 	}
 }

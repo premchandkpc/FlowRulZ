@@ -14,19 +14,19 @@ import (
 type Store interface {
 	// Get retrieves a policy by ID
 	Get(ctx context.Context, id string) (*Policy, error)
-	
+
 	// Set stores a policy
 	Set(ctx context.Context, policy *Policy) error
-	
+
 	// Delete removes a policy
 	Delete(ctx context.Context, id string) error
-	
+
 	// List returns all policies
 	List(ctx context.Context) ([]*Policy, error)
-	
+
 	// ListByLevel returns policies by level
 	ListByLevel(ctx context.Context, level Level) ([]*Policy, error)
-	
+
 	// ListByScope returns policies by scope
 	ListByScope(ctx context.Context, scope string) ([]*Policy, error)
 }
@@ -116,8 +116,8 @@ func (s *MemoryStore) ListByScope(ctx context.Context, scope string) ([]*Policy,
 
 // FileStore implements Store with file-based persistence
 type FileStore struct {
-	mu   sync.RWMutex
-	dir  string
+	mu  sync.RWMutex
+	dir string
 }
 
 // NewFileStore creates a new file-based policy store
@@ -156,7 +156,7 @@ func (s *FileStore) Set(ctx context.Context, policy *Policy) error {
 	defer s.mu.Unlock()
 
 	policy.UpdatedAt = time.Now()
-	
+
 	data, err := json.MarshalIndent(policy, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal policy: %w", err)

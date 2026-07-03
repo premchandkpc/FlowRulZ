@@ -47,8 +47,8 @@ type compileResponse struct {
 }
 
 type RemoteCompiler struct {
-	addr    string
-	client  *http.Client
+	addr   string
+	client *http.Client
 }
 
 func NewRemote(addr string) *RemoteCompiler {
@@ -99,10 +99,10 @@ func (c *RemoteCompiler) Compile(dsl, ruleID string) (*Result, error) {
 }
 
 type ValidateResult struct {
-	Valid        bool
-	Complexity   uint32
-	PlanBytes    int
-	Error        string
+	Valid      bool
+	Complexity uint32
+	PlanBytes  int
+	Error      string
 }
 
 type CompileHandler struct {

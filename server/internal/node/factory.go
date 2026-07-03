@@ -7,7 +7,6 @@ import (
 
 	"github.com/premchandkpc/FlowRulZ/server/internal/admin"
 	"github.com/premchandkpc/FlowRulZ/server/internal/cluster"
-	pkgcluster "github.com/premchandkpc/FlowRulZ/server/pkg/cluster"
 	"github.com/premchandkpc/FlowRulZ/server/internal/compiler"
 	"github.com/premchandkpc/FlowRulZ/server/internal/engine"
 	"github.com/premchandkpc/FlowRulZ/server/internal/execstate"
@@ -22,6 +21,7 @@ import (
 	"github.com/premchandkpc/FlowRulZ/server/internal/transport"
 	grpctransport "github.com/premchandkpc/FlowRulZ/server/internal/transport/grpc"
 	kafkatransport "github.com/premchandkpc/FlowRulZ/server/internal/transport/kafka"
+	pkgcluster "github.com/premchandkpc/FlowRulZ/server/pkg/cluster"
 )
 
 func DefaultDependencies(cfg Config) Dependencies {
@@ -138,25 +138,25 @@ func DefaultDependencies(cfg Config) Dependencies {
 	}
 
 	return Dependencies{
-		Engine:          eng,
-		Scheduler:       sched,
-		ReplyRouter:     replyRouter,
-		PlanDist:        planDist,
-		Membership:      members,
-		Partitions:      partitions,
-		Rebalancer:      rebalancer,
-		Registry:        svcRegistry,
-		DLQ:             dlq,
-		RateLimiter:     rateLimiter,
-		Dedup:           dedup,
-		Saga:            saga,
-		StateStore:      store,
-		Cluster:         raftCluster,
-		ClusterNode:     clusterNode,
-		GRPCBus:         grpcBus,
-		AdminSrv:        adminSrv,
-		Metrics:         metrics,
-		OtelExporter:    otelExporter,
+		Engine:       eng,
+		Scheduler:    sched,
+		ReplyRouter:  replyRouter,
+		PlanDist:     planDist,
+		Membership:   members,
+		Partitions:   partitions,
+		Rebalancer:   rebalancer,
+		Registry:     svcRegistry,
+		DLQ:          dlq,
+		RateLimiter:  rateLimiter,
+		Dedup:        dedup,
+		Saga:         saga,
+		StateStore:   store,
+		Cluster:      raftCluster,
+		ClusterNode:  clusterNode,
+		GRPCBus:      grpcBus,
+		AdminSrv:     adminSrv,
+		Metrics:      metrics,
+		OtelExporter: otelExporter,
 	}
 }
 

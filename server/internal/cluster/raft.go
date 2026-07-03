@@ -18,9 +18,9 @@ import (
 )
 
 const (
-	DefaultRaftPort      = 9093
-	raftTimeout          = 10 * time.Second
-	raftLogCacheSize     = 512
+	DefaultRaftPort  = 9093
+	raftTimeout      = 10 * time.Second
+	raftLogCacheSize = 512
 )
 
 // RaftCluster provides Raft consensus for leader election and cluster coordination.
@@ -54,14 +54,14 @@ type RaftCluster struct {
 // Raft is used ONLY for leader election and term management.
 type NoopFSM struct{}
 
-func (n *NoopFSM) Apply(log *raft.Log) interface{} { return nil }
+func (n *NoopFSM) Apply(log *raft.Log) interface{}     { return nil }
 func (n *NoopFSM) Snapshot() (raft.FSMSnapshot, error) { return &NoopSnapshot{}, nil }
-func (n *NoopFSM) Restore(rc io.ReadCloser) error { return nil }
+func (n *NoopFSM) Restore(rc io.ReadCloser) error      { return nil }
 
 type NoopSnapshot struct{}
 
 func (n *NoopSnapshot) Persist(sink raft.SnapshotSink) error { return sink.Close() }
-func (n *NoopSnapshot) Release() {}
+func (n *NoopSnapshot) Release()                             {}
 
 func NewRaftCluster(nodeID, raftDir, raftBind string) *RaftCluster {
 	return &RaftCluster{
@@ -218,8 +218,8 @@ func (rc *RaftCluster) Join(nodeID, raftAddr string) error {
 	addFuture := rc.raft.AddVoter(
 		raft.ServerID(nodeID),
 		raft.ServerAddress(raftAddr),
-		0,   // previous index
-		0,   // timeout (0 = use default)
+		0, // previous index
+		0, // timeout (0 = use default)
 	)
 	if err := addFuture.Error(); err != nil {
 		return fmt.Errorf("add voter %s at %s: %w", nodeID, raftAddr, err)

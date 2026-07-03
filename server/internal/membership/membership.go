@@ -28,7 +28,7 @@ type Membership struct {
 
 func New() *Membership {
 	return &Membership{
-		nodes: make(map[string]*pkgmembership.NodeInfo),
+		nodes:            make(map[string]*pkgmembership.NodeInfo),
 		heartbeatTimeout: DefaultHeartbeatTimeout,
 		leaderLease:      DefaultLeaderLease,
 	}

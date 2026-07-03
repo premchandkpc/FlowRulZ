@@ -17,38 +17,38 @@ type GossipState struct {
 }
 
 type GossipMessage struct {
-	Type    string        `json:"type"` // "push" or "pull_req" or "pull_resp"
-	Sender  string        `json:"sender"`
-	States  []GossipState `json:"states,omitempty"`
-	Epochs  map[string]uint64 `json:"epochs,omitempty"`
+	Type   string            `json:"type"` // "push" or "pull_req" or "pull_resp"
+	Sender string            `json:"sender"`
+	States []GossipState     `json:"states,omitempty"`
+	Epochs map[string]uint64 `json:"epochs,omitempty"`
 }
 
 type Gossiper struct {
-	nodeID    string
-	grpcAddr  string
-	node      *ClusterNode
-	statesMu  sync.RWMutex
-	states    map[string]GossipState
-	myState   GossipState
-	fanout    int
+	nodeID       string
+	grpcAddr     string
+	node         *ClusterNode
+	statesMu     sync.RWMutex
+	states       map[string]GossipState
+	myState      GossipState
+	fanout       int
 	pushInterval time.Duration
 	syncInterval time.Duration
-	stopCh    chan struct{}
+	stopCh       chan struct{}
 
 	onNodeJoin func(nodeID, address string)
 }
 
 func NewGossiper(nodeID, grpcAddr string, node *ClusterNode) *Gossiper {
 	return &Gossiper{
-		nodeID:    nodeID,
-		grpcAddr:  grpcAddr,
-		node:      node,
-		states:    make(map[string]GossipState),
-		myState:   GossipState{NodeID: nodeID, Address: grpcAddr},
-		fanout:    2,
+		nodeID:       nodeID,
+		grpcAddr:     grpcAddr,
+		node:         node,
+		states:       make(map[string]GossipState),
+		myState:      GossipState{NodeID: nodeID, Address: grpcAddr},
+		fanout:       2,
 		pushInterval: 2 * time.Second,
 		syncInterval: 10 * time.Second,
-		stopCh:    make(chan struct{}),
+		stopCh:       make(chan struct{}),
 	}
 }
 

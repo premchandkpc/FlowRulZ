@@ -8,7 +8,7 @@ type ConsumerFactory func(topic string, handler Handler, cfg Config) (Consumer, 
 type BusFactory func(Config) (Bus, error)
 
 var (
-	publisherFactories = map[string]PublisherFactory{}
+	publisherFactories  = map[string]PublisherFactory{}
 	subscriberFactories = map[string]SubscriberFactory{}
 	consumerFactories   = map[string]ConsumerFactory{}
 	busFactories        = map[string]BusFactory{}

@@ -98,11 +98,32 @@ vet:
 	$(CGO) go vet ./server/... ./simulator/...
 
 ###############################################################################
+# Lint/Format
+###############################################################################
+
+gofmt-check:
+	$(CGO) gofmt -d -s ./server/internal ./simulator
+
+goimports-check:
+	$(CGO) goimports -d ./server/internal ./simulator
+
+fmt:
+	$(CGO) gofmt -w -s ./server/internal ./simulator
+
+imports:
+	$(CGO) goimports -w ./server/internal ./simulator
+
+lint: fmt vet imports
+
+lint-fast: fmt imports
+
+###############################################################################
 # Docker
 ###############################################################################
 
 docker:
 	docker build --target flowrulz -t $(IMAGE) .
+	docker build --target sim -t $(SIM_IMAGE) .
 
 docker-sim:
 	docker build --target sim -t $(SIM_IMAGE) .

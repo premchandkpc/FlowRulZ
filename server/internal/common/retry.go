@@ -12,10 +12,10 @@ type BackoffStrategy interface {
 }
 
 type ExponentialBackoff struct {
-	Base    time.Duration
-	Max     time.Duration
-	Factor  float64
-	Jitter  float64
+	Base   time.Duration
+	Max    time.Duration
+	Factor float64
+	Jitter float64
 }
 
 func (b *ExponentialBackoff) Duration(attempt int) time.Duration {

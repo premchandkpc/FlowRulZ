@@ -23,9 +23,9 @@ type Bus struct {
 	msgID  atomic.Uint64
 	closed atomic.Bool
 
-	corrMap   map[string]string
-	corrMu    sync.RWMutex
-	wg        sync.WaitGroup
+	corrMap map[string]string
+	corrMu  sync.RWMutex
+	wg      sync.WaitGroup
 }
 
 var _ transport.FullEventBus = (*Bus)(nil)

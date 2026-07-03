@@ -33,25 +33,25 @@ import (
 var _ pkgnode.Node = (*ProdNode)(nil)
 
 type Dependencies struct {
-	Engine          *engine.Engine
-	Scheduler       pkgscheduler.Scheduler
-	ReplyRouter     pkgreplyrouter.ReplyRouter
-	PlanDist        *plandist.PlanDistributor
-	Membership      pkgmembership.Membership
-	Partitions      pkgpartition.PartitionManager
-	Rebalancer      pkgpartition.RebalanceNotifier
-	Registry        *registry.ServiceRegistry
-	DLQ             *reliability.DLQ
-	RateLimiter     *reliability.RateLimiter
-	Dedup           *reliability.DedupTracker
-	Saga            *reliability.SagaTracker
-	StateStore      *execstate.FileStore
-	Cluster         pkgcluster.ClusterMember
-	ClusterNode     *cluster.ClusterNode
-	GRPCBus         *grpctransport.GRPCBus
-	AdminSrv        *admin.Server
-	Metrics         *observability.MetricsCollector
-	OtelExporter    *observability.SpanExporter
+	Engine       *engine.Engine
+	Scheduler    pkgscheduler.Scheduler
+	ReplyRouter  pkgreplyrouter.ReplyRouter
+	PlanDist     *plandist.PlanDistributor
+	Membership   pkgmembership.Membership
+	Partitions   pkgpartition.PartitionManager
+	Rebalancer   pkgpartition.RebalanceNotifier
+	Registry     *registry.ServiceRegistry
+	DLQ          *reliability.DLQ
+	RateLimiter  *reliability.RateLimiter
+	Dedup        *reliability.DedupTracker
+	Saga         *reliability.SagaTracker
+	StateStore   *execstate.FileStore
+	Cluster      pkgcluster.ClusterMember
+	ClusterNode  *cluster.ClusterNode
+	GRPCBus      *grpctransport.GRPCBus
+	AdminSrv     *admin.Server
+	Metrics      *observability.MetricsCollector
+	OtelExporter *observability.SpanExporter
 }
 
 type ProdNode struct {
@@ -63,22 +63,22 @@ type ProdNode struct {
 	Rebalancer  pkgpartition.RebalanceNotifier
 
 	// Concrete dependencies
-	PlanDist    *plandist.PlanDistributor
+	PlanDist *plandist.PlanDistributor
 
 	// Concrete dependencies
-	Engine      *engine.Engine
-	Registry    *registry.ServiceRegistry
-	DLQ         *reliability.DLQ
-	RateLimiter *reliability.RateLimiter
-	Dedup       *reliability.DedupTracker
-	Saga        *reliability.SagaTracker
-	StateStore  *execstate.FileStore
-	Execs       *ExecRegistry
-	GRPCBus     *grpctransport.GRPCBus
-	RaftCluster pkgcluster.ClusterMember
-	ClusterNode *cluster.ClusterNode
-	AdminSrv    *admin.Server
-	Metrics     *observability.MetricsCollector
+	Engine       *engine.Engine
+	Registry     *registry.ServiceRegistry
+	DLQ          *reliability.DLQ
+	RateLimiter  *reliability.RateLimiter
+	Dedup        *reliability.DedupTracker
+	Saga         *reliability.SagaTracker
+	StateStore   *execstate.FileStore
+	Execs        *ExecRegistry
+	GRPCBus      *grpctransport.GRPCBus
+	RaftCluster  pkgcluster.ClusterMember
+	ClusterNode  *cluster.ClusterNode
+	AdminSrv     *admin.Server
+	Metrics      *observability.MetricsCollector
 	OtelExporter *observability.SpanExporter
 
 	// Unexported internals
@@ -95,32 +95,32 @@ type ProdNode struct {
 
 func NewNode(cfg Config, deps Dependencies) *ProdNode {
 	n := &ProdNode{
-		nodeID:       cfg.NodeID,
-		httpAddr:     cfg.HTTPListenAddr(),
-		config:       cfg,
-		httpClient:   &http.Client{Timeout: 10 * time.Second},
-		consumers:    make([]transport.MessageConsumer, 0),
-		producers:    make([]transport.MessageProducer, 0),
+		nodeID:     cfg.NodeID,
+		httpAddr:   cfg.HTTPListenAddr(),
+		config:     cfg,
+		httpClient: &http.Client{Timeout: 10 * time.Second},
+		consumers:  make([]transport.MessageConsumer, 0),
+		producers:  make([]transport.MessageProducer, 0),
 
-		Engine:          deps.Engine,
-		Scheduler:       deps.Scheduler,
-		ReplyRouter:     deps.ReplyRouter,
-		PlanDist:        deps.PlanDist,
-		Membership:      deps.Membership,
-		Partitions:      deps.Partitions,
-		Rebalancer:      deps.Rebalancer,
-		Registry:        deps.Registry,
-		DLQ:             deps.DLQ,
-		RateLimiter:     deps.RateLimiter,
-		Dedup:           deps.Dedup,
-		Saga:            deps.Saga,
-		StateStore:      deps.StateStore,
-		RaftCluster:     deps.Cluster,
-		ClusterNode:     deps.ClusterNode,
-		GRPCBus:         deps.GRPCBus,
-		AdminSrv:        deps.AdminSrv,
-		Metrics:         deps.Metrics,
-		OtelExporter:    deps.OtelExporter,
+		Engine:       deps.Engine,
+		Scheduler:    deps.Scheduler,
+		ReplyRouter:  deps.ReplyRouter,
+		PlanDist:     deps.PlanDist,
+		Membership:   deps.Membership,
+		Partitions:   deps.Partitions,
+		Rebalancer:   deps.Rebalancer,
+		Registry:     deps.Registry,
+		DLQ:          deps.DLQ,
+		RateLimiter:  deps.RateLimiter,
+		Dedup:        deps.Dedup,
+		Saga:         deps.Saga,
+		StateStore:   deps.StateStore,
+		RaftCluster:  deps.Cluster,
+		ClusterNode:  deps.ClusterNode,
+		GRPCBus:      deps.GRPCBus,
+		AdminSrv:     deps.AdminSrv,
+		Metrics:      deps.Metrics,
+		OtelExporter: deps.OtelExporter,
 	}
 
 	n.Execs = NewExecRegistry()

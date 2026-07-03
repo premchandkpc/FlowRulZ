@@ -53,7 +53,7 @@ func (mc *MetricsCollector) Counter(name string) *Counter {
 	return c
 }
 
-func (c *Counter) Inc() int64  { return c.Add(1) }
+func (c *Counter) Inc() int64        { return c.Add(1) }
 func (c *Counter) Add(n int64) int64 { return c.value.Add(n) }
 func (c *Counter) Value() int64      { return c.value.Load() }
 func (c *Counter) Name() string      { return c.name }
@@ -72,10 +72,10 @@ func (mc *MetricsCollector) Gauge(name string) *Gauge {
 	return g
 }
 
-func (g *Gauge) Set(n int64)    { g.value.Store(n) }
-func (g *Gauge) Add(n int64)    { g.value.Add(n) }
-func (g *Gauge) Value() int64   { return g.value.Load() }
-func (g *Gauge) Name() string   { return g.name }
+func (g *Gauge) Set(n int64)  { g.value.Store(n) }
+func (g *Gauge) Add(n int64)  { g.value.Add(n) }
+func (g *Gauge) Value() int64 { return g.value.Load() }
+func (g *Gauge) Name() string { return g.name }
 
 // -- Histogram --
 
@@ -108,8 +108,8 @@ func (h *Histogram) Observe(v float64) {
 // -- Snapshot --
 
 type MetricSnapshot struct {
-	Counters map[string]int64            `json:"counters"`
-	Gauges   map[string]int64            `json:"gauges"`
+	Counters map[string]int64 `json:"counters"`
+	Gauges   map[string]int64 `json:"gauges"`
 }
 
 func (mc *MetricsCollector) Snapshot() MetricSnapshot {
@@ -131,8 +131,8 @@ func (mc *MetricsCollector) Snapshot() MetricSnapshot {
 
 // -- Default collector shortcuts --
 
-func GetCounter(name string) *Counter     { return defaultCollector.Counter(name) }
-func GetGauge(name string) *Gauge         { return defaultCollector.Gauge(name) }
+func GetCounter(name string) *Counter { return defaultCollector.Counter(name) }
+func GetGauge(name string) *Gauge     { return defaultCollector.Gauge(name) }
 
 func RecordExec(name string)  { GetCounter("exec." + name).Inc() }
 func RecordError(name string) { GetCounter("error." + name).Inc() }

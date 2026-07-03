@@ -15,15 +15,15 @@ import (
 const DefaultDLQTopic = "_flowrulz_dlq"
 
 type DeadLetterEntry struct {
-	ID          string    `json:"id"`
-	RuleID      string    `json:"rule_id"`
-	Topic       string    `json:"topic"`
-	Partition   int32     `json:"partition"`
-	Offset      int64     `json:"offset"`
-	Body        []byte    `json:"body"`
-	Error       string    `json:"error"`
-	FailedAt    time.Time `json:"failed_at"`
-	RetryCount  int       `json:"retry_count"`
+	ID         string    `json:"id"`
+	RuleID     string    `json:"rule_id"`
+	Topic      string    `json:"topic"`
+	Partition  int32     `json:"partition"`
+	Offset     int64     `json:"offset"`
+	Body       []byte    `json:"body"`
+	Error      string    `json:"error"`
+	FailedAt   time.Time `json:"failed_at"`
+	RetryCount int       `json:"retry_count"`
 }
 
 type DLQ struct {

@@ -141,5 +141,3 @@ func (n *ProdNode) distributeActivate(id string, version uint64) {
 		slog.Error("plandist: activate error during promote", "id", id, "version", version, "error", err)
 	}
 }
-
-

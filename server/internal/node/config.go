@@ -9,11 +9,11 @@ import (
 )
 
 const (
-	DefaultHTTPAddr  = ":8080"
-	DefaultGRPCAddr  = ":9090"
-	DefaultTopic     = "flowrulz-input"
-	DefaultNodeID    = "node-1"
-	DefaultGroupID   = "flowrulz"
+	DefaultHTTPAddr = ":8080"
+	DefaultGRPCAddr = ":9090"
+	DefaultTopic    = "flowrulz-input"
+	DefaultNodeID   = "node-1"
+	DefaultGroupID  = "flowrulz"
 
 	defaultReplyRouterMaxPending = 10000
 	defaultDedupCapacity         = 10000

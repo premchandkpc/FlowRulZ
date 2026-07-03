@@ -10,16 +10,16 @@ import (
 type Resolver interface {
 	// Resolve merges policies from all applicable levels
 	Resolve(ctx context.Context, request *Request) (*Policy, error)
-	
+
 	// GetPolicy retrieves a policy by ID
 	GetPolicy(ctx context.Context, id string) (*Policy, error)
-	
+
 	// SetPolicy stores a policy
 	SetPolicy(ctx context.Context, policy *Policy) error
-	
+
 	// DeletePolicy removes a policy
 	DeletePolicy(ctx context.Context, id string) error
-	
+
 	// ListPolicies returns all policies
 	ListPolicies(ctx context.Context) ([]*Policy, error)
 }
@@ -279,7 +279,7 @@ func (r *DefaultResolver) SetPolicy(ctx context.Context, policy *Policy) error {
 	defer r.mu.Unlock()
 
 	r.policies[policy.ID] = policy.Clone()
-	
+
 	// Invalidate cache
 	r.clearCache()
 
@@ -292,7 +292,7 @@ func (r *DefaultResolver) DeletePolicy(ctx context.Context, id string) error {
 	defer r.mu.Unlock()
 
 	delete(r.policies, id)
-	
+
 	// Invalidate cache
 	r.clearCache()
 

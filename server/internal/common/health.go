@@ -6,8 +6,8 @@ import (
 )
 
 type HealthRegistry struct {
-	mu      sync.Mutex
-	checks  map[string]HealthChecker
+	mu     sync.Mutex
+	checks map[string]HealthChecker
 }
 
 func NewHealthRegistry() *HealthRegistry {

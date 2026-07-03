@@ -60,11 +60,11 @@ func (b *NodeBuilder) register(name string, svc common.Service) {
 // --- adapters for lifecycle ---
 
 type engineService struct{ e *engine.Engine }
+
 func (s engineService) Start(ctx context.Context) error { return nil }
 func (s engineService) Stop() error                     { return nil }
 
 type schedulerService struct{ s *scheduler.Scheduler }
+
 func (s schedulerService) Start(ctx context.Context) error { return s.s.Start(ctx) }
 func (s schedulerService) Stop() error                     { return s.s.Stop() }
-
-

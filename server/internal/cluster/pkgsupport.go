@@ -88,5 +88,3 @@ func (cm *ClusterMember) Remove(memberID pkgcluster.MemberID) error {
 func (cm *ClusterMember) BootstrapCluster() error {
 	return cm.inner.BootstrapCluster()
 }
-
-

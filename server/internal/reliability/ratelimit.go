@@ -14,7 +14,7 @@ type TokenBucket struct {
 }
 
 type RateLimiter struct {
-	mu     sync.RWMutex
+	mu      sync.RWMutex
 	buckets map[string]*TokenBucket
 }
 

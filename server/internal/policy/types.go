@@ -48,26 +48,26 @@ func (l Level) String() string {
 // Policy represents a complete execution policy
 type Policy struct {
 	// Identification
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Level   Level  `json:"level"`
-	Scope   string `json:"scope"` // e.g., "service:payment", "method:POST:/api/pay"
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Level Level  `json:"level"`
+	Scope string `json:"scope"` // e.g., "service:payment", "method:POST:/api/pay"
 
 	// Execution
-	Timeout        *Duration `json:"timeout,omitempty"`
-	Retry          *Retry    `json:"retry,omitempty"`
-	RateLimit      *RateLimit `json:"rate_limit,omitempty"`
+	Timeout        *Duration       `json:"timeout,omitempty"`
+	Retry          *Retry          `json:"retry,omitempty"`
+	RateLimit      *RateLimit      `json:"rate_limit,omitempty"`
 	CircuitBreaker *CircuitBreaker `json:"circuit_breaker,omitempty"`
-	Bulkhead       *Bulkhead `json:"bulkhead,omitempty"`
+	Bulkhead       *Bulkhead       `json:"bulkhead,omitempty"`
 
 	// Security
 	Authentication *Authentication `json:"authentication,omitempty"`
 	Authorization  *Authorization  `json:"authorization,omitempty"`
 
 	// Observability
-	Tracing  *Tracing  `json:"tracing,omitempty"`
-	Metrics  *Metrics  `json:"metrics,omitempty"`
-	Logging  *Logging  `json:"logging,omitempty"`
+	Tracing *Tracing `json:"tracing,omitempty"`
+	Metrics *Metrics `json:"metrics,omitempty"`
+	Logging *Logging `json:"logging,omitempty"`
 
 	// Validation
 	Validation *Validation `json:"validation,omitempty"`
@@ -114,11 +114,11 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 
 // Retry configuration
 type Retry struct {
-	MaxAttempts     int           `json:"max_attempts"`
-	InitialDelay    Duration      `json:"initial_delay"`
-	MaxDelay        Duration      `json:"max_delay"`
-	BackoffMultiplier float64     `json:"backoff_multiplier"`
-	RetryableErrors []string      `json:"retryable_errors,omitempty"`
+	MaxAttempts       int      `json:"max_attempts"`
+	InitialDelay      Duration `json:"initial_delay"`
+	MaxDelay          Duration `json:"max_delay"`
+	BackoffMultiplier float64  `json:"backoff_multiplier"`
+	RetryableErrors   []string `json:"retryable_errors,omitempty"`
 }
 
 // RateLimit configuration
@@ -136,8 +136,8 @@ type CircuitBreaker struct {
 
 // Bulkhead configuration
 type Bulkhead struct {
-	MaxConcurrent int `json:"max_concurrent"`
-	MaxQueue      int `json:"max_queue"`
+	MaxConcurrent int      `json:"max_concurrent"`
+	MaxQueue      int      `json:"max_queue"`
 	QueueTimeout  Duration `json:"queue_timeout"`
 }
 
@@ -150,8 +150,8 @@ type Authentication struct {
 
 // Authorization configuration
 type Authorization struct {
-	Enabled bool     `json:"enabled"`
-	Roles   []string `json:"roles,omitempty"`
+	Enabled     bool     `json:"enabled"`
+	Roles       []string `json:"roles,omitempty"`
 	Permissions []string `json:"permissions,omitempty"`
 }
 
@@ -190,7 +190,7 @@ func (p *Policy) Clone() *Policy {
 	if p == nil {
 		return nil
 	}
-	
+
 	clone := &Policy{
 		ID:        p.ID,
 		Name:      p.Name,

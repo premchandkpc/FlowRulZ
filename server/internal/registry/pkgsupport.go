@@ -11,7 +11,7 @@ import (
 var _ pkgregistry.Registry = (*Registry)(nil)
 
 type Registry struct {
-	inner *ServiceRegistry
+	inner  *ServiceRegistry
 	subsMu sync.RWMutex
 	subs   map[string]chan pkgregistry.RegistryEvent
 }

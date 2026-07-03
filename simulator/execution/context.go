@@ -59,6 +59,7 @@ type ExecutionContext struct {
 	WaitingService   string
 	WaitingStartTime time.Time
 	ResultCh         chan *Result
+	OnDone           func()
 
 	StateChanges []StateChange
 	Events       []timeline.Event
@@ -142,7 +143,11 @@ func (ec *ExecutionContext) MarkDone() {
 		Meta: "execution completed",
 	})
 	ec.UpdatedAt = time.Now()
+	onDone := ec.OnDone
 	ec.mu.Unlock()
+	if onDone != nil {
+		onDone()
+	}
 }
 
 func (ec *ExecutionContext) MarkFailed(err error) {
@@ -157,5 +162,9 @@ func (ec *ExecutionContext) MarkFailed(err error) {
 		Meta: err.Error(),
 	})
 	ec.UpdatedAt = time.Now()
+	onDone := ec.OnDone
 	ec.mu.Unlock()
+	if onDone != nil {
+		onDone()
+	}
 }

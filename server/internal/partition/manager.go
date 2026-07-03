@@ -188,8 +188,20 @@ func (m *Manager) HandleAssignmentMessage(msg []byte) error {
 		return fmt.Errorf("partition unmarshal: %w", err)
 	}
 	if pm.Type == "assign" {
+		m.mu.RLock()
+		leaderID := m.leaderID
+		currentTerm := m.currentTerm
+		m.mu.RUnlock()
+
+		if leaderID != "" && pm.NodeID != leaderID {
+			return fmt.Errorf("partition: assignment from non-leader %q (leader is %q)", pm.NodeID, leaderID)
+		}
+		if pm.Term < currentTerm && leaderID != "" {
+			return fmt.Errorf("partition: stale term %d < current %d", pm.Term, currentTerm)
+		}
+
 		m.ApplyAssignments(pm.Assignments)
-		slog.Info("partition: applied assignments", "count", len(pm.Assignments), "term", pm.Term)
+		slog.Info("partition: applied assignments", "count", len(pm.Assignments), "term", pm.Term, "leader", pm.NodeID)
 	}
 	return nil
 }

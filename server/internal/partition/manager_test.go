@@ -205,7 +205,8 @@ func TestPartitionHandleAssignmentMessage(t *testing.T) {
 			{NodeID: "node-x", Partition: 2, Term: 2},
 			{NodeID: "node-y", Partition: 3, Term: 2},
 		},
-		Term: 2,
+		Term:   2,
+		NodeID: "",
 	}
 	data, err := json.Marshal(msg)
 	if err != nil {
@@ -387,6 +388,7 @@ func TestPartitionHandleAssignmentMessageEmptyAssignments(t *testing.T) {
 		Type:        "assign",
 		Assignments: []Assignment{},
 		Term:        2,
+		NodeID:      "node-a",
 	}
 	data, _ := json.Marshal(msg)
 	if err := m.HandleAssignmentMessage(data); err != nil {

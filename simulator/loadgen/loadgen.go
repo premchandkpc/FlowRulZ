@@ -141,12 +141,18 @@ func (g *Generator) sendOne() {
 		body = []byte(fmt.Sprintf(`{"type":"%s"}`, plan.ID))
 	}
 	ctx := execution.NewContext(plan, body)
+	g.concurrent.Add(1)
+	ctx.OnDone = func() { g.concurrent.Add(-1) }
 	g.dispatcher.Dispatch(ctx)
 	g.totalSent.Add(1)
 }
 
 func (g *Generator) constantRate() {
-	interval := time.Second / time.Duration(g.cfg.RequestsPerSec)
+	rate := g.cfg.RequestsPerSec
+	if rate <= 0 {
+		rate = 1
+	}
+	interval := time.Second / time.Duration(rate)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	timer := time.NewTimer(g.cfg.Duration)
@@ -158,9 +164,7 @@ func (g *Generator) constantRate() {
 			if g.cfg.MaxConcurrent > 0 && g.concurrent.Load() >= int64(g.cfg.MaxConcurrent) {
 				continue
 			}
-			g.concurrent.Add(1)
 			g.sendOne()
-			g.concurrent.Add(-1)
 		case <-timer.C:
 			slog.Info("loadgen: completed", "sent", g.totalSent.Load())
 			return
@@ -197,21 +201,28 @@ func (g *Generator) rampUp() {
 
 	for i := 0; i < steps; i++ {
 		rate := maxRate * (i + 1) / steps
+		if rate <= 0 {
+			rate = 1
+		}
 		interval := time.Second / time.Duration(rate)
-		ticker := time.NewTicker(interval)
-		end := time.After(stepDuration)
-	loop:
-		for {
-			select {
-			case <-ticker.C:
-				g.sendOne()
-			case <-end:
-				ticker.Stop()
-				break loop
-			case <-g.ctx.Done():
-				ticker.Stop()
-				return
-			}
+		g.runStep(interval, stepDuration)
+	}
+}
+
+func (g *Generator) runStep(interval, stepDuration time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	timer := time.NewTimer(stepDuration)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			g.sendOne()
+		case <-timer.C:
+			return
+		case <-g.ctx.Done():
+			return
 		}
 	}
 }

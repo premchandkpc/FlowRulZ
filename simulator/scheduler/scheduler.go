@@ -189,21 +189,23 @@ func (s *Scheduler) SubscribeBus() {
 
 		s.Enqueue(ec)
 
-		res := <-resultCh
-		if msg.CorrelationID != "" {
-			var respBody []byte
-			if res.Error != nil {
-				respBody = []byte(fmt.Sprintf(`{"error":"%s"}`, res.Error.Error()))
-			} else {
-				respBody = res.Body
+		go func() {
+			res := <-resultCh
+			if msg.CorrelationID != "" {
+				var respBody []byte
+				if res.Error != nil {
+					respBody = []byte(fmt.Sprintf(`{"error":"%s"}`, res.Error.Error()))
+				} else {
+					respBody = res.Body
+				}
+				s.Bus.Reply("execution", msg.CorrelationID, &transport.Message{
+					Body: respBody,
+					Headers: map[string]string{
+						"duration": ec.Duration.String(),
+					},
+				})
 			}
-			s.Bus.Reply("execution", msg.CorrelationID, &transport.Message{
-				Body: respBody,
-				Headers: map[string]string{
-					"duration": ec.Duration.String(),
-				},
-			})
-		}
+		}()
 	})
 }
 

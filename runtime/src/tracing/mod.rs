@@ -96,7 +96,7 @@ pub fn emit_span(span: Span) {
 }
 
 #[cfg(test)]
-fn drain_global_buffer() {
+pub(crate) fn drain_global_buffer() {
     if let Ok(mut guard) = SPAN_BUFFER.lock() {
         let mut dummy = [0u8; 256];
         loop {

@@ -1,0 +1,95 @@
+# More permissive linting configuration for FlowRulZ
+# Focuses on catching major issues while allowing flexibility
+
+# All the quick checks - runs first and makes developers stop and fix
+run:
+  # Check if overriding options need explicit enable
+  force-exit-1: true
+
+issues:
+  # Maximum issues count to print - helps debugging
+  max-issues: 50
+
+  # Ensure all issues are fixed, don't just report
+  exclude-rules:
+    # Don't fail on non-fatal linter violations
+    - path: ./server/pkg
+      linters:
+        - errcheck
+
+  # Only show errors that are unfixable or critical
+  # This is the primary output for developers
+  print-linter-name: true
+
+  # Make the output machine-readable for CI/CD
+  format: colored-by-category
+
+  # Stop after 50 issues to avoid report spam
+  # Still useful for development
+  # then switch to stricter settings before merge
+  include:
+    - text
+
+# Configuration for each linter - be minimal and efficient
+copyloop: enable
+
+errcheck:
+  # Only check for unassignable return values
+  # Which means "may be almost assigned, check!", not "is definitely wrong"
+  # But catch the obvious unassignable cases in internal code
+  checks: [assign,return]
+
+linter-settings:
+  importas:
+    # Allow different aliases for same package for readability
+    alias:
+      "github.com/premchandkpc/FlowRulZ/server/pkg/transport": "transport"
+      "github.com/premchandkpc/FlowRulZ/server/pkg/cluster": "cluster"
+      "github.com/premchandkpc/FlowRulZ/server/pkg/reliability": "reliability"
+      "github.com/premchandkpc/FlowRulZ/server/pkg/engine": "engine"
+
+# Best practices and style
+style:
+  # Allow reasonable deviations - this is not a code style guide repo
+  # Focus on working product over perfect style
+  indent-width: 2
+  tab-width: 4
+  print-separated-function-length: 50
+  print-functions-long: 10
+
+# Minimize noise in code - be practical
+mnd:
+  # Don't go crazy checking numbers
+  checks: [argument,case,condition,operation,return,range]
+
+# Error handling checks - focus on production reliability
+nolintlint:
+  # Allow ignoring errors for one file if needed
+  # Trust the expert judgment of the maintainer
+  allow-no-explanation: true
+
+# Performance optimization insights
+perf:
+  # Focus on slice operations and loops that could be optimized
+  ignore-checks: "^SA4009|SA4010|SA4011|SA4012"
+
+# Security checks - but don't over-engineer
+all:
+  enable: [
+    gosimple,
+    nolint,
+    sqlclosecheck,
+    errcheck,
+    whitespace,
+    gosec,
+    unused,
+    ineffassign,
+    gosimple,
+    govet,
+    gofmt,
+    goimports,
+    misspell,
+    bodyclose,
+    varnamelen,
+    structtag,
+  ]

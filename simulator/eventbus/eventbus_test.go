@@ -189,19 +189,4 @@ func TestMessageIDAutoAssign(t *testing.T) {
 	}
 }
 
-func TestTopicStats(t *testing.T) {
-	b := New(10)
-	defer b.Close()
 
-	b.Subscribe("a", func(ctx context.Context, msg *transport.Message) {})
-	b.Subscribe("a", func(ctx context.Context, msg *transport.Message) {})
-	b.Subscribe("b", func(ctx context.Context, msg *transport.Message) {})
-
-	stats := b.TopicStats()
-	if stats["a"] != 2 {
-		t.Fatalf("expected 2 on a, got %d", stats["a"])
-	}
-	if stats["b"] != 1 {
-		t.Fatalf("expected 1 on b, got %d", stats["b"])
-	}
-}

@@ -1,7 +1,6 @@
 package admin
 
 import (
-	"encoding/json"
 	"fmt"
 	"runtime"
 	"time"
@@ -185,7 +184,4 @@ func (rs *ruleService) DebugSnapshot() map[string]interface{} {
 	}
 }
 
-func encodeJSON(w interface{}) []byte {
-	data, _ := json.Marshal(w)
-	return data
-}
+

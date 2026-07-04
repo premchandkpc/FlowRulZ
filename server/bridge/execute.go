@@ -45,7 +45,6 @@ caller_cb_t getCallerBridgePtr(void);
 import "C"
 
 import (
-	"encoding/binary"
 	"fmt"
 	"unsafe"
 )
@@ -157,7 +156,6 @@ const (
 	StepDone     StepResult = 0
 	StepPending  StepResult = 1
 	StepContinue StepResult = 2
-	StepDelay    StepResult = 3
 )
 
 type StepOutput struct {
@@ -223,9 +221,4 @@ func ExecuteStep(plan, ctxBytes, respBytes []byte, caller ServiceCaller) (*StepO
 	return out, nil
 }
 
-func (o *StepOutput) DelayMs() uint64 {
-	if len(o.PendingBody) < 8 {
-		return 0
-	}
-	return binary.LittleEndian.Uint64(o.PendingBody[:8])
-}
+

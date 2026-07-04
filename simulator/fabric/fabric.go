@@ -82,13 +82,6 @@ func (f *Fabric) RegisterNode(nodeID, addr string) {
 	f.nodes[nodeID] = addr
 }
 
-// UnregisterNode removes a node from the fabric.
-func (f *Fabric) UnregisterNode(nodeID string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	delete(f.nodes, nodeID)
-}
-
 // Nodes returns all registered node addresses.
 func (f *Fabric) Nodes() map[string]string {
 	f.mu.RLock()
@@ -187,11 +180,6 @@ func (f *Fabric) EffectiveLatency(from, to string) time.Duration {
 		latency += time.Duration(randInt63n(int64(cfg.Jitter)))
 	}
 	return latency
-}
-
-// StatsSnapshot returns a copy of the current stats.
-func (f *Fabric) StatsSnapshot() Stats {
-	return f.stats
 }
 
 // registerBus registers a bus with the fabric for cross-node delivery.

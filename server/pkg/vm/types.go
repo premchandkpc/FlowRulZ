@@ -40,5 +40,4 @@ type StepOptions struct {
 var (
 	ErrCompileFailed = errors.New("plan compilation failed")
 	ErrExecFailed    = errors.New("vm execution failed")
-	ErrStepTimeout   = errors.New("vm step timed out")
 )

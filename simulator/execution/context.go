@@ -5,8 +5,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/premchandkpc/FlowRulZ/simulator/timeline"
 )
 
 type Result struct {
@@ -62,7 +60,6 @@ type ExecutionContext struct {
 	OnDone           func()
 
 	StateChanges []StateChange
-	Events       []timeline.Event
 
 	CreatedAt time.Time
 	UpdatedAt time.Time

@@ -28,28 +28,13 @@ type SimNode struct {
 
 	// Simulated services.
 	MockServices *services.ServiceRegistry
-	Network      *fabric.Fabric
 
 	// Execution state.
-	planCache   map[string][]byte // ruleID -> planBytes
-	stateStore  map[string]*ExecState
-	stateMu     sync.RWMutex
+	planCache map[string][]byte // ruleID -> planBytes
+	stateMu   sync.RWMutex
 
 	// Lifecycle.
 	cancel context.CancelFunc
-	wg     sync.WaitGroup
-}
-
-// ExecState tracks execution state for a simulated execution.
-type ExecState struct {
-	ID        string
-	RuleID    string
-	Status    string
-	CtxBytes  []byte
-	Output    []byte
-	Error     string
-	CreatedAt time.Time
-	UpdatedAt time.Time
 }
 
 // Config configures a simulated node.
@@ -74,9 +59,7 @@ func New(cfg Config, f *fabric.Fabric, mockServices *services.ServiceRegistry) *
 		Bus:          bus,
 		Fabric:       f,
 		MockServices: mockServices,
-		Network:      f,
 		planCache:    make(map[string][]byte),
-		stateStore:   make(map[string]*ExecState),
 	}
 
 	return sim

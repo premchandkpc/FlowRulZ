@@ -16,8 +16,6 @@ type SimConfig struct {
 	Dashboard    bool          `yaml:"dashboard"`
 	DashboardAddr string       `yaml:"dashboard_addr"`
 	Chaos        network.ChaosConfig `yaml:"chaos"`
-	Plans        []string      `yaml:"plans"`
-	Verbose      bool          `yaml:"verbose"`
 }
 
 

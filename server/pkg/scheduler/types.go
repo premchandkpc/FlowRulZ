@@ -2,19 +2,21 @@ package scheduler
 
 import "time"
 
-type ExecutionID string
-
-type State int
-
-const (
-	StateCreated State = iota
-	StateReady
-	StateRunning
-	StateWaitingForService
-	StateCompleted
-	StateFailed
-	StateCancelled
-)
+type ExecutionContext struct {
+	ID            string
+	Plan          *Plan
+	PlanBytes     []byte
+	Body          []byte
+	IncomingBody  []byte
+	State         int
+	Lane          Lane
+	ResultCh      chan *Result
+	CreatedAt     time.Time
+	WaitingService   string
+	WaitingStartTime time.Time
+	IP               int
+	StateChanges     []StateChange
+}
 
 type Plan struct {
 	ID           string
@@ -39,26 +41,9 @@ const (
 	OpReturn
 )
 
-type ExecutionContext struct {
-	ID               ExecutionID
-	Plan             *Plan
-	State            State
-	Variables        map[string]any
-	IncomingBody     []byte
-	Output           []byte
-	Duration         time.Duration
-	Lane             Lane
-	ResultCh         chan *Result
-	CreatedAt        time.Time
-	WaitingService   string
-	WaitingStartTime time.Time
-	IP               int
-	StateChanges     []StateChange
-}
-
 type StateChange struct {
-	From State
-	To   State
+	From int
+	To   int
 	Meta string
 }
 

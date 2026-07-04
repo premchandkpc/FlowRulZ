@@ -53,21 +53,6 @@ func Compile(dsl string, ruleID string) ([]byte, error) {
 	return out, nil
 }
 
-func Intern(s string) uint16 {
-	if len(s) == 0 {
-		return 0
-	}
-	b := []byte(s)
-	return uint16(C.flowrulz_intern((*C.uchar)(unsafe.Pointer(&b[0])), C.size_t(len(b))))
-}
-
-func InternLookup(id uint16) string {
-	buf := make([]byte, 256)
-	var outLen C.size_t
-	C.flowrulz_intern_lookup(C.uint16_t(id), (*C.uchar)(unsafe.Pointer(&buf[0])), &outLen)
-	return string(buf[:outLen])
-}
-
 func RegisterPlugin(name string, wasmBytes []byte) error {
 	if len(name) == 0 {
 		return fmt.Errorf("register plugin: empty name")

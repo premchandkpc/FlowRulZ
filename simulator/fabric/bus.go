@@ -82,12 +82,6 @@ func (b *Bus) Publish(ctx context.Context, topic string, msg *transport.Message)
 	return nil
 }
 
-// PublishToPartition sends a message with a partition key.
-func (b *Bus) PublishToPartition(ctx context.Context, topic, key string, msg *transport.Message) error {
-	msg.PartitionKey = key
-	return b.Publish(ctx, topic, msg)
-}
-
 // Subscribe registers a handler for a topic.
 func (b *Bus) Subscribe(ctx context.Context, topic string, handler transport.MessageHandler) (*transport.Subscription, error) {
 	if b.closed.Load() {
@@ -177,12 +171,6 @@ func (b *Bus) Reply(ctx context.Context, correlationID string, msg *transport.Me
 	return b.Publish(ctx, "__reply_"+correlationID, msg)
 }
 
-// Broadcast sends a message to all subscribers.
-func (b *Bus) Broadcast(ctx context.Context, topic string, msg *transport.Message) error {
-	msg.Type = transport.TypeBroadcast
-	return b.Publish(ctx, topic, msg)
-}
-
 // Close shuts down the bus.
 func (b *Bus) Close() error {
 	b.closed.Store(true)
@@ -193,17 +181,6 @@ func (b *Bus) Close() error {
 	b.mu.Unlock()
 	b.fabric.unregisterBus(b.nodeID)
 	return nil
-}
-
-// TopicStats returns subscriber counts per topic.
-func (b *Bus) TopicStats() map[string]int {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	stats := make(map[string]int)
-	for topic, handlers := range b.topics {
-		stats[topic] = len(handlers)
-	}
-	return stats
 }
 
 func (b *Bus) nextMsgID() string {

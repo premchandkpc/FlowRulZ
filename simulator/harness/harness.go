@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -166,16 +165,6 @@ func (h *Harness) Execute(ctx context.Context, nodeID, ruleID string, body []byt
 	return reply.Body, nil
 }
 
-// ExecuteRoundRobin sends execution requests to nodes in round-robin order.
-func (h *Harness) ExecuteRoundRobin(ctx context.Context, ruleID string, body []byte) ([]byte, error) {
-	// Simple round-robin.
-	idx := 0
-	nodeID := h.Nodes[idx].ID
-	h.wg.Add(1)
-	go func() { h.wg.Done() }() // placeholder
-	return h.Execute(ctx, nodeID, ruleID, body)
-}
-
 // KillNode stops a node (simulates crash).
 func (h *Harness) KillNode(nodeID string) error {
 	for _, n := range h.Nodes {
@@ -228,15 +217,3 @@ func (h *Harness) Cleanup() {
 	os.RemoveAll(h.tmpDir)
 }
 
-// tempDir returns a temporary directory path.
-func tempDir(pattern string) string {
-	dir, _ := os.MkdirTemp("", pattern)
-	return dir
-}
-
-// init creates the temp directory.
-func init() {
-	// Ensure temp directory exists.
-	execDir := filepath.Join(os.TempDir(), "flowrulz-sim")
-	os.MkdirAll(execDir, 0755)
-}

@@ -82,11 +82,6 @@ func (b *EventBus) Publish(topic string, msg *transport.Message) error {
 	return nil
 }
 
-func (b *EventBus) PublishToPartition(topic, key string, msg *transport.Message) error {
-	msg.PartitionKey = key
-	return b.Publish(topic, msg)
-}
-
 func (b *EventBus) Subscribe(topic string, handler transport.Handler) *transport.Subscription {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -148,11 +143,6 @@ func (b *EventBus) Reply(topic string, reqID string, msg *transport.Message) err
 	return b.Publish(topic+".reply", msg)
 }
 
-func (b *EventBus) Broadcast(topic string, msg *transport.Message) error {
-	msg.Type = transport.TypeBroadcast
-	return b.Publish(topic, msg)
-}
-
 func (b *EventBus) Unsubscribe(subID string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -192,12 +182,4 @@ func (b *EventBus) Close() {
 	b.mu.Unlock()
 }
 
-func (b *EventBus) TopicStats() map[string]int {
-	b.mu.RLock()
-	stats := make(map[string]int)
-	for topic, handlers := range b.topics {
-		stats[topic] = len(handlers)
-	}
-	b.mu.RUnlock()
-	return stats
-}
+

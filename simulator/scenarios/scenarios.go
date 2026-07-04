@@ -129,7 +129,7 @@ var RampUp = Scenario{
 	},
 }
 
-var All = []Scenario{BlackFriday, PaymentOutage, SpikeTest, ChaosMonkey, RampUp, OrderRouting}
+var All = []Scenario{BlackFriday, PaymentOutage, SpikeTest, ChaosMonkey, RampUp, OrderRouting, OrderProcessing, MetadataUpdates, CircuitBreakerDemo}
 
 func ByName(name string) *Scenario {
 	for _, s := range All {
@@ -145,5 +145,8 @@ func DefaultPlans() []*execution.Plan {
 		execution.OrderFlow,
 		execution.PaymentFlow,
 		execution.RefundFlow,
+		execution.ShippingFlow,
+		execution.ServiceDiscoveryFlow,
+		execution.DeadLetterQueueFlow,
 	}
 }

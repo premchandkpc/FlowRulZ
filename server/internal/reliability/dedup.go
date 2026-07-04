@@ -46,6 +46,10 @@ func (dt *DedupTracker) Seen(key string) bool {
 func (dt *DedupTracker) Mark(key string) {
 	dt.mu.Lock()
 	defer dt.mu.Unlock()
+	dt.markLocked(key)
+}
+
+func (dt *DedupTracker) markLocked(key string) {
 	if existing, ok := dt.entries[key]; ok {
 		existing.timestamp = time.Now()
 		dt.order.MoveToFront(existing.elem)
@@ -61,6 +65,28 @@ func (dt *DedupTracker) Mark(key string) {
 	}
 	elem := dt.order.PushFront(key)
 	dt.entries[key] = dedupEntry{key: key, timestamp: time.Now(), elem: elem}
+}
+
+// CheckAndMark atomically checks if a key has been seen and marks it if not.
+// Returns true if the key was already seen (duplicate), false if it's new.
+// This eliminates the TOCTOU race between Seen() and Mark().
+func (dt *DedupTracker) CheckAndMark(key string) bool {
+	dt.mu.Lock()
+	defer dt.mu.Unlock()
+	
+	if _, ok := dt.entries[key]; ok {
+		// Already seen - update timestamp and move to front
+		if existing, ok := dt.entries[key]; ok {
+			existing.timestamp = time.Now()
+			dt.order.MoveToFront(existing.elem)
+			dt.entries[key] = existing
+		}
+		return true
+	}
+	
+	// Not seen - mark it
+	dt.markLocked(key)
+	return false
 }
 
 func (dt *DedupTracker) StartCleanup(ctx context.Context, interval time.Duration) {

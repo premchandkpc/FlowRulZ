@@ -89,18 +89,20 @@ type ProdNode struct {
 	nodeID          string
 	httpAddr        string
 	httpClient      *http.Client
+	serviceCaller   *ServiceCaller
 	circuitBreakers sync.Map
 	mu              sync.Mutex
 }
 
 func NewNode(cfg Config, deps Dependencies) *ProdNode {
 	n := &ProdNode{
-		nodeID:     cfg.NodeID,
-		httpAddr:   cfg.HTTPListenAddr(),
-		config:     cfg,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
-		consumers:  make([]transport.MessageConsumer, 0),
-		producers:  make([]transport.MessageProducer, 0),
+		nodeID:       cfg.NodeID,
+		httpAddr:     cfg.HTTPListenAddr(),
+		config:       cfg,
+		httpClient:   &http.Client{Timeout: 10 * time.Second},
+		serviceCaller: NewServiceCaller(),
+		consumers:    make([]transport.MessageConsumer, 0),
+		producers:    make([]transport.MessageProducer, 0),
 
 		Engine:       deps.Engine,
 		Scheduler:    deps.Scheduler,
@@ -259,6 +261,9 @@ func (n *ProdNode) Shutdown(ctx context.Context) error {
 	}
 	if n.StateStore != nil {
 		n.StateStore.Close()
+	}
+	if n.serviceCaller != nil {
+		n.serviceCaller.Close()
 	}
 
 	slog.Info("shutdown: complete", "node_id", n.nodeID)

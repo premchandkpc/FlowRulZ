@@ -34,41 +34,55 @@ func NewCircuitBreaker(threshold int, recoveryTimeout time.Duration) *CircuitBre
 	}
 }
 
+// Allow checks if a request is allowed through the circuit breaker.
+// Uses mutex for state transitions to prevent TOCTOU races.
 func (cb *CircuitBreaker) Allow() bool {
-	state := State(atomic.LoadInt32((*int32)(&cb.state)))
-	switch state {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+
+	switch cb.state {
 	case StateClosed:
 		return true
 	case StateOpen:
-		cb.mu.Lock()
-		lft := cb.lastFailureTime
-		cb.mu.Unlock()
-		if time.Since(lft) > cb.recoveryTimeout {
-			atomic.StoreInt32((*int32)(&cb.state), int32(StateHalfOpen))
-			atomic.StoreInt64(&cb.halfOpenReqs, 0)
+		if time.Since(cb.lastFailureTime) > cb.recoveryTimeout {
+			cb.state = StateHalfOpen
+			cb.halfOpenReqs = 0
 			return true
 		}
 		return false
 	case StateHalfOpen:
-		n := atomic.AddInt64(&cb.halfOpenReqs, 1)
-		return n <= int64(cb.halfOpenMaxReqs)
+		n := cb.halfOpenReqs
+		cb.halfOpenReqs++
+		return n < int64(cb.halfOpenMaxReqs)
 	}
 	return false
 }
 
+// Success records a successful call and closes the breaker.
 func (cb *CircuitBreaker) Success() {
-	atomic.StoreInt32((*int32)(&cb.state), int32(StateClosed))
-	atomic.StoreInt64(&cb.failureCount, 0)
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+
+	cb.state = StateClosed
+	cb.failureCount = 0
 }
 
+// Failure records a failed call.
+// In half-open state, any failure reopens the breaker (standard behavior).
 func (cb *CircuitBreaker) Failure() {
-	atomic.AddInt64(&cb.failureCount, 1)
 	cb.mu.Lock()
-	cb.lastFailureTime = time.Now()
-	cb.mu.Unlock()
+	defer cb.mu.Unlock()
 
-	n := atomic.LoadInt64(&cb.failureCount)
-	if n >= int64(cb.threshold) {
-		atomic.StoreInt32((*int32)(&cb.state), int32(StateOpen))
+	cb.failureCount++
+	cb.lastFailureTime = time.Now()
+
+	// Standard circuit breaker: any failure in half-open reopens
+	if cb.state == StateHalfOpen || cb.failureCount >= int64(cb.threshold) {
+		cb.state = StateOpen
 	}
+}
+
+// FailureCount returns the current failure count.
+func (cb *CircuitBreaker) FailureCount() int64 {
+	return atomic.LoadInt64(&cb.failureCount)
 }

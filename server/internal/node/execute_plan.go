@@ -1,13 +1,10 @@
 package node
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"hash/fnv"
-	"io"
 	"log/slog"
-	"net/http"
 	"time"
 
 	"github.com/google/uuid"
@@ -224,11 +221,10 @@ func (n *ProdNode) handleIncomingMessage(ctx context.Context, msg []byte) ([]byt
 	h.Write(msg)
 	msgIDStr := fmt.Sprintf("%x", h.Sum(nil))
 
-	if n.Dedup.Seen(msgIDStr) {
+	if n.Dedup.CheckAndMark(msgIDStr) {
 		observability.RecordExec("dedup_skipped")
 		return nil, nil
 	}
-	n.Dedup.Mark(msgIDStr)
 
 	execCtx, execCancel := context.WithTimeout(ctx, defaultExecTimeout)
 	defer execCancel()
@@ -250,34 +246,6 @@ func (n *ProdNode) handleIncomingMessage(ctx context.Context, msg []byte) ([]byt
 	return results[0], nil
 }
 
-func (n *ProdNode) httpCall(endpoint string, body []byte, cb *reliability.CircuitBreaker) ([]byte, error) {
-	req, err := http.NewRequestWithContext(context.Background(), "POST", endpoint, bytes.NewReader(body))
-	if err != nil {
-		cb.Failure()
-		return nil, fmt.Errorf("http call: request: %w", err)
-	}
-	resp, err := n.httpClient.Do(req)
-	if err != nil {
-		cb.Failure()
-		return nil, fmt.Errorf("http call: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 500 {
-		cb.Failure()
-		return nil, fmt.Errorf("http call: status %d", resp.StatusCode)
-	}
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		cb.Failure()
-		return nil, fmt.Errorf("http call: read: %w", err)
-	}
-
-	cb.Success()
-	return respBody, nil
-}
-
 func (n *ProdNode) callService(svcName, method string, body []byte, timeoutMs uint64) ([]byte, error) {
 	observability.RecordExec("svc_call")
 
@@ -297,40 +265,27 @@ func (n *ProdNode) callService(svcName, method string, body []byte, timeoutMs ui
 		return nil, fmt.Errorf("circuit breaker open for service %s", svcName)
 	}
 
-	inst, _ := n.Registry.LookupInstance(svcName, method)
-	if inst != nil {
-		endpoint := fmt.Sprintf("%s://%s:%d", inst.Endpoint.Protocol, inst.Endpoint.Address, inst.Endpoint.Port)
-		req, err := http.NewRequestWithContext(svcCtx, "POST", endpoint, bytes.NewReader(body))
-		if err != nil {
-			cb.Failure()
-			return nil, fmt.Errorf("service %s: request: %w", svcName, err)
-		}
-		resp, err := n.httpClient.Do(req)
-		if err != nil {
-			cb.Failure()
-			n.Registry.MarkUnhealthy(svcName, inst.Endpoint.NodeID)
-			return nil, fmt.Errorf("service %s: call: %w", svcName, err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode >= 500 {
-			_, _ = io.ReadAll(resp.Body)
-			cb.Failure()
-			n.Registry.MarkUnhealthy(svcName, inst.Endpoint.NodeID)
-			return nil, fmt.Errorf("service %s: status %d", svcName, resp.StatusCode)
-		}
-
-		respBody, err := io.ReadAll(resp.Body)
-		if err != nil {
-			cb.Failure()
-			return nil, fmt.Errorf("service %s: read: %w", svcName, err)
-		}
-
+	inst, err := n.Registry.LookupInstance(svcName, method)
+	if err != nil {
+		slog.Warn("registry lookup failed, using passthrough", 
+			"service", svcName, 
+			"method", method, 
+			"error", err)
 		cb.Success()
-		return respBody, nil
+		return body, nil
+	}
+	
+	if inst == nil {
+		slog.Info("service call (passthrough)", "service", svcName, "method", method, "body_bytes", len(body))
+		cb.Success()
+		return body, nil
 	}
 
-	slog.Info("service call", "service", svcName, "method", method, "body_bytes", len(body))
-	cb.Success()
-	return body, nil
+	// Protocol-aware dispatch
+	resp, err := n.serviceCaller.CallService(svcCtx, inst, method, body, cb, n.Registry)
+	if err != nil {
+		return nil, fmt.Errorf("service %s: %w", svcName, err)
+	}
+	
+	return resp, nil
 }

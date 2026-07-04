@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -129,11 +130,29 @@ func BenchmarkFileStore_Create(b *testing.B) {
 	}
 }
 
-// BenchmarkFileStore_ListByStatus benchmarks the full directory scan.
+// BenchmarkFileStore_ListByStatus benchmarks the indexed lookup with mixed statuses.
 func BenchmarkFileStore_ListByStatus(b *testing.B) {
 	for _, count := range []int{10, 100, 1000} {
 		b.Run(fmt.Sprintf("execs-%d", count), func(b *testing.B) {
 			dir := b.TempDir()
+
+			// Pre-create files with mixed statuses (80% completed, 20% running)
+			planBytes := make([]byte, 4096)
+			for i := 0; i < count; i++ {
+				status := StatusCompleted
+				if i%5 == 0 {
+					status = StatusRunning // 20% running
+				}
+				st := &State{
+					ID:        fmt.Sprintf("exec-%d", i),
+					PlanBytes: planBytes,
+					Status:    status,
+				}
+				data, _ := json.Marshal(st)
+				os.WriteFile(filepath.Join(dir, st.ID+".json"), data, 0644)
+			}
+
+			// Open store — index is built from existing files
 			store, err := NewFileStore(dir)
 			if err != nil {
 				b.Fatal(err)
@@ -141,24 +160,12 @@ func BenchmarkFileStore_ListByStatus(b *testing.B) {
 			defer store.Close()
 
 			ctx := context.Background()
-			planBytes := make([]byte, 4096)
-
-			// Pre-create N states
-			for i := 0; i < count; i++ {
-				st := &State{
-					ID:        fmt.Sprintf("exec-%d", i),
-					PlanBytes: planBytes,
-					Status:    StatusRunning,
-				}
-				if err := store.Create(ctx, st); err != nil {
-					b.Fatal(err)
-				}
-			}
 
 			b.ResetTimer()
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
+				// ListByStatus for running (20% of total)
 				_, err := store.ListByStatus(ctx, StatusRunning)
 				if err != nil {
 					b.Fatal(err)

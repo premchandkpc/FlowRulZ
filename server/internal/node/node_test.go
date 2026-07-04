@@ -225,6 +225,12 @@ func (m *mockRaftCluster) SubscribeTermChanges(fn func(uint64)) pkgcluster.Cance
 func (m *mockRaftCluster) Join(memberID pkgcluster.MemberID, addr string) error       { return nil }
 func (m *mockRaftCluster) Remove(memberID pkgcluster.MemberID) error                  { return nil }
 func (m *mockRaftCluster) BootstrapCluster() error                                     { return nil }
+func (m *mockRaftCluster) CaptureLeadershipToken() pkgcluster.LeadershipToken {
+	return pkgcluster.LeadershipToken{Leader: m.leader, Term: m.term}
+}
+func (m *mockRaftCluster) ValidateLeadershipToken(token pkgcluster.LeadershipToken) bool {
+	return token.Leader == m.leader && token.Term == m.term
+}
 
 type mockMembership struct {
 	leaderID string

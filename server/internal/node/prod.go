@@ -175,6 +175,34 @@ func (n *ProdNode) CurrentTerm() uint64 {
 	return n.PlanDist.CurrentTerm()
 }
 
+// CaptureLeadershipToken captures the current leadership state.
+// Use this to implement the fencing pattern:
+//
+//	token := node.CaptureLeadershipToken()
+//	if !token.Valid() { return }
+//	// ... do work ...
+//	if !node.ValidateLeadershipToken(token) { return stale error }
+//	// ... publish side effect ...
+//
+// This prevents split-brain: if leadership changed between capture and
+// validate, the token will be invalid and the publish is skipped.
+func (n *ProdNode) CaptureLeadershipToken() pkgcluster.LeadershipToken {
+	if n.RaftCluster != nil {
+		return n.RaftCluster.CaptureLeadershipToken()
+	}
+	// No Raft configured — always leader with term 0.
+	return pkgcluster.LeadershipToken{Leader: true, Term: 0}
+}
+
+// ValidateLeadershipToken checks if a previously captured token is still valid.
+func (n *ProdNode) ValidateLeadershipToken(token pkgcluster.LeadershipToken) bool {
+	if n.RaftCluster != nil {
+		return n.RaftCluster.ValidateLeadershipToken(token)
+	}
+	// No Raft configured — token is always valid.
+	return token.Valid()
+}
+
 func (n *ProdNode) LeaderID() pkgnode.ID {
 	if n.RaftCluster != nil && n.RaftCluster.IsLeader() {
 		return pkgnode.ID(n.nodeID)

@@ -15,6 +15,8 @@ import (
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/raft"
 	raftboltdb "github.com/hashicorp/raft-boltdb/v2"
+
+	pkgcluster "github.com/premchandkpc/FlowRulZ/server/pkg/cluster"
 )
 
 const (
@@ -272,6 +274,34 @@ func (rc *RaftCluster) CurrentTerm() uint64 {
 		return 0
 	}
 	return term
+}
+
+// CaptureLeadershipToken captures the current leadership state.
+// Use this to implement the fencing pattern:
+//
+//	token := node.CaptureLeadershipToken()
+//	if !token.Valid() { return }
+//	// ... do work ...
+//	if !node.ValidateLeadershipToken(token) { return stale error }
+//	// ... publish side effect ...
+//
+// This prevents split-brain: if leadership changed between capture and
+// validate, the token will be invalid and the publish is skipped.
+func (rc *RaftCluster) CaptureLeadershipToken() pkgcluster.LeadershipToken {
+	return pkgcluster.LeadershipToken{
+		Leader: rc.IsLeader(),
+		Term:   rc.CurrentTerm(),
+	}
+}
+
+// ValidateLeadershipToken checks if a previously captured token is still valid.
+// Returns true if this node is still leader with the same term.
+func (rc *RaftCluster) ValidateLeadershipToken(token pkgcluster.LeadershipToken) bool {
+	if !token.Valid() {
+		return false
+	}
+	current := rc.CaptureLeadershipToken()
+	return current.Leader && current.Term == token.Term
 }
 
 // ClusterSize returns the number of voters in the Raft cluster.

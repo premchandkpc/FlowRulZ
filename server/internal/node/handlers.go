@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -54,6 +55,37 @@ func (n *ProdNode) handleClusterJoin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
+
+	// Validate node_id is not empty and doesn't contain dangerous characters.
+	if req.NodeID == "" {
+		http.Error(w, "node_id is required", http.StatusBadRequest)
+		return
+	}
+	if len(req.NodeID) > 128 {
+		http.Error(w, "node_id too long", http.StatusBadRequest)
+		return
+	}
+
+	// Validate raft_addr is not empty and looks like a valid address.
+	if req.RaftAddr == "" {
+		http.Error(w, "raft_addr is required", http.StatusBadRequest)
+		return
+	}
+	host, port, err := net.SplitHostPort(req.RaftAddr)
+	if err != nil || host == "" || port == "0" {
+		http.Error(w, "invalid raft_addr: must be host:port", http.StatusBadRequest)
+		return
+	}
+
+	// Reject localhost addresses in production (unless explicitly allowed).
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		slog.Warn("cluster join: rejecting localhost address",
+			"node_id", req.NodeID, "raft_addr", req.RaftAddr,
+			"hint", "set AdvertiseAddr to the pod's DNS name or external IP")
+		http.Error(w, "localhost addresses not allowed; set AdvertiseAddr", http.StatusBadRequest)
+		return
+	}
+
 	if err := n.RaftCluster.Join(pkgcluster.MemberID(req.NodeID), req.RaftAddr); err != nil {
 		slog.Error("cluster join failed", "node_id", req.NodeID, "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -116,11 +148,18 @@ func (n *ProdNode) handleListPartitions(w http.ResponseWriter, r *http.Request) 
 }
 
 func (n *ProdNode) handleRebalance(w http.ResponseWriter, r *http.Request) {
-	if !n.IsLeader() {
+	// Fencing pattern: capture leadership token before deciding to act.
+	token := n.CaptureLeadershipToken()
+	if !token.Valid() {
 		http.Error(w, "not leader", http.StatusForbidden)
 		return
 	}
-	assignments := n.Partitions.Rebalance(n.Membership.AliveNodes(), n.PlanDist.CurrentTerm())
+	assignments := n.Partitions.Rebalance(n.Membership.AliveNodes(), token.Term)
+	// Re-validate before the side-effecting publish.
+	if !n.ValidateLeadershipToken(token) {
+		http.Error(w, "leadership lost during rebalance", http.StatusConflict)
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	if err := n.Partitions.PublishAssignments(ctx, assignments); err != nil {

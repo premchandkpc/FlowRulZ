@@ -41,12 +41,31 @@ func (n *ProdNode) startSubsystems(ctx context.Context) {
 	n.PlanDist.Start(ctx)
 	n.Membership.StartEviction(ctx, membership.DefaultHeartbeatTimeout)
 
+	// Liveness model: gossip proposes, Raft-confirmed-leader disposes.
+	//
+	// ADR: We keep gossip for fast failure detection (sub-second via SWIM)
+	// but require Raft term + leader confirmation before ANY rebalance
+	// decision is actually acted on. This gives us:
+	//   1. Fast detection: gossip detects failures in <1s (vs Raft's 1-2s)
+		//   2. Consistent decisions: only the Raft-confirmed leader acts
+	//   3. Split-brain prevention: fencing tokens prevent stale leaders
+	//
+	// Alternative (a) — drive rebalancing off Raft's config view only —
+	// would lose sub-second detection and require Raft to track membership
+	// changes, which our NoopFSM doesn't support.
 	n.Rebalancer.SetNotify(func() {
-		if !n.IsLeader() {
+		// Fencing pattern: capture leadership token before deciding to act.
+		token := n.CaptureLeadershipToken()
+		if !token.Valid() {
 			return
 		}
-		assignments := n.Partitions.Rebalance(n.Membership.AliveNodes(), n.PlanDist.CurrentTerm())
+		assignments := n.Partitions.Rebalance(n.Membership.AliveNodes(), token.Term)
 		if len(assignments) > 0 {
+			// Re-validate leadership before the side-effecting publish.
+			if !n.ValidateLeadershipToken(token) {
+				slog.Warn("partition: leadership lost during rebalance, discarding assignments")
+				return
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			if err := n.Partitions.PublishAssignments(ctx, assignments); err != nil {
@@ -101,15 +120,29 @@ func (n *ProdNode) configureEngineHooks() {
 }
 
 func (n *ProdNode) handleEngineDeploy(id, dsl string, plan []byte, version uint64) {
-	if !n.IsLeader() {
+	// Fencing pattern: capture leadership token before deciding to act.
+	token := n.CaptureLeadershipToken()
+	if !token.Valid() {
 		return
 	}
-	n.PlanDist.SetTerm(n.nextDeployTerm())
+	n.PlanDist.SetTerm(token.Term)
+	// Re-validate before the side-effecting publish.
+	if !n.ValidateLeadershipToken(token) {
+		slog.Warn("plandist: leadership lost during deploy, discarding plan", "id", id)
+		return
+	}
 	go n.distributePlan(id, dsl, plan, version)
 }
 
 func (n *ProdNode) handleEnginePromote(id string, version uint64) {
-	if !n.IsLeader() {
+	// Fencing pattern: capture leadership token before deciding to act.
+	token := n.CaptureLeadershipToken()
+	if !token.Valid() {
+		return
+	}
+	// Re-validate before the side-effecting publish.
+	if !n.ValidateLeadershipToken(token) {
+		slog.Warn("plandist: leadership lost during promote, discarding activation", "id", id)
 		return
 	}
 	go n.distributeActivate(id, version)

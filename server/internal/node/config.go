@@ -1,6 +1,7 @@
 package node
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"time"
@@ -28,6 +29,11 @@ type Config struct {
 	// Listen addresses
 	HTTPAddr string
 	GRPCAddr string
+
+	// Advertise address — the address this node advertises to peers.
+	// If empty, falls back to GRPCAddr for backward compatibility.
+	// In k8s, set to pod DNS name (e.g. flowrulz-0.flowrulz-bus.<ns>.svc.cluster.local).
+	AdvertiseAddr string
 
 	// Raft
 	RaftPort      int
@@ -121,4 +127,26 @@ func (c *Config) RegistryHeartbeatTimeout() time.Duration {
 
 func (c *Config) NumPartitions() int {
 	return defaultNumPartitions
+}
+
+// AdvertiseHost returns the host portion of the advertise address.
+// If AdvertiseAddr is set, returns that host. Otherwise falls back to
+// GRPCAddr for backward compatibility with single-host deployments.
+func (c *Config) AdvertiseHost() string {
+	if c.AdvertiseAddr != "" {
+		host, _, err := net.SplitHostPort(c.AdvertiseAddr)
+		if err != nil {
+			return c.AdvertiseAddr
+		}
+		return host
+	}
+	// Fallback: extract host from GRPCAddr (e.g. ":9090" -> "localhost").
+	host, _, err := net.SplitHostPort(c.GRPCAddr)
+	if err != nil {
+		return "localhost"
+	}
+	if host == "" {
+		return "localhost"
+	}
+	return host
 }

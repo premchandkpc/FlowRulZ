@@ -56,7 +56,10 @@ func (n *ProdNode) startCluster(ctx context.Context) {
 }
 
 func (n *ProdNode) joinRaftCluster(ctx context.Context) {
-	raftAddr := fmt.Sprintf("localhost:%d", n.config.RaftPort)
+	// Use advertise address if configured, otherwise fall back to localhost.
+	// In k8s, set AdvertiseAddr to the pod's DNS name (e.g.
+	// flowrulz-0.flowrulz-bus.<ns>.svc.cluster.local).
+	raftAddr := fmt.Sprintf("%s:%d", n.config.AdvertiseHost(), n.config.RaftPort)
 	body, _ := json.Marshal(map[string]string{
 		"node_id":   n.nodeID,
 		"raft_addr": raftAddr,

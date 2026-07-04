@@ -88,3 +88,14 @@ func (cm *ClusterMember) Remove(memberID pkgcluster.MemberID) error {
 func (cm *ClusterMember) BootstrapCluster() error {
 	return cm.inner.BootstrapCluster()
 }
+
+// CaptureLeadershipToken captures the current leadership state.
+// Use this to implement the fencing pattern against split-brain.
+func (cm *ClusterMember) CaptureLeadershipToken() pkgcluster.LeadershipToken {
+	return cm.inner.CaptureLeadershipToken()
+}
+
+// ValidateLeadershipToken checks if a previously captured token is still valid.
+func (cm *ClusterMember) ValidateLeadershipToken(token pkgcluster.LeadershipToken) bool {
+	return cm.inner.ValidateLeadershipToken(token)
+}

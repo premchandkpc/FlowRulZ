@@ -11,96 +11,16 @@ import (
 )
 
 func (s *Scheduler) executeContext(ctx *execution.ExecutionContext, workerID int) {
-	if len(ctx.Plan.PlanBytes) > 0 {
-		s.executeBridge(ctx)
+	// All execution goes through the real VM bridge.
+	// If PlanBytes is empty, the plan was not compiled from DSL and cannot
+	// be executed. Log an error and fail immediately.
+	if len(ctx.Plan.PlanBytes) == 0 {
+		ctx.MarkFailed(fmt.Errorf("plan %s has no compiled bytecode — deploy via DSL first", ctx.Plan.ID))
+		s.Metrics.RecordFailed()
+		s.sendResult(ctx)
 		return
 	}
-	for ctx.IP < len(ctx.Plan.Instructions) {
-		select {
-		case <-s.stopCh:
-			ctx.MarkFailed(fmt.Errorf("scheduler stopped"))
-			s.Metrics.RecordFailed()
-			s.sendResult(ctx)
-			return
-		default:
-		}
-
-		instr := ctx.Plan.Instructions[ctx.IP]
-		ctx.Transition(execution.StateRunning, fmt.Sprintf("executing %s", instr.Op))
-
-		s.Timeline.Record(timeline.Event{
-			ExecID:    ctx.ID,
-			Timestamp: time.Now(),
-			Type:      timeline.EventInstruction,
-			Op:        instr.Op.String(),
-			IP:        ctx.IP,
-			NodeID:    s.ID,
-		})
-
-		switch instr.Op {
-		case execution.OpCallService:
-			result := s.callService(ctx, instr)
-			if result.Error != nil {
-				ctx.MarkFailed(result.Error)
-				s.Timeline.Record(timeline.Event{
-					ExecID:    ctx.ID,
-					Timestamp: time.Now(),
-					Type:      timeline.EventFailed,
-					Op:        "service_error",
-					Service:   instr.Service,
-					Meta:      result.Error.Error(),
-				})
-				s.Metrics.RecordFailed()
-				s.sendResult(ctx)
-				return
-			}
-			ctx.SetVariable(instr.Service+"_result", string(result.Body))
-			ctx.SetVariable(instr.Service+"_latency", result.Latency.Milliseconds())
-			s.Metrics.RecordServiceCall(instr.Service, result.Latency, false)
-
-		case execution.OpValidate:
-			ctx.SetVariable("validated", true)
-
-		case execution.OpBranch:
-			condition := instr.Args[0]
-			val := ctx.Variable(condition)
-			if val == nil {
-				ctx.SetVariable("branch_taken", false)
-				ctx.IP++
-				continue
-			}
-			strVal := fmt.Sprintf("%v", val)
-			if strVal == "true" || strVal == "1" || strVal == "high" {
-				ctx.SetVariable("branch_taken", true)
-			} else {
-				ctx.SetVariable("branch_taken", false)
-			}
-
-		case execution.OpPublish:
-			ctx.SetVariable("published", instr.Args[0])
-
-		case execution.OpReturn:
-			ctx.MarkDone()
-			s.Timeline.Record(timeline.Event{
-				ExecID:    ctx.ID,
-				Timestamp: time.Now(),
-				Type:      timeline.EventCompleted,
-				Meta:      fmt.Sprintf("duration=%v", ctx.Duration),
-			})
-			s.Metrics.RecordCompleted(ctx.Duration)
-			s.sendResult(ctx)
-			return
-		}
-		ctx.IP++
-	}
-	ctx.MarkDone()
-	s.Timeline.Record(timeline.Event{
-		ExecID:    ctx.ID,
-		Timestamp: time.Now(),
-		Type:      timeline.EventCompleted,
-	})
-	s.Metrics.RecordCompleted(ctx.Duration)
-	s.sendResult(ctx)
+	s.executeBridge(ctx)
 }
 
 func (s *Scheduler) executeBridge(ctx *execution.ExecutionContext) {
@@ -253,68 +173,5 @@ func (s *Scheduler) executeBridge(ctx *execution.ExecutionContext) {
 		case bridge.StepContinue:
 			respBytes = nil
 		}
-	}
-}
-
-func (s *Scheduler) callService(ctx *execution.ExecutionContext, instr execution.Instruction) services.CallResult {
-	svc := s.Services.Get(instr.Service)
-	if svc == nil {
-		return services.CallResult{Error: fmt.Errorf("unknown service: %s", instr.Service)}
-	}
-
-	correlationID := fmt.Sprintf("%s-%s-%d", s.ID, ctx.ID, ctx.IP)
-
-	ctx.WaitingService = instr.Service
-	ctx.WaitingStartTime = time.Now()
-
-	s.Timeline.Record(timeline.Event{
-		ExecID:    ctx.ID,
-		Timestamp: time.Now(),
-		Type:      timeline.EventServiceCall,
-		Service:   instr.Service,
-		IP:        ctx.IP,
-		Meta:      correlationID,
-		NodeID:    s.ID,
-	})
-
-	ctx.Transition(execution.StateWaitingForService, fmt.Sprintf("waiting for %s", instr.Service))
-
-	s.WaitingQ.Add(correlationID, ctx, instr.Service)
-
-	resultCh := make(chan services.CallResult, 1)
-	s.Network.CallService(s.serviceCtx, svc, ctx.IncomingBody, func(result services.CallResult) {
-		resultCh <- result
-	})
-
-	select {
-	case result := <-resultCh:
-		s.WaitingQ.Remove(correlationID)
-		latency := time.Since(ctx.WaitingStartTime)
-
-		if result.Error != nil {
-			s.Timeline.Record(timeline.Event{
-				ExecID:    ctx.ID,
-				Timestamp: time.Now(),
-				Type:      timeline.EventServiceError,
-				Service:   instr.Service,
-				Meta:      result.Error.Error(),
-			})
-			return result
-		}
-
-		s.Timeline.Record(timeline.Event{
-			ExecID:    ctx.ID,
-			Timestamp: time.Now(),
-			Type:      timeline.EventServiceResponse,
-			Service:   instr.Service,
-			Elapsed:   latency,
-			Meta:      string(result.Body),
-		})
-		ctx.Transition(execution.StateRunning, "service response received")
-		return result
-
-	case <-s.serviceCtx.Done():
-		s.WaitingQ.Remove(correlationID)
-		return services.CallResult{Error: s.serviceCtx.Err()}
 	}
 }

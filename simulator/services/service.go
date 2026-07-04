@@ -192,6 +192,7 @@ func DefaultServices() *ServiceRegistry {
 		{"order", 10 * time.Millisecond, 4 * time.Millisecond, 0.012, 80, []MethodInfo{{Name: "create"}, {Name: "cancel"}, {Name: "status"}, {Name: "history"}, {Name: "update"}}, "order"},
 		{"payment", 40 * time.Millisecond, 15 * time.Millisecond, 0.03, 30, []MethodInfo{{Name: "authorize"}, {Name: "capture"}, {Name: "refund"}, {Name: "void"}, {Name: "status"}}, "order"},
 		{"fraud", 20 * time.Millisecond, 8 * time.Millisecond, 0.02, 40, []MethodInfo{{Name: "check"}, {Name: "score"}, {Name: "flag"}, {Name: "review"}}, "order"},
+		{"loyalty", 10 * time.Millisecond, 3 * time.Millisecond, 0.01, 100, []MethodInfo{{Name: "award"}, {Name: "redeem"}}, "order"},
 		{"invoice", 12 * time.Millisecond, 4 * time.Millisecond, 0.01, 60, []MethodInfo{{Name: "generate"}, {Name: "send"}, {Name: "void"}, {Name: "pdf"}}, "order"},
 		{"billing", 15 * time.Millisecond, 5 * time.Millisecond, 0.015, 50, []MethodInfo{{Name: "charge"}, {Name: "credit"}, {Name: "statement"}, {Name: "balance"}}, "order"},
 		{"refund", 25 * time.Millisecond, 10 * time.Millisecond, 0.02, 30, []MethodInfo{{Name: "process"}, {Name: "status"}, {Name: "approve"}, {Name: "reject"}}, "order"},

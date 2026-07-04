@@ -147,14 +147,14 @@ func DefaultServices() *ServiceRegistry {
 		
 		// Infrastructure Simulators
 		{"database", 2 * time.Millisecond, 1 * time.Millisecond, 0.001, 50, []MethodInfo{{Name: "query"}, {Name: "execute"}, {Name: "transaction"}}},
-		{"redis", 1 * time.Millisecond, 0.5 * time.Millisecond, 0.001, 100, []MethodInfo{{Name: "get"}, {Name: "set"}, {Name: "del"}}},
+		{"redis", 1 * time.Millisecond, 500 * time.Microsecond, 0.001, 100, []MethodInfo{{Name: "get"}, {Name: "set"}, {Name: "del"}}},
 		{"kafka", 5 * time.Millisecond, 2 * time.Millisecond, 0.001, 30, []MethodInfo{{Name: "publish"}, {Name: "consume"}}},
 		{"payment-gateway", 50 * time.Millisecond, 20 * time.Millisecond, 0.05, 10, []MethodInfo{{Name: "authorize"}, {Name: "capture"}, {Name: "refund"}}},
 		{"email-provider", 10 * time.Millisecond, 3 * time.Millisecond, 0.01, 100, []MethodInfo{{Name: "send"}, {Name: "bounce"}, {Name: "complaint"}}},
 		{"sms-gateway", 8 * time.Millisecond, 2 * time.Millisecond, 0.01, 200, []MethodInfo{{Name: "send"}, {Name: "status"}}},
 		{"warehouse-api", 12 * time.Millisecond, 4 * time.Millisecond, 0.02, 30, []MethodInfo{{Name: "stock"}, {Name: "allocate"}, {Name: "ship"}}},
 		{"metadata-server", 2 * time.Millisecond, 1 * time.Millisecond, 0.001, 20, []MethodInfo{{Name: "get"}, {Name: "put"}, {Name: "watch"}}},
-		{"metrics-server", 1 * time.Millisecond, 0.5 * time.Millisecond, 0.001, 15, []MethodInfo{{Name: "record"}, {Name: "query"}}},
+		{"metrics-server", 1 * time.Millisecond, 500 * time.Microsecond, 0.001, 15, []MethodInfo{{Name: "record"}, {Name: "query"}}},
 		{"trace-viewer", 3 * time.Millisecond, 1 * time.Millisecond, 0.001, 10, []MethodInfo{{Name: "get"}, {Name: "export"}}},
 		{"log-viewer", 2 * time.Millisecond, 1 * time.Millisecond, 0.001, 25, []MethodInfo{{Name: "write"}, {Name: "read"}}},
 	}

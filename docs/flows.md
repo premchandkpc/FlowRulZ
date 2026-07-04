@@ -872,6 +872,50 @@ admin.ServeHTTP(w, r)
 
 ---
 
+## 16. Virtual Enterprise Platform Flow
+
+The simulator is now a **Virtual Enterprise Platform** — an entire company running on FlowRulZ with 40+ virtual business services, 8 simulator modes, and 50+ built-in scenarios.
+
+```
+Start simulator --mode enterprise --scenario order-placement
+    │
+    ├── Initialize 40+ mock services (customer, catalog, order, shipping, notification, analytics, AI, utility, platform, infrastructure)
+    │
+    ├── Load scenario definition (50+ scenarios across 6 categories)
+    │   ├── Business: order-placement, order-cancellation, refund-processing, bulk-order, flash-sale, subscription-renewal
+    │   ├── Reliability: retry-success, retry-exhausted, circuit-breaker-opens, timeout-handling, dlq-replay, compensation-workflow
+    │   ├── Distributed: leader-election, node-joins, node-leaves, network-partition, split-brain, partition-rebalancing
+    │   ├── Metadata: live-policy-update, dto-schema-evolution, version-rollback, canary-rollout, blue-green-deployment
+    │   ├── Performance: throughput-1k, throughput-10k, throughput-100k, backpressure, queue-saturation, worker-starvation
+    │   └── Chaos: kill-runtime, crash-service, corrupt-metadata, slow-downstream, random-latency, duplicate-messages
+    │
+    ├── Configure simulator mode (simple, enterprise, chaos, performance, distributed, multi-region, interview, learning)
+    │
+    ├── Start load generator (constant, burst, ramp-up patterns)
+    │
+    ├── Execute scenario steps:
+    │   ├── publish: Send message to service
+    │   ├── deploy: Update metadata/rules at runtime
+    │   ├── kill: Simulate service/node failure
+    │   ├── delay: Inject latency/jitter
+    │   └── observe: Watch system behavior
+    │
+    ├── Monitor via dashboard (live metrics, timeline, service health)
+    │
+    └── Observe FlowRulZ behavior:
+        ├── Retry attempts
+        ├── Circuit breaker state changes
+        ├── DLQ entries
+        ├── Compensation workflows
+        ├── Leader election
+        ├── Plan distribution
+        └── Dynamic metadata updates
+```
+
+**Files:** `simulator/modes.go`, `simulator/scenarios/registry.go`, `simulator/services/service.go`, `simulator/execution/plan.go`
+
+---
+
 ## Summary Table
 
 | # | Flow | Entry Point | Key Components | Persistence |
@@ -891,4 +935,4 @@ admin.ServeHTTP(w, r)
 | 13 | Metrics | `emit_span()` | Ring buffer, `flowrulz_get_spans`, counters | None |
 | 14 | Buffer/Chunk | First opcode check | `ExecutionRuntime` accumulator/splitter | None |
 | 15 | Admin API | `POST /rules` etc. | `auth()` middleware, engine, DLQ, metrics | JSON file |
-| 16 | Simulator | `simulator.New()` | Scenario manager, load generator, mock services, dashboard | None |
+| 16 | Virtual Enterprise Platform | `simulator.New()` | 40+ services, 8 modes, 50+ scenarios, load generator, dashboard | None |

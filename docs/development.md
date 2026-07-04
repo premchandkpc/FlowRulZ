@@ -134,18 +134,21 @@ server/
     ├── adapters/           # Adapters implementing pkg/ interfaces
     └── ports/              # Port interfaces
 
-simulator/                  # Simulator for testing rules, services, and cluster behavior
-├── cmd/simulator/          # CLI entry point (--scenario, --interactive, --dashboard)
+simulator/                  # Virtual Enterprise Platform (40+ services, 8 modes, 50+ scenarios)
+├── cmd/simulator/          # CLI entry point (--scenario, --mode, --interactive)
 ├── config/                 # SimConfig, ChaosConfig
 ├── dashboard/              # HTTP dashboard + admin API (live metrics, send/rules/services)
 ├── dispatcher/             # Hash-based message routing to nodes
-├── execution/              # ExecutionContext, Plan, queues (ReadyQueue, WaitingQueue)
+├── execution/              # ExecutionContext, Plan, 25+ execution plans
 ├── loadgen/                # Traffic generation by scenario (constant, burst, ramp-up)
 ├── metrics/                # Metrics collector (throughput, latency, error rates)
+├── modes.go                # 8 simulator modes (simple, enterprise, chaos, performance, distributed, multi-region, interview, learning)
 ├── network/                # Simulated network (latency, drop, slow, duplicate)
 ├── scheduler/              # Per-node worker pool, PlanCache, executeContext/executeBridge
-├── scenarios/              # 9 built-in scenarios (order-processing, circuit-breaker, metadata-updates, etc.)
-├── services/               # 16 mock services (10 business + 6 infrastructure) with configurable latency/failure
+├── scenarios/              # 50+ built-in scenarios across 6 categories
+│   ├── registry.go         # Scenario definitions (descriptive)
+│   └── scenarios.go        # Executable scenarios (Apply/Setup functions)
+├── services/               # 40+ mock services with configurable latency/failure
 ├── timeline/               # Event timeline store
 ├── simulator.go            # Simulator struct — orchestrates all components
 ├── client.go               # Client — Send, RegisterService, AddRule

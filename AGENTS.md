@@ -38,7 +38,7 @@ sdk/
   python/         Python SDK (pip, flowrulz)
   javascript/     JS/TS SDK (npm, flowrulz)
   rust/           Rust SDK (cargo, flowrulz-sdk)
-simulator/        Load gen + scenario testing (16 services, 9 scenarios, dashboard)
+simulator/        Virtual Enterprise Platform (40+ services, 8 modes, 50+ scenarios, dashboard)
 docs/obsidian-vault/  Obsidian vault (arch map, 26 notes, 1 canvas)
 ```
 

@@ -142,11 +142,51 @@ func ByName(name string) *Scenario {
 
 func DefaultPlans() []*execution.Plan {
 	return []*execution.Plan{
+		// Core flows
 		execution.OrderFlow,
 		execution.PaymentFlow,
 		execution.RefundFlow,
 		execution.ShippingFlow,
 		execution.ServiceDiscoveryFlow,
 		execution.DeadLetterQueueFlow,
+
+		// Customer domain
+		execution.CustomerRegistrationFlow,
+		execution.CustomerLoginFlow,
+		execution.SupportTicketFlow,
+
+		// Catalog domain
+		execution.ProductSearchFlow,
+		execution.RecommendationFlow,
+		execution.PriceCalculationFlow,
+
+		// Order domain
+		execution.OrderCancellationFlow,
+		execution.RefundProcessingFlow,
+		execution.SubscriptionRenewalFlow,
+
+		// Shipping domain
+		execution.ShippingScheduleFlow,
+		execution.WarehouseFulfillmentFlow,
+
+		// Notification domain
+		execution.NotificationDispatchFlow,
+
+		// Analytics domain
+		execution.AnalyticsAggregationFlow,
+
+		// AI domain
+		execution.FraudDetectionFlow,
+		execution.DocumentProcessingFlow,
+		execution.ImageProcessingFlow,
+		execution.TranslationFlow,
+
+		// Utility domain
+		execution.CurrencyConversionFlow,
+		execution.GeoLookupFlow,
+
+		// Complex workflows
+		execution.CompleteOrderWorkflow,
+		execution.EcommerceCheckoutFlow,
 	}
 }

@@ -575,6 +575,15 @@ Tests: `TestClientSendBridgeRule`, `TestClientSendRuleNotFound`, `TestClientAddR
 
 ---
 
+### `simulator/modes.go`
+**Package:** `simulator`
+
+8 simulator modes with configuration: simple (4 services), enterprise (40+ services), chaos (high failure), performance (10K TPS), distributed (3 clusters), multi-region (US/Europe/Asia), interview (animated), learning (step-by-step). Each mode defines services, nodes, regions, TPS, workers, timeout, retry, failure rate, animation.
+
+**Exports:** `Mode`, `ModeConfig`, `Modes()`, `GetMode()`
+
+---
+
 ### `simulator/admin.go`
 **Package:** `simulator`
 
@@ -637,9 +646,9 @@ Tests (12): `TestPublishSubscribe`, `TestPublishMultipleSubscribers`, `TestPubli
 ### `simulator/execution/plan.go`
 **Package:** `execution`
 
-Plan and Instruction types for simulator's instruction-based execution path. `OpCode`: `Nop`, `CallService`, `Validate`, `Branch`, `Publish`, `Return`. Also holds `PlanBytes` (compiled bytecode) and `ServiceNames`.
+Plan and Instruction types for simulator's instruction-based execution path. `OpCode`: `Nop`, `CallService`, `Validate`, `Branch`, `Publish`, `Return`. Also holds `PlanBytes` (compiled bytecode) and `ServiceNames`. 25+ pre-built plans across domains: customer, catalog, order, shipping, notification, analytics, AI, utility, complex workflows.
 
-**Exports:** `OpCode`, `Instruction`, `Plan`, `NewPlan()`
+**Exports:** `OpCode`, `Instruction`, `Plan`, `NewPlan()`, `OrderFlow`, `PaymentFlow`, `RefundFlow`, `ShippingFlow`, `ServiceDiscoveryFlow`, `DeadLetterQueueFlow`, `CustomerRegistrationFlow`, `CustomerLoginFlow`, `SupportTicketFlow`, `ProductSearchFlow`, `RecommendationFlow`, `PriceCalculationFlow`, `OrderCancellationFlow`, `RefundProcessingFlow`, `SubscriptionRenewalFlow`, `ShippingScheduleFlow`, `WarehouseFulfillmentFlow`, `NotificationDispatchFlow`, `AnalyticsAggregationFlow`, `FraudDetectionFlow`, `DocumentProcessingFlow`, `ImageProcessingFlow`, `TranslationFlow`, `CurrencyConversionFlow`, `GeoLookupFlow`, `CompleteOrderWorkflow`, `EcommerceCheckoutFlow`
 
 ---
 
@@ -700,9 +709,18 @@ Per-node execution scheduler. Worker pool pulling from ReadyQueue. Two paths: in
 ### `simulator/scenarios/scenarios.go`
 **Package:** `scenarios`
 
-Built-in scenarios: black-friday, payment-outage, spike-test, chaos-monkey, ramp-up, order-routing, order-processing, metadata-updates, circuit-breaker. `ScenarioClient` interface provides `AddRule`, `RegisterService`, `Plan`, `SetLoadGenPlan`, `SetLoadGenBodyFunc` for scenario setup.
+Executable scenarios with `Apply`/`Setup` functions: black-friday, payment-outage, spike-test, chaos-monkey, ramp-up, order-routing, order-processing, metadata-updates, circuit-breaker. `ScenarioClient` interface provides `AddRule`, `RegisterService`, `Plan`, `SetLoadGenPlan`, `SetLoadGenBodyFunc` for scenario setup.
 
 **Exports:** `Scenario`, `ScenarioClient`, `All`, `ByName()`, `DefaultPlans()`
+
+---
+
+### `simulator/scenarios/registry.go`
+**Package:** `scenarios`
+
+50+ scenario definitions across 6 categories (business, reliability, distributed, metadata, performance, chaos). Each `ScenarioDef` has Name, Category, Description, Mode, Steps, Duration. Functions: `ScenariosByCategory()`, `ScenariosByMode()`, `GetScenarioDef()`, `CategoryCount()`.
+
+**Exports:** `ScenarioDef`, `Step`, `AllDefs`, `ScenariosByCategory()`, `ScenariosByMode()`, `GetScenarioDef()`, `CategoryCount()`
 
 ---
 
@@ -736,9 +754,9 @@ Built-in scenarios: black-friday, payment-outage, spike-test, chaos-monkey, ramp
 ### `simulator/services/service.go`
 **Package:** `services`
 
-Mock services with configurable latency, failure rate, max concurrent. `DefaultServices()` pre-populates 16 services (10 business + 6 infrastructure): validate, order, payment, inventory, shipping, notification, fraud, loyalty, invoice, database, redis, kafka, payment-gateway, email-provider, sms-gateway, warehouse-api.
+40+ mock services across 10 domains with configurable latency, jitter, failure rate, max concurrent. Functions: `DefaultServices()` (enterprise), `SimpleServices()` (4 core), `ChaosServices()` (high failure), `PerformanceServices()` (optimized). Domains: customer, catalog, order, shipping, notification, analytics, AI, utility, platform, infrastructure.
 
-**Exports:** `MockService`, `MethodInfo`, `CallResult`, `ServiceRegistry`, `NewRegistry()`, `Register()`, `Get()`, `Names()`, `DefaultServices()`
+**Exports:** `MockService`, `MethodInfo`, `CallResult`, `ServiceRegistry`, `NewRegistry()`, `Register()`, `Get()`, `All()`, `Names()`, `ByDomain()`, `Domains()`, `DefaultServices()`, `SimpleServices()`, `EnterpriseServices()`, `ChaosServices()`, `PerformanceServices()`
 
 ---
 

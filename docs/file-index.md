@@ -700,18 +700,45 @@ Per-node execution scheduler. Worker pool pulling from ReadyQueue. Two paths: in
 ### `simulator/scenarios/scenarios.go`
 **Package:** `scenarios`
 
-Built-in scenarios: ramp-up, black-friday, payment-outage, spike-test, chaos-monkey, order-routing. `ScenarioClient` interface provides `AddRule`, `RegisterService`, `Plan`, `SetLoadGenPlan`, `SetLoadGenBodyFunc` for scenario setup. `OrderRouting` scenario demonstrates Gate-based conditional branching with dual-gate DSL pattern.
+Built-in scenarios: black-friday, payment-outage, spike-test, chaos-monkey, ramp-up, order-routing, order-processing, metadata-updates, circuit-breaker. `ScenarioClient` interface provides `AddRule`, `RegisterService`, `Plan`, `SetLoadGenPlan`, `SetLoadGenBodyFunc` for scenario setup.
 
 **Exports:** `Scenario`, `ScenarioClient`, `All`, `ByName()`, `DefaultPlans()`
+
+---
+
+### `simulator/scenarios/order_processing.go`
+**Package:** `scenarios`
+
+`OrderProcessing` scenario — full order-to-dispatch workflow with retries, timeouts, and parallel execution. Configures payment (40ms, 2% failure), inventory (8ms, 2% failure), shipping (15ms, 1% failure), notification (3ms, 0.5% failure).
+
+**Exports:** `OrderProcessing`
+
+---
+
+### `simulator/scenarios/metadata_updates.go`
+**Package:** `scenarios`
+
+`MetadataUpdates` scenario — live metadata updates and rule deployment without restart. Demonstrates dynamic configuration.
+
+**Exports:** `MetadataUpdates`
+
+---
+
+### `simulator/scenarios/circuit_breaker_demo.go`
+**Package:** `scenarios`
+
+`CircuitBreakerDemo` scenario — circuit breaker behavior with fallback execution. Payment service at 95% failure triggers circuit, falling back to notification.
+
+**Exports:** `CircuitBreakerDemo`
 
 ---
 
 ### `simulator/services/service.go`
 **Package:** `services`
 
-Mock services with configurable latency, failure rate, max concurrent. `DefaultServices()` pre-populates 9 services.
+Mock services with configurable latency, failure rate, max concurrent. `DefaultServices()` pre-populates 16 services (10 business + 6 infrastructure): validate, order, payment, inventory, shipping, notification, fraud, loyalty, invoice, database, redis, kafka, payment-gateway, email-provider, sms-gateway, warehouse-api.
 
-**Exports:** `MockService`, `CallRecord`, `CallResult`, `ServiceRegistry`, `NewRegistry()`, `Register()`, `Get()`, `Names()`, `DefaultServices()`
+**Exports:** `MockService`, `MethodInfo`, `CallResult`, `ServiceRegistry`, `NewRegistry()`, `Register()`, `Get()`, `Names()`, `DefaultServices()`
 
 ---
 
@@ -1071,7 +1098,7 @@ Dependencies: `bumpalo` (arena), `boxcar` (lock-free vec), `serde`/`serde_json`,
 | Layer | Source Files | Tests | Lines |
 |-------|-------------|-------|-------|
 | Go server + bridge + pkg + SDK | ~50 | ~100 tests | ~5,200 |
-| Go simulator | 19 | ~25 tests | ~2,200 |
+| Go simulator | 26 | ~25 tests | ~2,800 |
 | Rust runtime | 26 | 401 tests | ~6,100 |
 | C bridge | — | — | ~15 |
 | Build/config | 3 | — | ~200 |

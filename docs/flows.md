@@ -891,3 +891,4 @@ admin.ServeHTTP(w, r)
 | 13 | Metrics | `emit_span()` | Ring buffer, `flowrulz_get_spans`, counters | None |
 | 14 | Buffer/Chunk | First opcode check | `ExecutionRuntime` accumulator/splitter | None |
 | 15 | Admin API | `POST /rules` etc. | `auth()` middleware, engine, DLQ, metrics | JSON file |
+| 16 | Simulator | `simulator.New()` | Scenario manager, load generator, mock services, dashboard | None |

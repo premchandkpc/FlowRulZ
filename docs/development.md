@@ -140,16 +140,17 @@ simulator/                  # Simulator for testing rules, services, and cluster
 ├── dashboard/              # HTTP dashboard + admin API (live metrics, send/rules/services)
 ├── dispatcher/             # Hash-based message routing to nodes
 ├── execution/              # ExecutionContext, Plan, queues (ReadyQueue, WaitingQueue)
-├── loadgen/                # Traffic generation by scenario
+├── loadgen/                # Traffic generation by scenario (constant, burst, ramp-up)
 ├── metrics/                # Metrics collector (throughput, latency, error rates)
 ├── network/                # Simulated network (latency, drop, slow, duplicate)
 ├── scheduler/              # Per-node worker pool, PlanCache, executeContext/executeBridge
-├── scenarios/              # Built-in scenarios (ramp-up, black-friday, payment-outage, spike-test, chaos-monkey)
-├── services/               # MockService with configurable latency/failure, ServiceRegistry
+├── scenarios/              # 9 built-in scenarios (order-processing, circuit-breaker, metadata-updates, etc.)
+├── services/               # 16 mock services (10 business + 6 infrastructure) with configurable latency/failure
 ├── timeline/               # Event timeline store
 ├── simulator.go            # Simulator struct — orchestrates all components
 ├── client.go               # Client — Send, RegisterService, AddRule
-├── admin.go                # Admin HTTP handlers (registered on dashboard mux)
+├── handlers.go             # Admin HTTP handlers (registered on dashboard mux)
+├── routes.go               # HTTP route definitions
 └── client_test.go          # Client tests
 ```
 

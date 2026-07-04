@@ -60,12 +60,14 @@ FlowRulZ/
 │   ├── javascript/      # JS/TS SDK (npm, flowrulz)
 │   └── rust/            # Rust SDK (cargo, flowrulz-sdk)
 ├── simulator/       # Simulator for testing rules, services, and cluster behavior
-│   ├── cmd/simulator/   # CLI entry point (--scenario, --interactive)
+│   ├── cmd/simulator/   # CLI entry point (--scenario, --interactive, --dashboard)
 │   ├── config/          # SimConfig, ChaosConfig
 │   ├── dashboard/       # HTTP dashboard + admin API
+│   ├── scenarios/       # 9 built-in scenarios (order-processing, circuit-breaker, etc.)
+│   ├── services/        # 16 mock services (10 business + 6 infrastructure)
 │   ├── client.go        # Programmatic Client (Send, AddRule, RegisterService)
-│   ├── admin.go         # Admin HTTP handlers
-│   └── ...              # scheduler, dispatcher, services, loadgen, network, etc.
+│   ├── handlers.go      # Admin HTTP handlers
+│   └── ...              # scheduler, dispatcher, loadgen, network, etc.
 ├── docs/
 │   ├── flow-architecture.md  # Distributed Event Runtime — architecture, Event model, ExecutionContext, flows
 │   ├── dsl-syntax.md         # DSL language specification

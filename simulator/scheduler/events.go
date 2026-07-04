@@ -194,6 +194,9 @@ func (s *Scheduler) executeBridge(ctx *execution.ExecutionContext) {
 			ctx.WaitingService = svcName
 			ctx.WaitingStartTime = start
 
+			correlationID := fmt.Sprintf("%s-%s-%d", s.ID, ctx.ID, step)
+			s.WaitingQ.Add(correlationID, ctx, svcName)
+
 			s.Timeline.Record(timeline.Event{
 				ExecID:    ctx.ID,
 				Timestamp: start,
@@ -211,7 +214,9 @@ func (s *Scheduler) executeBridge(ctx *execution.ExecutionContext) {
 			var result services.CallResult
 			select {
 			case result = <-resultCh:
+				s.WaitingQ.Remove(correlationID)
 			case <-s.serviceCtx.Done():
+				s.WaitingQ.Remove(correlationID)
 				ctx.MarkFailed(s.serviceCtx.Err())
 				s.Metrics.RecordFailed()
 				s.sendResult(ctx)

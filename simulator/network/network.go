@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"sync/atomic"
 	"time"
@@ -56,11 +57,13 @@ func (n *Network) CallService(ctx context.Context, svc *services.MockService, bo
 
 	if chaos.DropPackets && rand.Float64() < 0.05 {
 		n.dropped.Add(1)
+		cb(services.CallResult{Error: fmt.Errorf("packet dropped by chaos")})
 		return
 	}
 
 	if n.cfg.PacketLossRate > 0 && rand.Float64() < n.cfg.PacketLossRate {
 		n.dropped.Add(1)
+		cb(services.CallResult{Error: fmt.Errorf("packet lost")})
 		return
 	}
 

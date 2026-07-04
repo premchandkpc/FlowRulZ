@@ -21,6 +21,7 @@ type EventBus struct {
 	topics map[string]map[string]transport.Handler
 	subs   map[string]*subscription
 	msgID  atomic.Uint64
+	subID  atomic.Uint64
 	closed atomic.Bool
 
 	wg sync.WaitGroup
@@ -90,7 +91,7 @@ func (b *EventBus) Subscribe(topic string, handler transport.Handler) *transport
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	id := fmt.Sprintf("sub-%s-%d", topic, len(b.topics[topic]))
+	id := fmt.Sprintf("sub-%d", b.subID.Add(1))
 	if b.topics[topic] == nil {
 		b.topics[topic] = make(map[string]transport.Handler)
 	}

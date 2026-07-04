@@ -22,6 +22,10 @@ func New(nodes []*scheduler.Scheduler, tl *timeline.Store) *Dispatcher {
 }
 
 func (d *Dispatcher) Dispatch(ctx *execution.ExecutionContext) {
+	if len(d.Nodes) == 0 {
+		slog.Warn("dispatcher: no nodes available", "exec_id", ctx.ID)
+		return
+	}
 	idx := d.hashNode(ctx.ID, len(d.Nodes))
 	node := d.Nodes[idx]
 

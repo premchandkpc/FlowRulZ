@@ -57,6 +57,7 @@ var OrderFlow = NewPlan("order-flow-v1", []Instruction{
 	{Op: OpBranch, Args: []string{"fraud_risk", "gt", "0.8"}},
 	{Op: OpCallService, Service: "payment"},
 	{Op: OpCallService, Service: "email"},
+	{Op: OpCallService, Service: "notification"},
 	{Op: OpPublish, Args: []string{"order_confirmed"}},
 	{Op: OpReturn},
 })
@@ -74,5 +75,33 @@ var RefundFlow = NewPlan("refund-flow-v1", []Instruction{
 	{Op: OpCallService, Service: "payment"},
 	{Op: OpCallService, Service: "invoice"},
 	{Op: OpPublish, Args: []string{"refund_processed"}},
+	{Op: OpReturn},
+})
+
+var ShippingFlow = NewPlan("shipping-flow-v1", []Instruction{
+	{Op: OpValidate, Args: []string{"shipping"}},
+	{Op: OpCallService, Service: "inventory"},
+	{Op: OpBranch, Args: []string{"stock_level", "lt", "10"}},
+	{Op: OpCallService, Service: "payment"},
+	{Op: OpCallService, Service: "notification"},
+	{Op: OpPublish, Args: []string{"shipping_scheduled"}},
+	{Op: OpReturn},
+})
+
+var ServiceDiscoveryFlow = NewPlan("service-discovery", []Instruction{
+	{Op: OpValidate, Args: []string{"service_query"}},
+	{Op: OpCallService, Service: "inventory"},
+	{Op: OpCallService, Service: "payment"},
+	{Op: OpPublish, Args: []string{"service_registry"}},
+	{Op: OpReturn},
+})
+
+var DeadLetterQueueFlow = NewPlan("dead-letter-queue", []Instruction{
+	{Op: OpValidate, Args: []string{"failed_order"}},
+	{Op: OpCallService, Service: "payment"},
+	{Op: OpBranch, Args: []string{"payment_status", "eq", "failed"}},
+	{Op: OpCallService, Service: "email"},
+	{Op: OpCallService, Service: "notification"},
+	{Op: OpPublish, Args: []string{"order_failed_dlq"}},
 	{Op: OpReturn},
 })

@@ -19,9 +19,8 @@ type MockService struct {
 	FailureRate   float64
 	MaxConcurrent int
 
-	mu       sync.Mutex
-	running  int
-
+	mu      sync.Mutex
+	running int
 }
 
 
@@ -133,35 +132,40 @@ func DefaultServices() *ServiceRegistry {
 		jitter      time.Duration
 		failureRate float64
 		concurrency int
+		methods     []MethodInfo
 	}{
-		{"validate", 0, 0, 0.0, 1000},
-		{"inventory", 8 * time.Millisecond, 4 * time.Millisecond, 0.01, 100},
-		{"fraud", 15 * time.Millisecond, 5 * time.Millisecond, 0.02, 50},
-		{"payment", 40 * time.Millisecond, 10 * time.Millisecond, 0.03, 20},
-		{"email", 5 * time.Millisecond, 2 * time.Millisecond, 0.005, 200},
-		{"loyalty", 10 * time.Millisecond, 3 * time.Millisecond, 0.01, 100},
-		{"invoice", 12 * time.Millisecond, 3 * time.Millisecond, 0.01, 80},
-		{"shipping", 20 * time.Millisecond, 5 * time.Millisecond, 0.02, 40},
-		{"notification", 3 * time.Millisecond, 1 * time.Millisecond, 0.005, 500},
+		// Business Services
+		{"validate", 0, 0, 0.0, 1000, []MethodInfo{{Name: "check"}}},
+		{"order", 5 * time.Millisecond, 2 * time.Millisecond, 0.005, 100, []MethodInfo{{Name: "create"}, {Name: "cancel"}, {Name: "status"}}},
+		{"payment", 40 * time.Millisecond, 10 * time.Millisecond, 0.03, 20, []MethodInfo{{Name: "validate"}, {Name: "authorize"}, {Name: "capture"}, {Name: "refund"}, {Name: "failure"}, {Name: "retry"}}},
+		{"inventory", 8 * time.Millisecond, 4 * time.Millisecond, 0.01, 100, []MethodInfo{{Name: "reserve"}, {Name: "release"}, {Name: "lowstock"}, {Name: "warehouse"}}},
+		{"shipping", 15 * time.Millisecond, 5 * time.Millisecond, 0.02, 50, []MethodInfo{{Name: "schedule"}, {Name: "track"}, {Name: "cancel"}}},
+		{"notification", 3 * time.Millisecond, 1 * time.Millisecond, 0.005, 500, []MethodInfo{{Name: "email"}, {Name: "sms"}, {Name: "push"}, {Name: "webhook"}}},
+		{"fraud", 15 * time.Millisecond, 5 * time.Millisecond, 0.02, 50, []MethodInfo{{Name: "check"}}},
+		{"loyalty", 10 * time.Millisecond, 3 * time.Millisecond, 0.01, 100, []MethodInfo{{Name: "award"}, {Name: "redeem"}}},
+		{"invoice", 12 * time.Millisecond, 3 * time.Millisecond, 0.01, 80, []MethodInfo{{Name: "generate"}, {Name: "send"}, {Name: "pay"}}},
+		
+		// Infrastructure Simulators
+		{"database", 2 * time.Millisecond, 1 * time.Millisecond, 0.001, 50, []MethodInfo{{Name: "query"}, {Name: "execute"}, {Name: "transaction"}}},
+		{"redis", 1 * time.Millisecond, 0.5 * time.Millisecond, 0.001, 100, []MethodInfo{{Name: "get"}, {Name: "set"}, {Name: "del"}}},
+		{"kafka", 5 * time.Millisecond, 2 * time.Millisecond, 0.001, 30, []MethodInfo{{Name: "publish"}, {Name: "consume"}}},
+		{"payment-gateway", 50 * time.Millisecond, 20 * time.Millisecond, 0.05, 10, []MethodInfo{{Name: "authorize"}, {Name: "capture"}, {Name: "refund"}}},
+		{"email-provider", 10 * time.Millisecond, 3 * time.Millisecond, 0.01, 100, []MethodInfo{{Name: "send"}, {Name: "bounce"}, {Name: "complaint"}}},
+		{"sms-gateway", 8 * time.Millisecond, 2 * time.Millisecond, 0.01, 200, []MethodInfo{{Name: "send"}, {Name: "status"}}},
+		{"warehouse-api", 12 * time.Millisecond, 4 * time.Millisecond, 0.02, 30, []MethodInfo{{Name: "stock"}, {Name: "allocate"}, {Name: "ship"}}},
+		{"metadata-server", 2 * time.Millisecond, 1 * time.Millisecond, 0.001, 20, []MethodInfo{{Name: "get"}, {Name: "put"}, {Name: "watch"}}},
+		{"metrics-server", 1 * time.Millisecond, 0.5 * time.Millisecond, 0.001, 15, []MethodInfo{{Name: "record"}, {Name: "query"}}},
+		{"trace-viewer", 3 * time.Millisecond, 1 * time.Millisecond, 0.001, 10, []MethodInfo{{Name: "get"}, {Name: "export"}}},
+		{"log-viewer", 2 * time.Millisecond, 1 * time.Millisecond, 0.001, 25, []MethodInfo{{Name: "write"}, {Name: "read"}}},
 	}
 	for _, d := range defs {
-		methods := []MethodInfo{}
-		switch d.name {
-		case "payment":
-			methods = []MethodInfo{{Name: "authorize"}, {Name: "capture"}, {Name: "refund"}}
-		case "inventory":
-			methods = []MethodInfo{{Name: "check"}, {Name: "reserve"}, {Name: "release"}}
-		case "fraud":
-			methods = []MethodInfo{{Name: "check"}}
-		}
 		r.Register(&MockService{
 			Name:          d.name,
-			Methods:       methods,
+			Methods:       d.methods,
 			BaseLatency:   d.latency,
 			LatencyJitter: d.jitter,
 			FailureRate:   d.failureRate,
 			MaxConcurrent: d.concurrency,
-	
 		})
 	}
 	return r

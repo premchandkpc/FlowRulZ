@@ -91,6 +91,7 @@ type ProdNode struct {
 	httpClient      *http.Client
 	serviceCaller   *ServiceCaller
 	circuitBreakers sync.Map
+	execSem         chan struct{} // Node-wide concurrency limiter for executeAll
 	mu              sync.Mutex
 }
 
@@ -103,6 +104,7 @@ func NewNode(cfg Config, deps Dependencies) *ProdNode {
 		serviceCaller: NewServiceCaller(),
 		consumers:    make([]transport.MessageConsumer, 0),
 		producers:    make([]transport.MessageProducer, 0),
+		execSem:      make(chan struct{}, executeAllSemaphore),
 
 		Engine:       deps.Engine,
 		Scheduler:    deps.Scheduler,

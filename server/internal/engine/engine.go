@@ -253,6 +253,15 @@ func (e *Engine) ActivePlanBytes() [][]byte {
 	return plans
 }
 
+// ExecuteAll executes all active plans sequentially using bridge.Execute (single-shot execution).
+//
+// NOTE: This method is currently unused in production code. The production path uses
+// node.executeAll() which runs plans concurrently through the scheduler with bridge.ExecuteStep
+// (step-by-step execution). This method exists for testing/synchronous execution scenarios
+// and has different execution semantics (sequential vs concurrent, single-shot vs step-by-step).
+//
+// If you need to wire this into production, ensure op_svc_call failure handling matches op_next
+// (both should return Ok(()) with ctx.failed=true on failure to allow Fallback/saga compensation).
 func (e *Engine) ExecuteAll(body []byte, caller bridge.ServiceCaller, ctx *bridge.ExecContext) ([][]byte, error) {
 	e.mu.RLock()
 	var plans []*VersionedPlan

@@ -48,7 +48,9 @@ func (n *ProdNode) executePlan(ctx context.Context, plan []byte, body []byte) ([
 		UpdatedAt: now,
 	}
 	if n.StateStore != nil {
-		n.StateStore.Create(execCtx, st)
+		if err := n.StateStore.Create(execCtx, st); err != nil {
+			slog.Warn("state store create failed", "exec_id", execID, "error", err)
+		}
 	}
 
 	out, err := n.runSteps(execCtx, execID, plan, names, nil, nil, st)
@@ -56,11 +58,15 @@ func (n *ProdNode) executePlan(ctx context.Context, plan []byte, body []byte) ([
 		if err != nil {
 			st.Status = execstate.StatusFailed
 			st.Error = err.Error()
-			n.StateStore.Save(execCtx, st)
+			if saveErr := n.StateStore.Save(execCtx, st); saveErr != nil {
+				slog.Warn("state store save failed", "exec_id", execID, "error", saveErr)
+			}
 		} else {
 			st.Status = execstate.StatusCompleted
 			st.Output = out
-			n.StateStore.Save(execCtx, st)
+			if saveErr := n.StateStore.Save(execCtx, st); saveErr != nil {
+				slog.Warn("state store save failed", "exec_id", execID, "error", saveErr)
+			}
 		}
 	}
 	return out, err
@@ -100,7 +106,9 @@ func (n *ProdNode) runSteps(ctx context.Context, execID string, plan []byte, nam
 				st.PendingSvc = out.PendingSvc
 				st.PendingBody = out.PendingBody
 				st.CtxBytes = ctxBytes
-				n.StateStore.Save(ctx, st)
+				if err := n.StateStore.Save(ctx, st); err != nil {
+					slog.Warn("state store save failed", "exec_id", execID, "error", err)
+				}
 			}
 
 			rawName, ok := names[out.PendingSvc]
@@ -130,7 +138,9 @@ func (n *ProdNode) runSteps(ctx context.Context, execID string, plan []byte, nam
 				st.PendingSvc = 0
 				st.PendingBody = nil
 				st.CtxBytes = ctxBytes
-				n.StateStore.Save(ctx, st)
+				if err := n.StateStore.Save(ctx, st); err != nil {
+					slog.Warn("state store save failed", "exec_id", execID, "error", err)
+				}
 			}
 			respBytes = resp
 
@@ -139,7 +149,9 @@ func (n *ProdNode) runSteps(ctx context.Context, execID string, plan []byte, nam
 			if n.StateStore != nil {
 				st.Status = execstate.StatusRunning
 				st.CtxBytes = ctxBytes
-				n.StateStore.Save(ctx, st)
+				if err := n.StateStore.Save(ctx, st); err != nil {
+					slog.Warn("state store save failed", "exec_id", execID, "error", err)
+				}
 			}
 		}
 	}
@@ -171,13 +183,18 @@ func (n *ProdNode) executeAll(ctx context.Context, body []byte) ([][]byte, error
 	results := make([][]byte, len(plans))
 	ch := make(chan planResult, len(plans))
 
-	sem := make(chan struct{}, executeAllSemaphore)
-
 	for i, plan := range plans {
 		idx, p := i, plan
-		sem <- struct{}{}
+		
+		// Acquire node-wide semaphore to limit total concurrency
+		select {
+		case n.execSem <- struct{}{}:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		
 		go func() {
-			defer func() { <-sem }()
+			defer func() { <-n.execSem }()
 			task := &scheduler.Task{
 				ID:       fmt.Sprintf("plan-%d", idx),
 				Priority: scheduler.PriorityNormal,

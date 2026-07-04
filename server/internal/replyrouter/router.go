@@ -1,3 +1,11 @@
+// Package replyrouter provides async request/reply correlation for cross-node communication.
+//
+// NOTE: This component is currently unused in the execution path. It is wired into
+// ProdNode for lifecycle management (StartCleanup/StopCleanup) and metrics (PendingCount),
+// but Register()/Deliver()/Cancel() are never called from production code.
+//
+// Preserved for future use when implementing async cross-node request/reply patterns
+// (e.g., for distributed saga compensation or inter-service async communication).
 package replyrouter
 
 import (

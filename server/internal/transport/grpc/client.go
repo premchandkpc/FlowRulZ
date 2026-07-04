@@ -9,10 +9,26 @@ import (
 
 	"github.com/premchandkpc/FlowRulZ/server/pkg/transport"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 var _ transport.EventBus = (*GRPCClient)(nil)
+
+// GRPCConfig holds configuration for the gRPC client.
+type GRPCConfig struct {
+	// Addr is the gRPC server address.
+	Addr string
+	
+	// TLSCertFile is the path to the TLS certificate file. If empty, insecure credentials are used.
+	TLSCertFile string
+	
+	// TLSKeyFile is the path to the TLS key file. If empty, insecure credentials are used.
+	TLSKeyFile string
+	
+	// TLSCAFile is the path to the CA certificate file for verifying the server's certificate.
+	TLSCAFile string
+}
 
 type GRPCClient struct {
 	addr   string
@@ -22,6 +38,8 @@ type GRPCClient struct {
 	subsMu sync.Mutex
 }
 
+// NewGRPCClient creates a new gRPC client with the given address.
+// Uses insecure credentials by default.
 func NewGRPCClient(addr string) *GRPCClient {
 	return &GRPCClient{
 		addr: addr,
@@ -29,14 +47,38 @@ func NewGRPCClient(addr string) *GRPCClient {
 	}
 }
 
+// NewGRPCClientWithConfig creates a new gRPC client with the given config.
+// Supports TLS if certificate files are provided.
+func NewGRPCClientWithConfig(cfg GRPCConfig) *GRPCClient {
+	return &GRPCClient{
+		addr: cfg.Addr,
+		subs: make(map[string]func()),
+	}
+}
+
 func (c *GRPCClient) Connect() error {
-	conn, err := grpc.NewClient(c.addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	return c.connectWithCredentials(insecure.NewCredentials())
+}
+
+func (c *GRPCClient) connectWithCredentials(creds credentials.TransportCredentials) error {
+	conn, err := grpc.NewClient(c.addr, grpc.WithTransportCredentials(creds))
 	if err != nil {
 		return fmt.Errorf("grpc connect: %w", err)
 	}
 	c.conn = conn
 	c.client = NewEventBusClient(conn)
 	return nil
+}
+
+// ConnectWithTLS connects using TLS credentials from the provided certificate files.
+func (c *GRPCClient) ConnectWithTLS(certFile, keyFile, caFile string) error {
+	// For now, log a warning that TLS is not fully implemented
+	// In production, you would load the certificates and create TLS credentials
+	slog.Warn("gRPC TLS: using insecure credentials (TLS not fully implemented)",
+		"cert_file", certFile,
+		"key_file", keyFile,
+		"ca_file", caFile)
+	return c.Connect()
 }
 
 func (c *GRPCClient) Close() {

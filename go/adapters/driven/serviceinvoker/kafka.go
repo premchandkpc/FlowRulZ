@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/premchandkpc/FlowRulZ/go/ports"
 )
 
 // KafkaProducer sends messages to a topic.
@@ -57,12 +56,12 @@ func NewKafkaInvoker(config KafkaConfig) *KafkaInvoker {
 
 // kafkaReplyConsumer manages a reply subscription for request/reply.
 type kafkaReplyConsumer struct {
-回复Ch chan []byte
-	cancel context.CancelFunc
+	replyCh chan []byte
+	cancel  context.CancelFunc
 }
 
 // Invoke sends a request to a Kafka topic and waits for a correlated reply.
-func (k *KafkaInvoker) Invoke(ctx context.Context, service, method string, body []byte, endpoint *ServiceEndpoint) ([]byte, error) {
+func (k *KafkaInvoker) Invoke(ctx context.Context, service, method string, body []byte, endpoint *Endpoint) ([]byte, error) {
 	if endpoint == nil {
 		return nil, fmt.Errorf("kafka: nil endpoint")
 	}

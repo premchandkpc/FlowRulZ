@@ -76,8 +76,8 @@ func (c *GRPCConnectionCache) Get(addr string) (*grpc.ClientConn, error) {
 	return conn, nil
 }
 
-// Close closes a specific connection.
-func (c *GRPCConnectionCache) Close(addr string) {
+// CloseConn closes a specific connection by address.
+func (c *GRPCConnectionCache) CloseConn(addr string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

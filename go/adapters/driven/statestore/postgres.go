@@ -4,12 +4,11 @@ package statestore
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"time"
 
-	"github.com/premchandkpc/FlowRulZ/go/ports"
 	_ "github.com/lib/pq"
+	"github.com/premchandkpc/FlowRulZ/go/ports"
 )
 
 // PostgresStore implements ports.StateStore using PostgreSQL.

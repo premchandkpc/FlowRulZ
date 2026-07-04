@@ -129,9 +129,10 @@ type ServiceRegistry interface {
 type Protocol string
 
 const (
-	ProtocolHTTP Protocol = "http"
-	ProtocolGRPC Protocol = "grpc"
-	ProtocolTCP  Protocol = "tcp"
+	ProtocolHTTP  Protocol = "http"
+	ProtocolGRPC  Protocol = "grpc"
+	ProtocolTCP   Protocol = "tcp"
+	ProtocolKafka Protocol = "kafka"
 )
 
 // ServiceEndpoint is a network endpoint for a service.
@@ -140,6 +141,10 @@ type ServiceEndpoint struct {
 	Port     int
 	Protocol Protocol
 	Healthy  bool
+	// Kafka-specific fields (only populated when Protocol == ProtocolKafka)
+	Topic         string // request topic
+	ReplyTopic    string // reply topic for request/reply pattern
+	ConsumerGroup string // consumer group for reply subscription
 }
 
 // ClusterCoordinator provides leader election and term management.

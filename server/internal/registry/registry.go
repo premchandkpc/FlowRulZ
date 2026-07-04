@@ -10,9 +10,10 @@ import (
 type Protocol string
 
 const (
-	ProtocolHTTP Protocol = "http"
-	ProtocolGRPC Protocol = "grpc"
-	ProtocolTCP  Protocol = "tcp"
+	ProtocolHTTP  Protocol = "http"
+	ProtocolGRPC  Protocol = "grpc"
+	ProtocolTCP   Protocol = "tcp"
+	ProtocolKafka Protocol = "kafka"
 )
 
 type LBStrategy string
@@ -46,6 +47,10 @@ type Endpoint struct {
 	Protocol Protocol `json:"protocol"`
 	Healthy  bool     `json:"healthy"`
 	Load     float64  `json:"load,omitempty"`
+	// Kafka-specific fields (only populated when Protocol == ProtocolKafka)
+	Topic         string `json:"topic,omitempty"`
+	ReplyTopic    string `json:"reply_topic,omitempty"`
+	ConsumerGroup string `json:"consumer_group,omitempty"`
 }
 
 type ServiceInstance struct {
@@ -97,15 +102,27 @@ func (r *ServiceRegistry) Register(name string, endpoint *Endpoint) error {
 	if endpoint == nil {
 		return fmt.Errorf("registry: nil endpoint")
 	}
-	if endpoint.Address == "" {
-		return fmt.Errorf("registry: empty endpoint address")
-	}
-	if endpoint.Port <= 0 {
-		return fmt.Errorf("registry: invalid port %d", endpoint.Port)
-	}
 	if endpoint.Protocol == "" {
 		endpoint.Protocol = ProtocolHTTP
 	}
+
+	// Protocol-specific validation
+	switch endpoint.Protocol {
+	case ProtocolHTTP, ProtocolGRPC, ProtocolTCP:
+		if endpoint.Address == "" {
+			return fmt.Errorf("registry: empty endpoint address for %s", endpoint.Protocol)
+		}
+		if endpoint.Port <= 0 {
+			return fmt.Errorf("registry: invalid port %d for %s", endpoint.Port, endpoint.Protocol)
+		}
+	case ProtocolKafka:
+		if endpoint.Topic == "" {
+			return fmt.Errorf("registry: empty topic for kafka endpoint")
+		}
+	default:
+		return fmt.Errorf("registry: unsupported protocol %q", endpoint.Protocol)
+	}
+
 	if endpoint.NodeID == "" {
 		endpoint.NodeID = localNodeID()
 	}
@@ -134,17 +151,33 @@ func (r *ServiceRegistry) RegisterInstance(inst *ServiceInstance) error {
 	if inst.Name == "" {
 		return fmt.Errorf("registry: empty service name")
 	}
-	if inst.Endpoint.Address == "" {
-		return fmt.Errorf("registry: empty endpoint address")
-	}
-	if inst.Endpoint.Port <= 0 {
-		return fmt.Errorf("registry: invalid port %d", inst.Endpoint.Port)
-	}
-	if inst.ID == "" {
-		inst.ID = fmt.Sprintf("%s-%s-%d", inst.Name, inst.Endpoint.Address, inst.Endpoint.Port)
-	}
 	if inst.Endpoint.Protocol == "" {
 		inst.Endpoint.Protocol = ProtocolHTTP
+	}
+
+	// Protocol-specific validation
+	switch inst.Endpoint.Protocol {
+	case ProtocolHTTP, ProtocolGRPC, ProtocolTCP:
+		if inst.Endpoint.Address == "" {
+			return fmt.Errorf("registry: empty endpoint address for %s", inst.Endpoint.Protocol)
+		}
+		if inst.Endpoint.Port <= 0 {
+			return fmt.Errorf("registry: invalid port %d for %s", inst.Endpoint.Port, inst.Endpoint.Protocol)
+		}
+	case ProtocolKafka:
+		if inst.Endpoint.Topic == "" {
+			return fmt.Errorf("registry: empty topic for kafka endpoint")
+		}
+	default:
+		return fmt.Errorf("registry: unsupported protocol %q", inst.Endpoint.Protocol)
+	}
+
+	if inst.ID == "" {
+		if inst.Endpoint.Protocol == ProtocolKafka {
+			inst.ID = fmt.Sprintf("%s-%s", inst.Name, inst.Endpoint.Topic)
+		} else {
+			inst.ID = fmt.Sprintf("%s-%s-%d", inst.Name, inst.Endpoint.Address, inst.Endpoint.Port)
+		}
 	}
 	if inst.Weight <= 0 {
 		inst.Weight = 100
@@ -159,11 +192,14 @@ func (r *ServiceRegistry) RegisterInstance(inst *ServiceInstance) error {
 	defer r.mu.Unlock()
 
 	r.services[inst.Name] = append(r.services[inst.Name], &Endpoint{
-		NodeID:   inst.Endpoint.NodeID,
-		Address:  inst.Endpoint.Address,
-		Port:     inst.Endpoint.Port,
-		Protocol: inst.Endpoint.Protocol,
-		Healthy:  true,
+		NodeID:        inst.Endpoint.NodeID,
+		Address:       inst.Endpoint.Address,
+		Port:          inst.Endpoint.Port,
+		Protocol:      inst.Endpoint.Protocol,
+		Healthy:       true,
+		Topic:         inst.Endpoint.Topic,
+		ReplyTopic:    inst.Endpoint.ReplyTopic,
+		ConsumerGroup: inst.Endpoint.ConsumerGroup,
 	})
 
 	existing := r.instances[inst.Name]

@@ -25,6 +25,14 @@ func (r *ServiceRegistry) Lookup(name string) []*Endpoint {
 }
 
 func (r *ServiceRegistry) LookupInstance(name, method string) (*ServiceInstance, error) {
+	return r.LookupInstanceWithProtocol(name, method, "")
+}
+
+// LookupInstanceWithProtocol returns a healthy instance matching the given protocol.
+// If protocol is empty, any protocol is acceptable (backward compatible).
+// Protocol selection happens BEFORE load balancing — candidates of different
+// protocols are never mixed in the same LB pool.
+func (r *ServiceRegistry) LookupInstanceWithProtocol(name, method string, protocol Protocol) (*ServiceInstance, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -41,6 +49,10 @@ func (r *ServiceRegistry) LookupInstance(name, method string) (*ServiceInstance,
 		if time.Since(inst.HeartbeatAt) > r.hbTimeout {
 			continue
 		}
+		// Protocol filter: skip instances that don't match the requested protocol
+		if protocol != "" && inst.Endpoint.Protocol != protocol {
+			continue
+		}
 		if method != "" {
 			for _, m := range inst.Methods {
 				if m.Name == method {
@@ -54,6 +66,9 @@ func (r *ServiceRegistry) LookupInstance(name, method string) (*ServiceInstance,
 	}
 
 	if len(candidates) == 0 {
+		if protocol != "" {
+			return nil, fmt.Errorf("registry: no healthy %s instance of %q for method %q", protocol, name, method)
+		}
 		return nil, fmt.Errorf("registry: no healthy instance of %q for method %q", name, method)
 	}
 	return r.pickInstance(candidates), nil

@@ -130,6 +130,12 @@ func (s *SimNode) handleExecution(ctx context.Context, msg *transport.Message) {
 
 // executePlan executes a compiled plan through the real VM.
 func (s *SimNode) executePlan(ctx context.Context, ruleID string, planBytes, body []byte) ([]byte, error) {
+	// Parse the plan to get service table for service ID -> name mapping.
+	services, err := bridge.PlanServices(planBytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse plan: %w", err)
+	}
+
 	// Initialize context.
 	ctxBytes, err := bridge.InitContext(body)
 	if err != nil {
@@ -137,6 +143,7 @@ func (s *SimNode) executePlan(ctx context.Context, ruleID string, planBytes, bod
 	}
 
 	// Execute steps until done.
+	var respBytes []byte
 	for step := 0; step < 100; step++ {
 		select {
 		case <-ctx.Done():
@@ -144,12 +151,13 @@ func (s *SimNode) executePlan(ctx context.Context, ruleID string, planBytes, bod
 		default:
 		}
 
-		out, err := bridge.ExecuteStep(planBytes, ctxBytes, nil, nil)
+		out, err := bridge.ExecuteStep(planBytes, ctxBytes, respBytes, nil)
 		if err != nil {
 			return nil, fmt.Errorf("step %d: %w", step, err)
 		}
 
 		ctxBytes = out.CtxBytes
+		respBytes = nil // Reset for next step
 
 		if out.Error != "" {
 			return nil, fmt.Errorf("step %d: %s", step, out.Error)
@@ -160,9 +168,18 @@ func (s *SimNode) executePlan(ctx context.Context, ruleID string, planBytes, bod
 			return out.Output, nil
 
 		case bridge.StepPending:
-			// Handle service call through fabric.
-			svcName := out.PendingSvc
-			_ = svcName // TODO: look up and call service
+			// Look up service name from ID.
+			if int(out.PendingSvc) >= len(services) {
+				return nil, fmt.Errorf("step %d: invalid service ID %d", step, out.PendingSvc)
+			}
+			svcName := services[out.PendingSvc].Name
+
+			// Call service through fabric.
+			resp, err := s.callService(ctx, svcName, out.PendingBody)
+			if err != nil {
+				return nil, fmt.Errorf("step %d: call %s: %w", step, svcName, err)
+			}
+			respBytes = resp
 
 		case bridge.StepContinue:
 			// Continue to next step.
@@ -170,6 +187,22 @@ func (s *SimNode) executePlan(ctx context.Context, ruleID string, planBytes, bod
 	}
 
 	return nil, fmt.Errorf("exceeded max steps")
+}
+
+// callService calls a service through the fabric.
+func (s *SimNode) callService(ctx context.Context, svcName string, body []byte) ([]byte, error) {
+	// Look up service in registry.
+	svc := s.MockServices.Get(svcName)
+	if svc == nil {
+		return nil, fmt.Errorf("service %s not found", svcName)
+	}
+
+	// Call the service.
+	result := svc.Call(ctx, body)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	return result.Body, nil
 }
 
 // DeployRule compiles and deploys a DSL rule to this node.

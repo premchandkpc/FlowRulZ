@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -34,24 +32,6 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if cfg.Topic != DefaultTopic {
 		t.Errorf("Topic=%s", cfg.Topic)
-	}
-}
-
-func TestConfigExecDir(t *testing.T) {
-	cfg := DefaultConfig()
-	if cfg.ExecDir() != filepath.Join(os.TempDir(), "flowrulz-execstate") {
-		t.Errorf("unexpected ExecDir: %s", cfg.ExecDir())
-	}
-	cfg.ExecStateDir = "/custom/path"
-	if cfg.ExecDir() != "/custom/path" {
-		t.Errorf("unexpected ExecDir: %s", cfg.ExecDir())
-	}
-}
-
-func TestConfigDLQDir(t *testing.T) {
-	cfg := DefaultConfig()
-	if cfg.DLQDir() != filepath.Join(os.TempDir(), "flowrulz-dlq") {
-		t.Errorf("unexpected DLQDir: %s", cfg.DLQDir())
 	}
 }
 

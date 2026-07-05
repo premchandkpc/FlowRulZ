@@ -15,6 +15,9 @@ SIM_IMAGE := flowrulz-sim:latest
 
 CLUSTER := flowrulz
 
+APP_NAME := flowrulz
+WORKLOAD := statefulset
+
 CGO := CGO_ENABLED=1
 
 ###############################################################################
@@ -163,17 +166,17 @@ svc:
 	kubectl get svc -A
 
 logs:
-	kubectl logs -f deployment/flowrulz
+	kubectl logs -f $$(kubectl get pod -l app=$(APP_NAME) -o jsonpath='{.items[0].metadata.name}')
 
 describe:
-	kubectl describe deployment flowrulz
+	kubectl describe $(WORKLOAD) $(APP_NAME)
 
 restart:
-	kubectl rollout restart deployment/flowrulz
-	kubectl rollout status deployment/flowrulz
+	kubectl rollout restart $(WORKLOAD)/$(APP_NAME)
+	kubectl rollout status $(WORKLOAD)/$(APP_NAME)
 
 wait:
-	kubectl rollout status deployment/flowrulz --timeout=300s
+	kubectl rollout status $(WORKLOAD)/$(APP_NAME) --timeout=300s
 
 shell:
 	kubectl exec -it $$(kubectl get pod -l app=flowrulz -o jsonpath='{.items[0].metadata.name}') -- sh

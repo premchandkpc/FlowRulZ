@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -33,7 +31,6 @@ type DLQ struct {
 	replayFn func(ctx context.Context, entry *DeadLetterEntry) error
 	producer transport.MessageProducer
 	topic    string
-	dir      string
 }
 
 type DLQOption func(*DLQ)
@@ -44,10 +41,6 @@ func WithDLQProducer(p transport.MessageProducer) DLQOption {
 
 func WithDLQTopic(t string) DLQOption {
 	return func(d *DLQ) { d.topic = t }
-}
-
-func WithDLQDir(dir string) DLQOption {
-	return func(d *DLQ) { d.dir = dir }
 }
 
 func NewDLQ(maxSize int, opts ...DLQOption) *DLQ {
@@ -62,9 +55,6 @@ func NewDLQ(maxSize int, opts ...DLQOption) *DLQ {
 	for _, o := range opts {
 		o(d)
 	}
-	if d.dir != "" {
-		d.loadFromDir()
-	}
 	return d
 }
 
@@ -77,16 +67,12 @@ func (d *DLQ) SetReplayFn(fn func(ctx context.Context, entry *DeadLetterEntry) e
 func (d *DLQ) Send(entry *DeadLetterEntry) error {
 	d.mu.Lock()
 	if len(d.entries) >= d.maxSize {
-		oldest := d.entries[0]
 		d.entries = d.entries[1:]
-		d.removePersisted(oldest.ID)
 	}
 	entry.FailedAt = time.Now()
 	d.entries = append(d.entries, entry)
 	entryCopy := *entry
 	d.mu.Unlock()
-
-	d.persistEntry(&entryCopy)
 
 	slog.Warn("dlq: message", "rule", entry.RuleID, "id", entry.ID, "error", entry.Error)
 
@@ -102,61 +88,6 @@ func (d *DLQ) Send(entry *DeadLetterEntry) error {
 		}
 	}
 	return nil
-}
-
-func (d *DLQ) loadFromDir() {
-	entries, err := os.ReadDir(d.dir)
-	if err != nil {
-		return
-	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(d.dir, e.Name()))
-		if err != nil {
-			continue
-		}
-		var entry DeadLetterEntry
-		if err := json.Unmarshal(data, &entry); err != nil {
-			continue
-		}
-		d.entries = append(d.entries, &entry)
-	}
-	slog.Info("dlq: restored entries", "count", len(d.entries), "dir", d.dir)
-}
-
-func (d *DLQ) persistEntry(entry *DeadLetterEntry) {
-	if d.dir == "" {
-		return
-	}
-	path := filepath.Join(d.dir, entry.ID+".json")
-	data, err := json.Marshal(entry)
-	if err != nil {
-		slog.Error("dlq: marshal error", "error", err)
-		return
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
-		slog.Error("dlq: write error", "error", err)
-		return
-	}
-	os.Rename(tmp, path)
-}
-
-func (d *DLQ) removePersisted(id string) {
-	if d.dir == "" {
-		return
-	}
-	path := filepath.Join(d.dir, id+".json")
-	os.Remove(path)
-	os.Remove(path + ".tmp")
-}
-
-func (d *DLQ) LoadFromTopic(ctx context.Context) {
-	slog.Warn("dlq: rebuild from topic not implemented")
 }
 
 func (d *DLQ) Replay(ctx context.Context, id string) error {
@@ -176,8 +107,6 @@ func (d *DLQ) Replay(ctx context.Context, id string) error {
 	}
 	d.entries = append(d.entries[:idx], d.entries[idx+1:]...)
 	d.mu.Unlock()
-
-	d.removePersisted(id)
 
 	if d.replayFn != nil {
 		entry.RetryCount++
@@ -242,15 +171,8 @@ func (d *DLQ) Len() int {
 
 func (d *DLQ) Clear() {
 	d.mu.Lock()
-	entries := d.entries
 	d.entries = d.entries[:0]
 	d.mu.Unlock()
-
-	if d.dir != "" {
-		for _, e := range entries {
-			d.removePersisted(e.ID)
-		}
-	}
 }
 
 func (d *DLQ) ToJSON() ([]byte, error) {

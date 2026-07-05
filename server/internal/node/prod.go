@@ -45,7 +45,7 @@ type Dependencies struct {
 	RateLimiter  *reliability.RateLimiter
 	Dedup        *reliability.DedupTracker
 	Saga         *reliability.SagaTracker
-	StateStore   *execstate.FileStore
+	StateStore   execstate.Store
 	Cluster      pkgcluster.ClusterMember
 	ClusterNode  *cluster.ClusterNode
 	GRPCBus      *grpctransport.GRPCBus
@@ -72,7 +72,7 @@ type ProdNode struct {
 	RateLimiter  *reliability.RateLimiter
 	Dedup        *reliability.DedupTracker
 	Saga         *reliability.SagaTracker
-	StateStore   *execstate.FileStore
+	StateStore   execstate.Store
 	Execs        *ExecRegistry
 	GRPCBus      *grpctransport.GRPCBus
 	RaftCluster  pkgcluster.ClusterMember

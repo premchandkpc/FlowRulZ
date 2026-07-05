@@ -78,14 +78,14 @@ spec:
               cpu: 1000m
               memory: 512Mi
           volumeMounts:
-            - name: data
-              mountPath: /data
+            - name: rules
+              mountPath: /rules
   volumeClaimTemplates:
     - metadata:
-        name: data
+        name: rules
       spec:
         accessModes:
           - ReadWriteOnce
         resources:
           requests:
-            storage: 1Gi
+            storage: 100Mi

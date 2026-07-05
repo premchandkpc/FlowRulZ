@@ -4,7 +4,7 @@ metadata:
   name: flowrulz-config
   namespace: flowrulz
 data:
-  FLOWRULZ_PERSIST_PATH: /data/rules.json
+  FLOWRULZ_PERSIST_PATH: /rules/rules.json
   FLOWRULZ_TOPIC: flowrulz-input
   FLOWRULZ_GRPC_ADDR: ":9090"
   FLOWRULZ_HTTP_ADDR: ":8080"

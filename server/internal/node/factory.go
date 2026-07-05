@@ -2,7 +2,6 @@ package node
 
 import (
 	"fmt"
-	"log/slog"
 	"os"
 
 	"github.com/premchandkpc/FlowRulZ/server/internal/admin"
@@ -67,13 +66,10 @@ func DefaultDependencies(cfg Config) Dependencies {
 		Idempotent: cfg.KafkaIdempotent,
 	}
 
-	// DLQ
-	dlqDir := cfg.DLQDir()
-	os.MkdirAll(dlqDir, 0755)
+	// DLQ — stateless, Kafka-backed when available
 	dlqProducer := MakeProducerFromCluster(reliability.DefaultDLQTopic, clusterNode, kafkaCfg)
 	dlq := reliability.NewDLQ(cfg.DLQMaxEntries(),
 		reliability.WithDLQProducer(dlqProducer),
-		reliability.WithDLQDir(dlqDir),
 	)
 
 	// Membership + Plan Distribution
@@ -105,17 +101,13 @@ func DefaultDependencies(cfg Config) Dependencies {
 	}
 	adminSrv.RegisterDLQ(dlq)
 
-	// Execution state store
-	execDir := cfg.ExecDir()
-	store, err := execstate.NewFileStore(execDir)
-	if err != nil {
-		slog.Warn("execstate: init warning", "error", err)
-	}
+	// Execution state store — in-memory only, ephemeral by design
+	store := execstate.NewMemoryStore()
 
-	// Saga tracker
-	saga := reliability.NewSagaTrackerWithDir(func(svc, method string, body []byte) error {
+	// Saga tracker — in-memory, stateless
+	saga := reliability.NewSagaTracker(func(svc, method string, body []byte) error {
 		return nil
-	}, execDir)
+	})
 
 	// Raft
 	var raftCluster pkgcluster.ClusterMember

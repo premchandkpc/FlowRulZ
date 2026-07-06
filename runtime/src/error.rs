@@ -12,6 +12,7 @@ pub enum FfiError {
     Deserialize = -8,
     Exec = -9,
     VersionMismatch = -10,
+    Panic = -11,
 }
 
 impl FfiError {
@@ -42,6 +43,7 @@ mod tests {
         assert_eq!(FfiError::Deserialize.code(), -8);
         assert_eq!(FfiError::Exec.code(), -9);
         assert_eq!(FfiError::VersionMismatch.code(), -10);
+        assert_eq!(FfiError::Panic.code(), -11);
     }
 
     #[test]

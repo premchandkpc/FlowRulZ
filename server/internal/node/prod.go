@@ -19,8 +19,6 @@ import (
 	pkgscheduler "github.com/premchandkpc/FlowRulZ/server/pkg/scheduler"
 )
 
-var _ pkgnode.Node = (*ProdNode)(nil)
-
 // Dependencies holds all dependencies for node construction.
 type Dependencies struct {
 	Engine           NodeEngine

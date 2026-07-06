@@ -1,3 +1,5 @@
+use std::panic;
+
 use super::{read_str, INTERN_TABLE};
 
 #[cfg(test)]
@@ -91,50 +93,68 @@ mod tests {
 /// Allocates a buffer of `size` bytes. Returns null if size is 0 or allocation fails.
 #[no_mangle]
 pub unsafe extern "C" fn flowrulz_msg_alloc(size: usize) -> *mut u8 {
-    if size == 0 {
-        return std::ptr::null_mut();
+    match panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        if size == 0 {
+            return std::ptr::null_mut();
+        }
+        let header_size = std::mem::size_of::<usize>();
+        let total = header_size.checked_add(size).unwrap_or(usize::MAX);
+        let layout = match std::alloc::Layout::from_size_align(total, std::mem::align_of::<usize>()) {
+            Ok(l) => l,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        let base = std::alloc::alloc(layout) as *mut usize;
+        if base.is_null() {
+            return std::ptr::null_mut();
+        }
+        base.write(size);
+        base.add(1) as *mut u8
+    })) {
+        Ok(ptr) => ptr,
+        Err(_) => {
+            eprintln!("[flowrulz] panic in flowrulz_msg_alloc");
+            std::ptr::null_mut()
+        }
     }
-    let header_size = std::mem::size_of::<usize>();
-    let total = header_size.checked_add(size).unwrap_or(usize::MAX);
-    let layout = match std::alloc::Layout::from_size_align(total, std::mem::align_of::<usize>()) {
-        Ok(l) => l,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    let base = std::alloc::alloc(layout) as *mut usize;
-    if base.is_null() {
-        return std::ptr::null_mut();
-    }
-    base.write(size);
-    base.add(1) as *mut u8
 }
 
 /// # Safety
 /// `ptr` must have been returned by `flowrulz_msg_alloc` and not yet freed.
 #[no_mangle]
 pub unsafe extern "C" fn flowrulz_msg_release(ptr: *mut u8) {
-    if ptr.is_null() {
-        return;
-    }
-    let base = (ptr as *mut usize).sub(1);
-    let size = base.read();
-    let header_size = std::mem::size_of::<usize>();
-    let total = header_size.checked_add(size).unwrap_or(usize::MAX);
-    let layout = match std::alloc::Layout::from_size_align(total, std::mem::align_of::<usize>()) {
-        Ok(l) => l,
-        Err(_) => return,
-    };
-    std::alloc::dealloc(base as *mut u8, layout);
+    let _ = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        if ptr.is_null() {
+            return;
+        }
+        let base = (ptr as *mut usize).sub(1);
+        let size = base.read();
+        let header_size = std::mem::size_of::<usize>();
+        let total = header_size.checked_add(size).unwrap_or(usize::MAX);
+        let layout = match std::alloc::Layout::from_size_align(total, std::mem::align_of::<usize>()) {
+            Ok(l) => l,
+            Err(_) => return,
+        };
+        std::alloc::dealloc(base as *mut u8, layout);
+    }));
 }
 
 /// # Safety
 /// `s_ptr` must point to a valid UTF-8 string of length `s_len`.
 #[no_mangle]
 pub unsafe extern "C" fn flowrulz_intern(s_ptr: *const u8, s_len: usize) -> u16 {
-    let s = match read_str(s_ptr, s_len) {
-        Some(s) => s,
-        None => return 0,
-    };
-    INTERN_TABLE.intern(s)
+    match panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        let s = match read_str(s_ptr, s_len) {
+            Some(s) => s,
+            None => return 0u16,
+        };
+        INTERN_TABLE.intern(s)
+    })) {
+        Ok(id) => id,
+        Err(_) => {
+            eprintln!("[flowrulz] panic in flowrulz_intern");
+            0
+        }
+    }
 }
 
 /// # Safety
@@ -145,14 +165,16 @@ pub unsafe extern "C" fn flowrulz_intern_lookup(
     out_ptr: *mut u8,
     out_len: *mut usize,
 ) {
-    if out_ptr.is_null() || out_len.is_null() {
-        return;
-    }
-    if let Some(s) = INTERN_TABLE.lookup(id) {
-        let bytes = s.as_bytes();
-        unsafe {
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_ptr, bytes.len());
-            *out_len = bytes.len();
+    let _ = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        if out_ptr.is_null() || out_len.is_null() {
+            return;
         }
-    }
+        if let Some(s) = INTERN_TABLE.lookup(id) {
+            let bytes = s.as_bytes();
+            unsafe {
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_ptr, bytes.len());
+                *out_len = bytes.len();
+            }
+        }
+    }));
 }

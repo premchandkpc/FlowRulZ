@@ -42,6 +42,21 @@ The **Cluster Bus** (`server/internal/cluster/`) is a gRPC-based peer-to-peer ov
 - **Topics**: in-memory per-node routing tables — messages published to a topic are delivered to all subscribers across the cluster via gRPC streams
 - **No external deps**: no Kafka, no ZK, no Raft — pure gRPC p2p
 
+### Transport Factory
+
+The `TransportFactory` (`server/internal/transport/factory.go`) abstracts all transport backends behind a single interface. At startup:
+
+1. Always registers in-memory backend as fallback
+2. If `FLOWRULZ_KAFKA_BROKERS` is set → registers Kafka, selects `KindKafka`
+3. If no Kafka brokers → creates `ClusterNode`, registers cluster, selects `KindCluster`
+4. If neither → stays at `KindMemory`
+
+The `MessageRouter` creates all 5 consumers (members, plans, acks, partitions, user topic) through the factory. Producers for DLQ, plans, acks, and partitions also use the factory.
+
+`cluster.RegisterClusterTransport(factory, node)` is the adapter that plugs the cluster's gRPC producer/consumer into the factory.
+
+See `docs/transport-factory.md` for details.
+
 Kafka (`server/internal/transport/kafka/`) remains as a legacy fallback when `FLOWRULZ_KAFKA_BROKERS` is explicitly set.
 
 ## Node Identity

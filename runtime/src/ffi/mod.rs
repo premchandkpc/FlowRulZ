@@ -1,10 +1,12 @@
 use std::num::NonZeroUsize;
 use std::hash::{Hash, Hasher};
+use std::panic;
 use std::sync::{Arc, Mutex};
 
 use lru::LruCache;
 
 use crate::bytecode::plan::ExecutionPlan;
+use crate::error::FfiError;
 use crate::memory::intern::InternTable;
 
 pub mod compile;
@@ -82,6 +84,28 @@ pub(crate) fn read_slice<'a>(ptr: *const u8, len: usize) -> Option<&'a [u8]> {
 pub(crate) fn read_str<'a>(ptr: *const u8, len: usize) -> Option<&'a str> {
     let slice = read_slice(ptr, len)?;
     std::str::from_utf8(slice).ok()
+}
+
+/// Wraps an `extern "C"` function body in `catch_unwind` to prevent Rust panics
+/// from unwinding across the FFI boundary (which is undefined behavior).
+///
+/// If the closure panics, returns `FfiError::Panic.code()` (-11).
+/// The panic message is logged to stderr before returning.
+pub(crate) fn ffi_catch_unwind<F: FnOnce() -> i32 + panic::UnwindSafe>(f: F) -> i32 {
+    match panic::catch_unwind(f) {
+        Ok(code) => code,
+        Err(payload) => {
+            let msg = if let Some(s) = payload.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = payload.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown panic".to_string()
+            };
+            eprintln!("[flowrulz] FFI panic caught: {}", msg);
+            FfiError::Panic.code()
+        }
+    }
 }
 
 #[cfg(test)]

@@ -23,7 +23,7 @@ FlowRulZ/
 │   │   ├── transport/   # EventBus interface (canonical pub/sub abstraction)
 │   │   ├── scheduler/   # Task scheduling + lane interfaces
 │   │   ├── engine/      # Rule lifecycle interfaces
-│   │   ├── node/        # Node interface
+│   │   ├── node/        # Node interface + Dependencies (ExecRegistry, NodeEngine, etc.)
 │   │   ├── plandist/    # Plan distribution interfaces
 │   │   ├── partition/   # Partition management interfaces
 │   │   ├── membership/  # Node membership interfaces
@@ -33,18 +33,45 @@ FlowRulZ/
 │   │   ├── replyrouter/ # Reply router interface
 │   │   └── vm/          # Plan compilation + execution interfaces
 │   └── internal/
-│       ├── node/         # ProdNode — central struct wiring all modules
+│       ├── node/         # ProdNode — composition root with sub-components
+│       │   ├── prod.go           # ProdNode struct + NewNode() constructor
+│       │   ├── interfaces.go     # 16 DI interfaces (LeadershipStrategy, TransportFactory, etc.)
+│       │   ├── layers.go         # 6 dependency bags (Cluster, Transport, Execution, etc.)
+│       │   ├── execution_engine.go # VM step-loop + circuit breakers + saga
+│       │   ├── ingress_pipeline.go # Rate limit → dedup → execute → DLQ
+│       │   ├── message_router.go   # 5-topic consumer demux
+│       │   ├── admin_http.go       # HTTP API (health, metrics, executions, partitions)
+│       │   ├── leadership.go       # Strategy pattern: Raft or SingleLeader
+│       │   ├── recovery.go         # Resume in-flight executions from state store
+│       │   ├── production_invoker.go # Protocol-aware service dispatch (HTTP/gRPC/TCP)
+│       │   └── cluster_adapter.go   # Cluster → TransportFactory bridge
 │       ├── bootstrap/    # NodeBuilder — DI composition root
 │       ├── engine/       # Rule lifecycle, versioning, lane routing, persistence
 │       ├── scheduler/    # Priority lanes + work stealing
-│       ├── cluster/      # Raft + gRPC p2p Cluster Bus + Gossip
-│       ├── transport/    # Kafka (Sarama) + gRPC transport adapters
+│       ├── cluster/      # gRPC p2p Cluster Bus + Gossip + transport adapter
+│       ├── transport/    # Pluggable transport factory (Kafka, cluster, memory)
+│       │   ├── factory.go         # TransportFactory with backend switching
+│       │   ├── registry.go        # In-memory transport registration
+│       │   └── kafka/             # Sarama-backed Kafka producer/consumer
+│       ├── cache/        # Pluggable cache (memory, Redis)
+│       ├── flow/         # Flow DSL — high-level workflow language
+│       │   ├── lexer.go           # Hand-written tokenizer (40+ tokens)
+│       │   ├── parser.go          # Recursive descent parser → AST
+│       │   ├── semantic.go        # Semantic analysis (service refs, event refs)
+│       │   ├── ir.go              # AST → IR graph compilation
+│       │   ├── codegen.go         # IR → Go/Rust/Java/Python source
+│       │   ├── graph.go           # IR → Graphviz DOT / Mermaid
+│       │   ├── formatter.go       # Canonical .flow formatting
+│       │   ├── cli.go             # CLI (fmt, validate, graph, codegen, info)
+│       │   ├── lsp.go             # LSP server (completion, hover, diagnostics)
+│       │   ├── watcher.go         # File watcher for hot-reload
+│       │   └── registry.go        # Runtime store with cache-backed IR
 │       ├── admin/        # HTTP API (rules CRUD, validate, promote, lanes)
 │       ├── plandist/     # Plan distribution + ack protocol
 │       ├── partition/    # Key-space shard mgmt + rebalancing
 │       ├── membership/   # Gossip, leader lease, heartbeat eviction
-│       ├── execstate/    # FileStore — JSON execution records
-│       ├── reliability/  # DLQ, saga, circuit breaker, dedup, rate limiter
+│       ├── execstate/    # In-memory + file execution state persistence
+│       ├── reliability/  # DLQ, saga, circuit breaker, dedup (16-shard LRU), rate limiter
 │       ├── registry/     # Service registry via HTTP heartbeat
 │       ├── replyrouter/  # ReplyRouter — correlation ID → pending request channel
 │       ├── observability/ # OTel tracing, Prometheus metrics
@@ -69,20 +96,25 @@ FlowRulZ/
 │   ├── handlers.go      # Admin HTTP handlers
 │   └── ...              # scheduler, dispatcher, loadgen, network, etc.
 ├── docs/
-│   ├── flow-architecture.md  # Distributed Event Runtime — architecture, Event model, ExecutionContext, flows
-│   ├── dsl-syntax.md         # DSL language specification
-│   ├── bytecode-format.md    # ExecutionPlan, Instruction, opcodes, types
-│   ├── vm-architecture.md    # VM dispatch, opcode handlers, ExecutionContext
-│   ├── memory-management.md  # Arena, interning, message lifecycle
-│   ├── ffi-api.md            # C FFI surface for Go bridge
-│   ├── kafka-semantics.md    # Legacy Kafka transport reference
-│   ├── cluster-model.md      # Single-leader cluster, membership, plan distribution, service registry
-│   ├── flows.md              # Every data path: membership → deployment → execution → DLQ → metrics
-│   ├── file-index.md         # Every source file: package, purpose, key exports
-│   ├── software-review.md    # Multi-layer codebase review (architecture, bugs, security, ops)
-│   ├── ultimate-review-prompt.md # Architecture review prompt for decoupling, SOLID, DRY, and OOP design
-│   ├── development.md
-│   ├── obsidian-vault/       # Obsidian vault (26 notes, arch map, canvas)
+│   ├── flow-architecture.md      # Distributed Event Runtime — architecture, Event model, ExecutionContext, flows
+│   ├── dsl-syntax.md             # Rust DSL language specification
+│   ├── bytecode-format.md        # ExecutionPlan, Instruction, opcodes, types
+│   ├── vm-architecture.md        # VM dispatch, opcode handlers, ExecutionContext
+│   ├── memory-management.md      # Arena, interning, message lifecycle
+│   ├── ffi-api.md                # C FFI surface for Go bridge
+│   ├── kafka-semantics.md        # Legacy Kafka transport reference
+│   ├── cluster-model.md          # Single-leader cluster, membership, plan distribution, service registry
+│   ├── flows.md                  # Every data path: membership → deployment → execution → DLQ → metrics
+│   ├── file-index.md             # Every source file: package, purpose, key exports
+│   ├── software-review.md        # Multi-layer codebase review
+│   ├── ultimate-review-prompt.md # Architecture review prompt
+│   ├── development.md            # Build, test, project layout, WASM plugins, Flow DSL CLI
+│   ├── flow-dsl.md               # Flow DSL — high-level workflow language (new)
+│   ├── transport-factory.md      # Pluggable transport backends (new)
+│   ├── cache-system.md           # Cache abstraction — memory, Redis (new)
+│   ├── admin-http.md             # Admin HTTP API endpoints (new)
+│   ├── ingress-pipeline.md       # Reliability pipeline — rate limit, dedup, execute, DLQ (new)
+│   ├── obsidian-vault/           # Obsidian vault (26 notes, arch map, canvas)
 │   └── README.md
 ├── AGENTS.md
 ├── Makefile
@@ -130,3 +162,10 @@ make bench
 | Dead Letter Queue | Bounded queue with replay support; JSON export, per-entry retry count |
 | WASM Plugin SDK | Sandboxed WebAssembly plugins via wasmtime; `w:plugin.func()` DSL syntax; module caching, fuel limits, memory I/O convention |
 | Metrics | Counters, gauges, histograms; global shortcuts for exec/error tracking |
+| Pluggable transport | `TransportFactory` selects Kafka, cluster gRPC, or in-memory backend at startup; no hard dependency on any transport |
+| Cache abstraction | `Cache` interface with memory and Redis backends; used for flow IR caching with TTL |
+| Flow DSL | High-level, block-structured workflow language (indentation-based); compiles to IR graph; separate from Rust bytecode DSL |
+| Ingress pipeline | Reliability pipeline: rate limit → dedup (16-shard LRU) → execute → DLQ; atomic `CheckAndMark` prevents TOCTOU races |
+| Leadership strategy | `LeadershipStrategy` interface abstracts Raft vs single-leader; fencing token pattern enforced everywhere |
+| Interface-driven DI | 16 internal interfaces decouple ProdNode sub-components; testable with mocks |
+| Node sub-components | ProdNode composed of ExecutionEngine, IngressPipeline, MessageRouter, AdminHTTPServer — not a monolith |

@@ -103,7 +103,7 @@ server/
 │   ├── cluster/               # Raft + membership interfaces
 │   ├── scheduler/             # Task scheduling + lane interfaces
 │   ├── engine/                # Rule lifecycle interfaces
-│   ├── node/                  # Node interface
+│   ├── node/                  # Node interface + Dependencies (ExecRegistry, NodeEngine, etc.)
 │   ├── plandist/              # Plan distribution interfaces
 │   ├── partition/             # Partition management interfaces
 │   ├── membership/            # Node membership interfaces
@@ -113,18 +113,49 @@ server/
 │   ├── replyrouter/           # Reply router interface
 │   └── vm/                    # Plan compilation + execution interfaces
 └── internal/
-    ├── node/               # ProdNode — central struct wiring all modules
+    ├── node/               # ProdNode — composition root with sub-components
+    │   ├── prod.go           # ProdNode struct + NewNode() constructor
+    │   ├── interfaces.go     # 16 DI interfaces (LeadershipStrategy, TransportFactory, etc.)
+    │   ├── layers.go         # 6 dependency bags (Cluster, Transport, Execution, etc.)
+    │   ├── execution_engine.go # VM step-loop + circuit breakers + saga
+    │   ├── ingress_pipeline.go # Rate limit → dedup → execute → DLQ
+    │   ├── message_router.go   # 5-topic consumer demux
+    │   ├── admin_http.go       # HTTP API (health, metrics, executions, partitions)
+    │   ├── leadership.go       # Strategy pattern: Raft or SingleLeader
+    │   ├── recovery.go         # Resume in-flight executions from state store
+    │   ├── production_invoker.go # Protocol-aware service dispatch (HTTP/gRPC/TCP)
+    │   └── cluster_adapter.go   # Cluster → TransportFactory bridge
     ├── bootstrap/          # NodeBuilder — DI composition root
     ├── engine/             # Rule lifecycle, versioning, lane routing, persistence
     ├── scheduler/          # Priority lanes + work stealing
-    ├── cluster/            # Raft + gRPC p2p Cluster Bus + Gossip
-    ├── transport/          # Kafka (Sarama) + gRPC transport adapters
+    ├── cluster/            # gRPC p2p Cluster Bus + Gossip + transport adapter
+    ├── transport/          # Pluggable transport factory (Kafka, cluster, memory)
+    │   ├── factory.go         # TransportFactory with backend switching
+    │   ├── registry.go        # In-memory transport registration
+    │   └── kafka/             # Sarama-backed Kafka producer/consumer
+    ├── cache/              # Pluggable cache (memory, Redis)
+    │   ├── cache.go           # Cache + CacheProvider interfaces
+    │   ├── memory.go          # In-memory backend with TTL + LRU eviction
+    │   └── redis.go           # Redis backend
+    ├── flow/               # Flow DSL — high-level workflow language
+    │   ├── lexer.go           # Hand-written tokenizer (40+ tokens)
+    │   ├── parser.go          # Recursive descent parser → AST
+    │   ├── ast.go             # AST node types (Flow, Service, WorkflowStep, etc.)
+    │   ├── semantic.go        # Semantic analysis (service/event reference validation)
+    │   ├── ir.go              # AST → IR graph compilation
+    │   ├── codegen.go         # IR → Go/Rust/Java/Python source generation
+    │   ├── graph.go           # IR → Graphviz DOT / Mermaid diagrams
+    │   ├── formatter.go       # Canonical .flow formatting
+    │   ├── cli.go             # CLI (fmt, validate, graph, codegen, info)
+    │   ├── lsp.go             # LSP server (completion, hover, diagnostics, formatting)
+    │   ├── watcher.go         # File watcher with debounced hot-reload
+    │   └── registry.go        # Runtime store with cache-backed IR
     ├── admin/              # HTTP API (rules CRUD, validate, promote, lanes)
     ├── plandist/           # Plan distribution + ack protocol
     ├── partition/          # Key-space shard mgmt + rebalancing
     ├── membership/         # Gossip, leader lease, heartbeat eviction
-    ├── execstate/          # FileStore — JSON execution records
-    ├── reliability/        # DLQ, saga, circuit breaker, dedup, rate limiter
+    ├── execstate/          # In-memory + file execution state persistence
+    ├── reliability/        # DLQ, saga, circuit breaker, dedup (16-shard LRU), rate limiter
     ├── registry/           # Service registry via HTTP heartbeat
     ├── replyrouter/        # ReplyRouter — correlation ID → pending request channel
     ├── observability/      # OTel tracing, Prometheus metrics
@@ -191,6 +222,58 @@ WASM plugins are sandboxed WebAssembly modules called from DSL via `w:plugin.fun
 **Wiring in code:**
 - Rust: `plugin::register("name", &wasm_bytes)` / `plugin::call("name", "func", &input)`
 - Go: `bridge.RegisterPlugin("name", wasmBytes)` / `plugins.LoadDir("/path/to/dir")`
+
+## Flow DSL CLI
+
+The Flow DSL (`server/internal/flow/`) is a high-level, block-structured workflow language separate from the Rust bytecode DSL. It compiles to an IR graph and can generate Go, Rust, Java, or Python source code.
+
+```bash
+# Format .flow files in canonical style
+flow fmt *.flow
+
+# Validate (parse + semantic analysis)
+flow validate signup.flow
+
+# Generate graph (dot or mermaid)
+flow graph -format dot signup.flow
+flow graph -format mermaid signup.flow
+
+# Generate source code
+flow codegen -target go signup.flow
+flow codegen -target rust signup.flow
+flow codegen -target java signup.flow
+flow codegen -target python signup.flow
+
+# Print summary
+flow info signup.flow
+
+# Help
+flow help
+```
+
+**Example .flow file:**
+```flow
+version 1
+
+flow UserSignup
+
+service auth
+    type grpc
+    address auth:50051
+
+service email
+    type http
+    url https://email.internal
+
+workflow
+
+Start
+-> auth.CreateUser
+-> email.SendWelcome
+-> End
+```
+
+See `docs/flow-dsl.md` for the full language specification.
 
 ## Adding a New Opcode
 

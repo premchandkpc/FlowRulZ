@@ -1,21 +1,39 @@
+use std::panic;
+
 /// # Safety
 /// Returns the size of the Span struct in bytes.
 #[no_mangle]
 pub unsafe extern "C" fn flowrulz_span_size() -> usize {
-    std::mem::size_of::<crate::tracing::Span>()
+    match panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        std::mem::size_of::<crate::tracing::Span>()
+    })) {
+        Ok(size) => size,
+        Err(_) => {
+            eprintln!("[flowrulz] panic in flowrulz_span_size");
+            0
+        }
+    }
 }
 
 /// # Safety
 /// `out_ptr` must point to a valid buffer of at least `out_cap` bytes.
 #[no_mangle]
 pub unsafe extern "C" fn flowrulz_get_spans(out_ptr: *mut u8, out_cap: usize) -> usize {
-    if out_ptr.is_null() || out_cap == 0 {
-        return 0;
-    }
-    let out_slice = unsafe { std::slice::from_raw_parts_mut(out_ptr, out_cap) };
-    match crate::tracing::SPAN_BUFFER.lock() {
-        Ok(mut buf) => buf.drain(out_slice),
-        Err(_) => 0,
+    match panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        if out_ptr.is_null() || out_cap == 0 {
+            return 0usize;
+        }
+        let out_slice = unsafe { std::slice::from_raw_parts_mut(out_ptr, out_cap) };
+        match crate::tracing::SPAN_BUFFER.lock() {
+            Ok(mut buf) => buf.drain(out_slice),
+            Err(_) => 0,
+        }
+    })) {
+        Ok(written) => written,
+        Err(_) => {
+            eprintln!("[flowrulz] panic in flowrulz_get_spans");
+            0
+        }
     }
 }
 

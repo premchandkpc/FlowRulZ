@@ -41,7 +41,7 @@ pub fn call(name: &str, args: &[Value]) -> Result<Value, String> {
             let type_name = match v {
                 Value::Null => "null",
                 Value::Bool(_) => "bool",
-                Value::Number(n) if n.is_f64() && n.as_f64().unwrap().fract() != 0.0 => "float",
+                Value::Number(n) if n.is_f64() && n.as_f64().unwrap_or(0.0).fract() != 0.0 => "float",
                 Value::Number(_) => "int",
                 Value::String(_) => "string",
                 Value::Array(_) => "array",

@@ -16,20 +16,20 @@ static MODULE_CACHE: Lazy<Mutex<HashMap<String, CachedModule>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 pub fn register(name: &str, wasm_bytes: &[u8]) {
-    let mut reg = PLUGIN_BYTES.lock().unwrap();
+    let mut reg = PLUGIN_BYTES.lock().unwrap_or_else(|e| e.into_inner());
     reg.insert(name.to_string(), wasm_bytes.to_vec());
 }
 
 pub fn get_or_compile(name: &str) -> Result<(Engine, Module), String> {
     {
-        let cache = MODULE_CACHE.lock().unwrap();
+        let cache = MODULE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(entry) = cache.get(name) {
             return Ok((entry.engine.clone(), entry.module.clone()));
         }
     }
 
     let wasm_bytes = {
-        let reg = PLUGIN_BYTES.lock().unwrap();
+        let reg = PLUGIN_BYTES.lock().unwrap_or_else(|e| e.into_inner());
         reg.get(name)
             .ok_or_else(|| format!("plugin '{}' not registered", name))?
             .clone()
@@ -45,7 +45,7 @@ pub fn get_or_compile(name: &str) -> Result<(Engine, Module), String> {
         .map_err(|e| format!("wasm module for '{}': {}", name, e))?;
 
     {
-        let mut cache = MODULE_CACHE.lock().unwrap();
+        let mut cache = MODULE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
         cache.insert(
             name.to_string(),
             CachedModule {

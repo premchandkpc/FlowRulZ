@@ -4,7 +4,7 @@ Every source file in the project, grouped by package, with its purpose and key e
 
 ---
 
-## Go Server (~50 source files + 19 simulator files)
+## Go Server (~45 source files + 19 simulator files)
 
 ### `server/cmd/flowrulz/main.go`
 **Package:** `main`
@@ -94,11 +94,9 @@ Test: `TestHandleGetLanes`
 ### `server/internal/engine/engine.go`
 **Package:** `engine`
 
-Core rule engine. Maintains `map[string]*Rule` of versioned plans. Each `Rule` holds `[]*VersionedPlan` with an `ActiveVersion` index. `Deploy()` compiles DSL via bridge, assigns lane by complexity score, persists to disk. `AddVersion()` stores a pre-compiled plan without auto-activating. `Promote()` activates a version.
+Core rule engine. Maintains `map[string]*Rule` of versioned plans. Each `Rule` holds `[]*VersionedPlan` with an `ActiveVersion` index and `ActiveExec sync.WaitGroup` for in-flight tracking. `Deploy()` compiles DSL via bridge, assigns lane by complexity score, persists to disk. `AddVersion()` stores a pre-compiled plan without auto-activating. `Promote()` activates a version. `Drain()` gracefully removes a version by waiting on `ActiveExec.Wait()`. `Remove()` waits for all in-flight executions then deletes. Callback hooks: `AfterDeploy`, `AfterPromote` — set by ProdNode for plan distribution.
 
-Callback hooks: `AfterDeploy`, `AfterPromote` — set by ProdNode for plan distribution. Persistence: atomic write via `.tmp` + `os.Rename`.
-
-**Exports:** `VersionedPlan`, `Rule`, `Engine`, `New()`, `NewWithCompiler()`, `Deploy()`, `AddVersion()`, `Promote()`, `Rollback()`, `Remove()`, `ActivePlanBytes()`, `ActivePlan()`, `LaneForScore()`, `GetRule()`, `Rules()`, `ExecuteAll()`
+**Exports:** `VersionedPlan`, `Rule`, `Engine`, `New()`, `NewWithCompiler()`, `Deploy()`, `AddVersion()`, `Promote()`, `Rollback()`, `Drain()`, `Remove()`, `ActivePlanBytes()`, `ActivePlan()`, `LaneForScore()`, `GetRule()`, `Rules()`, `ExecuteAll()`, `SetAfterDeploy()`, `SetAfterPromote()`
 
 ---
 
@@ -397,9 +395,9 @@ Tests: `TestDLQSendAndList`, `TestDLQMaxSize`, `TestDLQReplay`, `TestDLQReplayAl
 ### `server/internal/reliability/dedup.go`
 **Package:** `reliability`
 
-Bounded in-memory dedup tracker. `Mark(id)`, `Seen(id)`. Default 10k entries, 5min TTL. Evicts oldest at capacity. Background cleanup goroutine. Wired in ProdNode handler by MessageID.
+16-shard LRU dedup tracker. `CheckAndMark(key) bool` — atomic check-and-mark preventing TOCTOU races. `Seen(id)`, `Mark(id)` for backward compatibility. Shard key via `maphash.Hash`. Default 10k entries total (625 per shard), 5min TTL. Background cleanup. `StartCleanup(ctx, interval)` for background eviction.
 
-**Exports:** `DedupEntry`, `DedupTracker`, `NewDedupTracker()`, `Seen()`, `Mark()`, `StartCleanup()`, `Len()`, `Clear()`
+**Exports:** `DedupEntry`, `DedupTracker`, `NewDedupTracker()`, `Seen()`, `Mark()`, `CheckAndMark()`, `StartCleanup()`, `Len()`, `Clear()`
 
 ---
 
@@ -407,6 +405,8 @@ Bounded in-memory dedup tracker. `Mark(id)`, `Seen(id)`. Default 10k entries, 5m
 **Package:** `reliability`
 
 Tests: `TestDedupSeenUnseen`, `TestDedupMarkAndSeen`, `TestDedupMaxSize`, `TestDedupClear`, `TestDedupCleanupExpired`, `TestDedupDefaults`, `TestDedupEvictsOldest`
+
+Benchmarks: `BenchmarkDedupNewKeys`, `BenchmarkDedupDuplicates`, `BenchmarkDedupAtCapacity`, `BenchmarkDedupMark`, `BenchmarkDedupSeen`, `BenchmarkDedupConcurrent`
 
 ---
 
@@ -470,9 +470,9 @@ WASM plugin loader. `LoadDir(dir)` scans for `.wasm` files, registers each via `
 ### `server/internal/node/prod.go`
 **Package:** `node`
 
-Central production node wiring all modules via DI. Fields: Engine, PlanDistributor, Scheduler, ReplyRouter, DLQ, RateLimiter, CircuitBreakers, Dedup, MetricsCollector, Admin, Registry, Membership, SagaTracker, Store, ClusterNode, Partitions, Rebalancer, GRPCBus, SpanExporter. `Start()` initializes all components. `Shutdown()` tears down gracefully. `executePlan()` runs cooperative step loop via bridge. `callService()` uses CB + registry + HTTP. Leader-only: `distributePlan()`/`distributeActivate()`.
+Central production node composition root. Composed of sub-components: `ExecutionEngine`, `IngressPipeline`, `MessageRouter`, `AdminHTTPServer`, `LeadershipStrategy`. `Dependencies` struct holds ~20 dependencies grouped into 6 bags (`ClusterDeps`, `TransportDeps`, `ExecutionDeps`, `ReliabilityDeps`, `APIDeps`, `PartitionDeps`). `NewNode()` constructor wires everything: selects leadership strategy, builds dependency bags, constructs sub-components, starts flow watcher.
 
-**Exports:** `ProdNode`, `NewNode()`, `Start()`, `Shutdown()`, `SetLeader()`, `IsLeader()`, `SetTerm()`, `CurrentTerm()`
+**Exports:** `ProdNode`, `Dependencies`, `NodeConfig`, `NewNode()`, `Start()`, `Shutdown()`
 
 ---
 
@@ -480,6 +480,304 @@ Central production node wiring all modules via DI. Fields: Engine, PlanDistribut
 **Package:** `node`
 
 Tests: `TestProdNodeStartShutdown`, `TestSetLeader`
+
+---
+
+### `server/internal/node/interfaces.go`
+**Package:** `node`
+
+16 DI interfaces forming the testability boundary: `ServiceInvoker`, `NodeEngine`, `NodeDLQ`, `NodeSagaTracker`, `GRPCService`, `AdminHandler`, `MetricsSnapshotProvider`, `SpanExporter`, `ClusterTransport`, `GossipProvider`, `RateLimiter`, `DedupChecker`, `ServiceLookup`, `TransportFactory`, `PlanDistributor`, `ProtocolDispatcher`, `LeadershipStrategy`, `CircuitBreakerRegistry`, `ExecTracker`, `ExecLister`, `StateStore`.
+
+**Exports:** all interface types
+
+---
+
+### `server/internal/node/layers.go`
+**Package:** `node`
+
+6 dependency bags grouping ~20 dependencies: `ClusterDeps`, `TransportDeps`, `ExecutionDeps`, `ReliabilityDeps`, `APIDeps`, `PartitionDeps`. Pure structural organization — no logic.
+
+**Exports:** `ClusterDeps`, `TransportDeps`, `ExecutionDeps`, `ReliabilityDeps`, `APIDeps`, `PartitionDeps`
+
+---
+
+### `server/internal/node/execution_engine.go`
+**Package:** `node`
+
+VM step-loop execution engine. Runs bytecode plans cooperatively via `bridge.ExecuteStep`. Handles circuit breakers (per-service), saga compensation on failure, and in-flight execution tracking via `ExecTracker`.
+
+**Exports:** `ExecutionEngine`, `NewExecutionEngine()`
+
+---
+
+### `server/internal/node/ingress_pipeline.go`
+**Package:** `node`
+
+Reliability pipeline for inbound messages: rate limit → dedup (16-shard LRU, atomic `CheckAndMark`) → execute all active plans → DLQ on failure. Wired as the handler for user-topic transport consumer.
+
+**Exports:** `IngressPipeline`, `NewIngressPipeline()`, `HandleMessage()`
+
+---
+
+### `server/internal/node/message_router.go`
+**Package:** `node`
+
+Transport demultiplexer. Sets up 5 consumers via `TransportFactory`: `_flowrulz_members` (node discovery), `_flowrulz_plans` (plan distribution), `_flowrulz_acks` (ack handling), `_flowrulz_partitions` (partition assignment), user topic (→ IngressPipeline). Handles term fencing on plan messages.
+
+**Exports:** `MessageRouter`, `NewMessageRouter()`, `StartConsumers()`, `StopConsumers()`
+
+---
+
+### `server/internal/node/admin_http.go`
+**Package:** `node`
+
+HTTP API server. Endpoints: `/health`, `/readyz`, `/metrics`, `/register`, `/heartbeat`, `/services`, `/cluster/join` (auth required), `/executions` (list), `/executions/{id}` (cancel), `/partitions`, `/partitions/rebalance`. Delegates `/admin/*` to `admin.Server` for rules CRUD.
+
+**Exports:** `AdminHTTPServer`, `NewAdminHTTPServer()`, `ServeHTTP()`, `Shutdown()`
+
+---
+
+### `server/internal/node/leadership.go`
+**Package:** `node`
+
+Strategy pattern for leadership determination. `LeadershipStrategy` interface with two implementations: `RaftLeadershipStrategy` (delegates to Raft cluster) and `SingleLeaderStrategy` (this node is always leader). Strategy selected in `NewNode()` based on whether Raft is configured.
+
+**Exports:** `LeadershipStrategy`, `RaftLeadershipStrategy`, `SingleLeaderStrategy`, `NewRaftLeadershipStrategy()`, `NewSingleLeaderStrategy()`
+
+---
+
+### `server/internal/node/recovery.go`
+**Package:** `node`
+
+In-flight execution recovery on node startup. Queries `StateStore` for `Running`/`WaitingForService` executions, retries pending service calls, resumes VM step-loop from saved `CtxBytes`. In-memory only — executions lost on full process restart by design.
+
+**Exports:** `recoverInFlight()`
+
+---
+
+### `server/internal/node/production_invoker.go`
+**Package:** `node`
+
+Protocol-aware service call dispatcher. Looks up service instance via `ServiceLookup`, applies per-service circuit breaker, dispatches via `ServiceCaller` (HTTP POST / gRPC / TCP with length-prefixed framing). Falls back to passthrough (echo) for unregistered services. Marks unhealthy on HTTP 5xx or TCP failures.
+
+**Exports:** `ProductionInvoker`, `NewProductionInvoker()`
+
+---
+
+### `server/internal/node/cluster_adapter.go`
+**Package:** `node`
+
+Adapter bridging `ClusterNode` to the `TransportFactory` interface. Registers cluster gRPC producer/consumer factories.
+
+**Exports:** `transportFactoryAdapter`, `serviceLookupAdapter`, `rateLimiterAdapter`, `dedupCheckerAdapter`, `planDistributorAdapter`
+
+---
+
+### `server/internal/node/message_router_test.go`
+**Package:** `node`
+
+Tests: `TestMessageRouterStartStopConsumers`
+
+---
+
+### `server/internal/cache/cache.go`
+**Package:** `cache`
+
+Pluggable cache interface: `Get`, `Set` (with TTL), `Delete`, `Exists`, `Clear`. `CacheProvider` factory interface. Provider registry with `RegisterProvider`, `GetProvider`, `NewFromConfig`. Falls back to memory if named provider not found.
+
+**Exports:** `Cache`, `CacheProvider`, `Config`, `DefaultConfig()`, `RegisterProvider()`, `GetProvider()`, `NewFromConfig()`
+
+---
+
+### `server/internal/cache/memory.go`
+**Package:** `cache`
+
+In-memory cache backend. `sync.RWMutex`-protected map with TTL entries. Background cleanup goroutine (1s interval). Defensively copies values on Get/Set. `Len()` method beyond interface.
+
+**Exports:** `MemoryCache`, `MemoryProvider`, `NewMemoryCache()`
+
+---
+
+### `server/internal/cache/redis.go`
+**Package:** `cache`
+
+Redis cache backend wrapping `github.com/redis/go-redis/v9`. `Get` returns `nil` on `redis.Nil`. `Clear` calls `FlushDB`. Adds `Ping` health-check.
+
+**Exports:** `RedisCache`, `RedisProvider`, `NewRedisCache()`
+
+---
+
+### `server/internal/flow/ast.go`
+**Package:** `flow`
+
+AST node types for the Flow DSL. `Flow` (top-level), `ServiceDecl`, `EventDecl`, `WorkflowStep` interface with 10 implementations (`StepRef`, `IfBlock`, `SwitchBlock`, `ParallelBlock`, `WaitBlock`, `ForeachLoop`, `WhileLoop`, `EmitEvent`, `ReturnStep`). `ServiceType` enum (6 types: gRPC, HTTP, Kafka, Redis, Postgres, TCP).
+
+**Exports:** `Flow`, `ServiceDecl`, `EventDecl`, `WorkflowStep`, `StepRef`, `IfBlock`, `SwitchBlock`, `ParallelBlock`, `WaitBlock`, `ForeachLoop`, `WhileLoop`, `EmitEvent`, `ReturnStep`, `ServiceType`
+
+---
+
+### `server/internal/flow/lexer.go`
+**Package:** `flow`
+
+Hand-written character-by-character tokenizer. 40+ token types: literals, 29 keywords, 6 service types, operators, delimiters. Handles `#`, `//`, `/* */` comments. Duration suffixes (`ms`, `s`, `m`, `h`, etc.). Version tokens (`v.1`).
+
+**Exports:** `Token`, `TokenType` (40+ constants), `Lexer`, `NewLexer()`, `Tokenize()`, `FilterNewlines()`
+
+---
+
+### `server/internal/flow/parser.go`
+**Package:** `flow`
+
+Recursive descent parser consuming token stream into AST. Top-level: `version`, `flow <name>`, then sections (`description`, `variables`, `constants`, `service`, `event`, `workflow`, etc.). Workflow steps dispatched to 10 step types. Service options handle 6 shapes (bool, list, map, typed keyword, key-value).
+
+**Exports:** `Parser`, `NewParser()`, `Parse()`
+
+---
+
+### `server/internal/flow/semantic.go`
+**Package:** `flow`
+
+Semantic analyzer. Registers declarations into lookup maps. Validates service references (`auth.CreateUser`), event references, `onError` cases, `compensate` entries. Returns `[]SemanticError` with line numbers.
+
+**Exports:** `Analyzer`, `SemanticError`, `NewAnalyzer()`, `Analyze()`
+
+---
+
+### `server/internal/flow/ir.go`
+**Package:** `flow`
+
+AST → IR graph compilation. Creates `IR` with `[]IRNode` + `[]IREdge`. Node types: `start`, `end`, `step`, `if`, `merge`, `parallel`, `join`, `wait`, `emit`, `return`. JSON-serializable via `MarshalIR`/`UnmarshalIR`. Auto-generates node IDs (`n0`, `n1`, ...).
+
+**Exports:** `IR`, `IRNode`, `IREdge`, `Compiler`, `NewCompiler()`, `Compile()`, `MarshalIR()`, `UnmarshalIR()`
+
+---
+
+### `server/internal/flow/codegen.go`
+**Package:** `flow`
+
+IR → source code generation. 4 targets: Go (struct + service interfaces + Execute), Rust (struct + traits + async fn), Java (class + CompletableFuture interfaces), Python (class + Protocol classes). Type mapping for `string`/`int`/`float`/`bool` to language equivalents.
+
+**Exports:** `CodeGenerator`, `NewCodeGenerator()`, `Generate()`
+
+---
+
+### `server/internal/flow/graph.go`
+**Package:** `flow`
+
+IR → graph visualization. Two output formats: Graphviz DOT (services=yellow ellipses, nodes=blue boxes, if=yellow diamonds, parallel=pink hexagons, emit=cyan notes, start/end=green ellipses) and Mermaid (`flowchart TD`).
+
+**Exports:** `GraphGenerator`, `NewGraphGenerator()`, `GenerateDOT()`, `GenerateMermaid()`
+
+---
+
+### `server/internal/flow/formatter.go`
+**Package:** `flow`
+
+Canonical `.flow` formatting. Reads parsed AST and re-emits in standardized indentation and spacing.
+
+**Exports:** `Formatter`, `NewFormatter()`, `Format()`
+
+---
+
+### `server/internal/flow/cli.go`
+**Package:** `flow`
+
+CLI commands wiring the full pipeline. 5 commands: `fmt`, `validate`, `graph` (dot/mermaid), `codegen` (go/rust/java/python), `info`. `ParseArgs()` utility for `--flag value` parsing.
+
+**Exports:** `CLI`, `NewCLI()`, `Run()`, `ParseArgs()`
+
+---
+
+### `server/internal/flow/lsp.go`
+**Package:** `flow`
+
+Language Server Protocol implementation. Tracks open documents, parses on open/change, runs semantic analysis. Methods: `initialize`, `textDocument/didOpen`, `textDocument/didChange`, `textDocument/didClose`, `textDocument/formatting`, `textDocument/completion` (keywords + service names), `textDocument/hover` (service type info). Library implementation — needs JSON-RPC transport.
+
+**Exports:** `LSPServer`, `NewLSPServer()`, `HandleRequest()`, `Graph()`, `Diagnostics()`
+
+---
+
+### `server/internal/flow/watcher.go`
+**Package:** `flow`
+
+Filesystem hot-reload. `FileWatcher` polls at configurable interval (default 5s), checks `ModTime` of `.flow` files. `DebouncedWatcher` wraps with debounce delay for editor-save scenarios. Context-based cancellation.
+
+**Exports:** `FileWatcher`, `NewFileWatcher()`, `Start()`, `Stop()`, `DebouncedWatcher`, `NewDebouncedWatcher()`
+
+---
+
+### `server/internal/flow/registry.go`
+**Package:** `flow`
+
+Runtime store for flow definitions. Thread-safe via `sync.RWMutex`. IR cached under `flow:<name>:ir` (5-min TTL). Topic-to-flow routing cached under `flow:route:<topic>`. Methods: `LoadFile`, `LoadDirectory`, `Register`, `Get`, `GetByTopic`, `List`, `Delete`, `Format`.
+
+**Exports:** `Registry`, `FlowState`, `NewRegistry()`, `LoadFile()`, `LoadDirectory()`, `Register()`, `Get()`, `GetByTopic()`, `List()`, `Delete()`, `Format()`
+
+---
+
+### `server/internal/flow/flow_test.go`
+**Package:** `flow`
+
+Tests: lexer tokenization, operators, comments, durations; parser simple flow, retry, parallel, error recovery; formatter round-trip; semantic analyzer (valid and unknown service); IR compiler; lexer edge cases.
+
+---
+
+### `server/internal/flow/codegen_test.go`
+**Package:** `flow`
+
+Tests: DOT graph generation, Mermaid graph generation, Go codegen, Rust codegen, LSP server (open, completion, hover, format), LSP diagnostics, CLI help.
+
+---
+
+### `server/internal/flow/registry_test.go`
+**Package:** `flow`
+
+Tests: full registry integration (register, get, list, format, delete), multiple flows, semantic error propagation, cache hit after memory deletion.
+
+---
+
+### `server/internal/cluster/transport_factory.go`
+**Package:** `cluster`
+
+Registration adapter plugging cluster's gRPC producer/consumer into `TransportFactory`. 25 lines. Registers `KindCluster` factories delegating to `cluster.NewClusterProducer`/`NewClusterConsumer`.
+
+**Exports:** `RegisterClusterTransport()`
+
+---
+
+### `server/internal/transport/factory.go`
+**Package:** `transport`
+
+Pluggable transport factory with kind-based switching. 4 kinds: Kafka, Cluster, Memory, Noop. `NewProducer(topic)` / `NewConsumer(topic, handler)` look up factory for active kind. `SetKind()` for runtime switching. Thread-safe via `sync.RWMutex`.
+
+**Exports:** `TransportFactory`, `NewTransportFactory()`, `SetKind()`, `NewProducer()`, `NewConsumer()`
+
+---
+
+### `server/internal/transport/registry.go`
+**Package:** `transport`
+
+In-memory transport registration. `RegisterMemory(factory)` registers `KindMemory` factories using simple buffered channels.
+
+**Exports:** `RegisterMemory()`
+
+---
+
+### `server/internal/transport/kafka/registry.go`
+**Package:** `kafka`
+
+Kafka transport registration. `RegisterKafka(factory, cfg)` registers `KindKafka` factories. Returns early if brokers empty. `NewTransportFactoryFromConfig()` convenience constructor.
+
+**Exports:** `RegisterKafka()`, `NewTransportFactoryFromConfig()`, `RegistrationConfig`
+
+---
+
+### `server/pkg/node/dependencies.go`
+**Package:** `node` (public)
+
+Public interface definitions for external consumers: `ExecRegistry`, `NodeEngine`, `GRPCService`, `AdminHandler`, `SpanExporter`, `ClusterTransport`. Minimal subset of the 16 internal interfaces.
+
+**Exports:** `ExecRegistry`, `NodeEngine`, `GRPCService`, `AdminHandler`, `SpanExporter`, `ClusterTransport`
 
 ---
 
@@ -492,36 +790,18 @@ DI composition root. `NodeBuilder` constructs ProdNode with all dependencies. `W
 
 ---
 
-### `server/internal/adapters/adapter.go`
-**Package:** `adapters`
-
-Bridge layer between `pkg/` interfaces and `internal/` implementations. Wraps concrete types (e.g., `scheduler.Scheduler` → `pkg/scheduler.Scheduler` interface) for decoupled DI.
-
-**Exports:** various adapter types for engine, scheduler, transport, cluster, registry, store
-
----
-
-### `server/internal/ports/ports.go`
-**Package:** `ports`
-
-Secondary port interfaces for external system interactions (HTTP caller, filesystem, time). Enables testability without real I/O.
-
-**Exports:** `HTTPCaller`, `FileSystem`, `Clock`
-
 ---
 
 ### `server/pkg/cluster/` — cluster interfaces and types
-### `server/pkg/engine/` — engine interfaces and types
 ### `server/pkg/membership/` — membership interfaces and types
-### `server/pkg/node/` — node interfaces and types
+### `server/pkg/node/` — node types only (`ID`, `ExecuteRequest`, `ExecuteResponse`)
 ### `server/pkg/partition/` — partition interfaces and types
 ### `server/pkg/plandist/` — plan distribution interfaces and types
-### `server/pkg/registry/` — registry interfaces and types
-### `server/pkg/reliability/` — reliability interfaces (CB, DLQ, RL, dedup, saga)
 ### `server/pkg/replyrouter/` — reply router interface
 ### `server/pkg/scheduler/` — scheduler + lane interfaces
-### `server/pkg/store/` — execution state store interface
-### `server/pkg/vm/` — VM compilation + execution interfaces
+### `server/pkg/transport/` — transport interfaces and types
+
+> **Deleted (2026-07-06):** `pkg/engine/`, `pkg/registry/`, `pkg/store/`, `pkg/reliability/`, `pkg/vm/` — Potemkin abstractions, never used as DI types. `internal/adapters/`, `internal/ports/` — zero-import dead code. `bridge/vm_adapter.go` — dead code (`NewBridgeVM` never called).
 
 ---
 
@@ -1115,9 +1395,9 @@ Dependencies: `bumpalo` (arena), `boxcar` (lock-free vec), `serde`/`serde_json`,
 
 | Layer | Source Files | Tests | Lines |
 |-------|-------------|-------|-------|
-| Go server + bridge + pkg + SDK | ~50 | ~100 tests | ~5,200 |
+| Go server + bridge + pkg + SDK | ~70 | ~120 tests | ~7,500 |
 | Go simulator | 26 | ~25 tests | ~2,800 |
 | Rust runtime | 26 | 401 tests | ~6,100 |
 | C bridge | — | — | ~15 |
 | Build/config | 3 | — | ~200 |
-| Docs | 19 | — | ~4,500 |
+| Docs | 25 | — | ~5,500 |

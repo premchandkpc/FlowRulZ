@@ -1,6 +1,6 @@
 # FlowRulZ Go Architecture — SOLID Restructure
 
-> **Status:** ✅ **COMPLETED** — All phases done. `server/pkg/` has 13 public interface packages. `server/internal/node/ProdNode` wired via `server/internal/bootstrap/NodeBuilder.WithDefaults()` → `DefaultDependencies()`. Adapter layer (`server/internal/adapters/`) implements `pkg/` interfaces from `internal/` types. `server/internal/execnode/` deleted (11 files removed). All ProdNode fields migrated to interfaces. This document served as the plan; the implementation mirrors it.
+> **Status:** ✅ **CLEANED UP** — Dead abstractions removed. `server/pkg/` now has 8 live interface packages (cluster, membership, node, partition, plandist, replyrouter, scheduler, transport). Deleted: `pkg/engine/`, `pkg/registry/`, `pkg/store/`, `pkg/reliability/`, `pkg/vm/` (Potemkin abstractions — declared but never used as DI types). Deleted: `internal/adapters/` and `internal/ports/` (zero-import dead code). Deleted: 4 dead `pkgsupport.go` shim files. `pkg/node/` retains only `ID`, `ExecuteRequest`, `ExecuteResponse` types (used by `ProdNode`). Bridge `vm_adapter.go` deleted (dead code). `internal/flow.TestFlowRegistryIntegration` has a pre-existing nil-pointer bug (unrelated).
 
 ## Package Dependency Hierarchy (top→bottom)
 
@@ -18,35 +18,16 @@ cmd/              — wiring, config parsing, main()
 
 Zero imports from `server/internal/`. Zero creation logic. Only interfaces, enums, pure data types.
 
-### 1.1 `go/pkg/node/` — Node Interface
+### 1.1 `go/pkg/node/` — Node Types (interface removed — `ProdNode` implements directly)
 
 ```go
 package node
 
-import "context"
-
 type ID string
 
-type Node interface {
-    // Identity
-    ID() ID
-    Addr() string
-
-    // Lifecycle
-    Start(ctx context.Context) error
-    Shutdown(ctx context.Context) error
-
-    // Execution
-    Execute(ctx context.Context, req *ExecuteRequest) (*ExecuteResponse, error)
-
-    // Leadership
-    IsLeader() bool
-    CurrentTerm() uint64
-    LeaderID() ID
-
-    // Health
-    Ready(ctx context.Context) error
-}
+type ExecuteRequest struct { ... }
+type ExecuteResponse struct { ... }
+```
 
 type ExecuteRequest struct {
     RuleID string

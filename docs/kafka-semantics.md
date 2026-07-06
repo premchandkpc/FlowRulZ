@@ -2,11 +2,26 @@
 
 **Status:** Legacy fallback. FlowRulZ no longer requires Kafka. The default production transport is the gRPC-based **Cluster Bus** (`server/internal/cluster/`). Kafka remains available as a transport option when `FLOWRULZ_KAFKA_BROKERS` is explicitly set.
 
+## Transport Factory
+
+All transport backends are managed through the `TransportFactory` (`server/internal/transport/factory.go`). The factory selects the active backend at startup:
+
+- **Kafka** (`KindKafka`): active when `FLOWRULZ_KAFKA_BROKERS` is set
+- **Cluster** (`KindCluster`): active when no Kafka brokers configured (default)
+- **Memory** (`KindMemory`): in-process fallback for testing
+- **Noop** (`KindNoop`): discards all messages (fallback if no backend registered)
+
+The factory can be switched at runtime via `SetKind()`. See `docs/transport-factory.md` for full details.
+
 ## Files
 
 | File | Role |
 |------|------|
+| `server/internal/transport/factory.go` | `TransportFactory` with kind-based switching |
+| `server/internal/transport/registry.go` | In-memory transport registration |
 | `server/internal/transport/kafka/` | Sarama-backed Kafka consumer/producer (3 files) |
+| `server/internal/transport/kafka/registry.go` | Kafka transport registration into factory |
+| `server/internal/cluster/transport_factory.go` | Cluster transport registration into factory |
 | `server/internal/transport/` | `MessageConsumer`/`MessageProducer` interfaces |
 
 > **Note:** The following topics are also managed over the Cluster Bus in non-legacy mode:

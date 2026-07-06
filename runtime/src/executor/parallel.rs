@@ -34,15 +34,15 @@ pub fn exec_parallel<'a>(
         for (i, svc) in svcs.iter().enumerate() {
             let svc_id = svc.svc_id;
             s.spawn(move || {
-                if err_ref.lock().unwrap().is_some() {
+                if err_ref.lock().unwrap_or_else(|e| e.into_inner()).is_some() {
                     return;
                 }
                 match caller(svc_id, body, 0) {
                     Ok(resp) => {
-                        parts_ref.lock().unwrap()[i] = Some(resp);
+                        parts_ref.lock().unwrap_or_else(|e| e.into_inner())[i] = Some(resp);
                     }
                     Err(e) => {
-                        *err_ref.lock().unwrap() = Some(e);
+                        *err_ref.lock().unwrap_or_else(|e| e.into_inner()) = Some(e);
                     }
                 }
             });
@@ -50,11 +50,11 @@ pub fn exec_parallel<'a>(
     });
 
     // Check for errors
-    if let Some(err) = err_mtx.into_inner().unwrap() {
+    if let Some(err) = err_mtx.into_inner().unwrap_or_else(|e| e.into_inner()) {
         return Err(err);
     }
 
-    let parts_vec = parts_mtx.into_inner().unwrap();
+    let parts_vec = parts_mtx.into_inner().unwrap_or_else(|e| e.into_inner());
     let arr: Vec<serde_json::Value> = parts_vec
         .into_iter()
         .map(|opt| {

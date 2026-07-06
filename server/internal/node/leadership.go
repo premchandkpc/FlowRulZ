@@ -1,9 +1,9 @@
 package node
 
 import (
+	"github.com/premchandkpc/FlowRulZ/server/internal/ports"
 	pkgcluster "github.com/premchandkpc/FlowRulZ/server/pkg/cluster"
 	pkgmembership "github.com/premchandkpc/FlowRulZ/server/pkg/membership"
-	pkgnode "github.com/premchandkpc/FlowRulZ/server/pkg/node"
 )
 
 // RaftLeadershipStrategy delegates to a Raft cluster for leadership.
@@ -23,12 +23,12 @@ func (r *RaftLeadershipStrategy) CurrentTerm() uint64 {
 	return r.cluster.CurrentTerm()
 }
 
-func (r *RaftLeadershipStrategy) CaptureLeadershipToken() pkgcluster.LeadershipToken {
-	return r.cluster.CaptureLeadershipToken()
+func (r *RaftLeadershipStrategy) CaptureLeadershipToken() ports.LeadershipToken {
+	return leadershipTokenToPort(r.cluster.CaptureLeadershipToken())
 }
 
-func (r *RaftLeadershipStrategy) ValidateLeadershipToken(token pkgcluster.LeadershipToken) bool {
-	return r.cluster.ValidateLeadershipToken(token)
+func (r *RaftLeadershipStrategy) ValidateLeadershipToken(token ports.LeadershipToken) bool {
+	return r.cluster.ValidateLeadershipToken(leadershipTokenFromPort(token))
 }
 
 func (r *RaftLeadershipStrategy) LeaderID(selfNodeID string) string {
@@ -64,12 +64,12 @@ func (s *SingleLeaderStrategy) CurrentTerm() uint64 {
 	return 0
 }
 
-func (s *SingleLeaderStrategy) CaptureLeadershipToken() pkgcluster.LeadershipToken {
-	return pkgcluster.LeadershipToken{Leader: true, Term: 0}
+func (s *SingleLeaderStrategy) CaptureLeadershipToken() ports.LeadershipToken {
+	return ports.LeadershipToken{Term: 0, Valid: true}
 }
 
-func (s *SingleLeaderStrategy) ValidateLeadershipToken(token pkgcluster.LeadershipToken) bool {
-	return token.Valid()
+func (s *SingleLeaderStrategy) ValidateLeadershipToken(token ports.LeadershipToken) bool {
+	return token.Valid
 }
 
 func (s *SingleLeaderStrategy) LeaderID(selfNodeID string) string {
@@ -82,8 +82,3 @@ func (s *SingleLeaderStrategy) LeaderID(selfNodeID string) string {
 // Compile-time interface compliance checks
 var _ LeadershipStrategy = (*RaftLeadershipStrategy)(nil)
 var _ LeadershipStrategy = (*SingleLeaderStrategy)(nil)
-
-// pkgnode.ID helper
-func leadershipNodeID(id string) pkgnode.ID {
-	return pkgnode.ID(id)
-}

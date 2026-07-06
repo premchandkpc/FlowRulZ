@@ -8,6 +8,7 @@ import (
 	"github.com/premchandkpc/FlowRulZ/server/internal/observability"
 	"github.com/premchandkpc/FlowRulZ/server/internal/ports"
 	"github.com/premchandkpc/FlowRulZ/server/internal/reliability"
+	pkgcluster "github.com/premchandkpc/FlowRulZ/server/pkg/cluster"
 )
 
 // --- Adapter types that bridge port interfaces → concrete types ---
@@ -187,5 +188,24 @@ func statusFromString(s string) execstate.Status {
 		return execstate.StatusFailed
 	default:
 		return execstate.StatusCreated
+	}
+}
+
+// --- Leadership token conversion ---
+
+// leadershipTokenToPort converts pkgcluster.LeadershipToken → ports.LeadershipToken
+func leadershipTokenToPort(t pkgcluster.LeadershipToken) ports.LeadershipToken {
+	return ports.LeadershipToken{
+		Term:     t.Term,
+		LeaderID: "",
+		Valid:    t.Valid(),
+	}
+}
+
+// leadershipTokenFromPort converts ports.LeadershipToken → pkgcluster.LeadershipToken
+func leadershipTokenFromPort(t ports.LeadershipToken) pkgcluster.LeadershipToken {
+	return pkgcluster.LeadershipToken{
+		Leader: t.Valid,
+		Term:   t.Term,
 	}
 }

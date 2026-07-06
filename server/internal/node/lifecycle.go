@@ -21,7 +21,7 @@ func (n *ProdNode) startSubsystems(ctx context.Context) {
 
 	n.part.Rebalancer.SetNotify(func() {
 		token := n.CaptureLeadershipToken()
-		if !token.Valid() {
+		if !token.Valid {
 			return
 		}
 		assignments := n.part.Partitions.Rebalance(n.cluster.Membership.AliveNodes(), token.Term)
@@ -85,7 +85,7 @@ func (n *ProdNode) configureEngineHooks() {
 
 func (n *ProdNode) handleEngineDeploy(id, dsl string, plan []byte, version uint64) {
 	token := n.CaptureLeadershipToken()
-	if !token.Valid() {
+	if !token.Valid {
 		return
 	}
 	n.part.PlanDist.SetTerm(token.Term)
@@ -98,7 +98,7 @@ func (n *ProdNode) handleEngineDeploy(id, dsl string, plan []byte, version uint6
 
 func (n *ProdNode) handleEnginePromote(id string, version uint64) {
 	token := n.CaptureLeadershipToken()
-	if !token.Valid() {
+	if !token.Valid {
 		return
 	}
 	if !n.ValidateLeadershipToken(token) {

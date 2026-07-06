@@ -8,10 +8,10 @@ import (
 	"github.com/premchandkpc/FlowRulZ/server/internal/execstate"
 	"github.com/premchandkpc/FlowRulZ/server/internal/observability"
 	"github.com/premchandkpc/FlowRulZ/server/internal/plandist"
+	"github.com/premchandkpc/FlowRulZ/server/internal/ports"
 	"github.com/premchandkpc/FlowRulZ/server/internal/registry"
 	"github.com/premchandkpc/FlowRulZ/server/internal/reliability"
 	"github.com/premchandkpc/FlowRulZ/server/internal/transport"
-	pkgcluster "github.com/premchandkpc/FlowRulZ/server/pkg/cluster"
 )
 
 // --- Existing interfaces (kept for backward compatibility) ---
@@ -110,8 +110,8 @@ type ProtocolDispatcher interface {
 type LeadershipStrategy interface {
 	IsLeader() bool
 	CurrentTerm() uint64
-	CaptureLeadershipToken() pkgcluster.LeadershipToken
-	ValidateLeadershipToken(token pkgcluster.LeadershipToken) bool
+	CaptureLeadershipToken() ports.LeadershipToken
+	ValidateLeadershipToken(token ports.LeadershipToken) bool
 	LeaderID(selfNodeID string) string
 }
 

@@ -10,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/premchandkpc/FlowRulZ/server/internal/ports"
 	pkgcluster "github.com/premchandkpc/FlowRulZ/server/pkg/cluster"
 	pkgpartition "github.com/premchandkpc/FlowRulZ/server/pkg/partition"
 )
@@ -18,8 +19,8 @@ import (
 type LeadershipProvider interface {
 	IsLeader() bool
 	CurrentTerm() uint64
-	CaptureLeadershipToken() pkgcluster.LeadershipToken
-	ValidateLeadershipToken(token pkgcluster.LeadershipToken) bool
+	CaptureLeadershipToken() ports.LeadershipToken
+	ValidateLeadershipToken(token ports.LeadershipToken) bool
 }
 
 // AdminHTTPServer handles HTTP API handlers and server lifecycle.
@@ -256,7 +257,7 @@ func (s *AdminHTTPServer) handleListPartitions(w http.ResponseWriter, r *http.Re
 
 func (s *AdminHTTPServer) handleRebalance(w http.ResponseWriter, r *http.Request) {
 	token := s.leadership.CaptureLeadershipToken()
-	if !token.Valid() {
+	if !token.Valid {
 		http.Error(w, "not leader", http.StatusForbidden)
 		return
 	}

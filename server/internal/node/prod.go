@@ -10,6 +10,7 @@ import (
 
 	"github.com/premchandkpc/FlowRulZ/server/internal/flow"
 	"github.com/premchandkpc/FlowRulZ/server/internal/plugins"
+	"github.com/premchandkpc/FlowRulZ/server/internal/ports"
 	"github.com/premchandkpc/FlowRulZ/server/internal/scheduler"
 	pkgcluster "github.com/premchandkpc/FlowRulZ/server/pkg/cluster"
 	pkgmembership "github.com/premchandkpc/FlowRulZ/server/pkg/membership"
@@ -202,11 +203,11 @@ func (n *ProdNode) CurrentTerm() uint64 {
 	return n.leadership.CurrentTerm()
 }
 
-func (n *ProdNode) CaptureLeadershipToken() pkgcluster.LeadershipToken {
+func (n *ProdNode) CaptureLeadershipToken() ports.LeadershipToken {
 	return n.leadership.CaptureLeadershipToken()
 }
 
-func (n *ProdNode) ValidateLeadershipToken(token pkgcluster.LeadershipToken) bool {
+func (n *ProdNode) ValidateLeadershipToken(token ports.LeadershipToken) bool {
 	return n.leadership.ValidateLeadershipToken(token)
 }
 

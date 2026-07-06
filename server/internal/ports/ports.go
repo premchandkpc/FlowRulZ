@@ -50,7 +50,8 @@ type SagaStep struct {
 	ServiceName string
 	Method      string
 	Body        []byte
-	Compensate  func(ctx context.Context) error
+	CompSvc     string
+	CompMethod  string
 }
 
 type MetricSnapshot struct {

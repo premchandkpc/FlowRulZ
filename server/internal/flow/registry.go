@@ -118,7 +118,7 @@ func (r *Registry) Register(ctx context.Context, ast *Flow) error {
 	_ = r.cache.Set(ctx, cacheKey, data, r.ttl)
 
 	// Update route cache
-	if ast.Trigger.Topic != "" {
+	if ast.Trigger != nil && ast.Trigger.Topic != "" {
 		routeKey := fmt.Sprintf("flow:route:%s", ast.Trigger.Topic)
 		_ = r.cache.Set(ctx, routeKey, []byte(name), r.ttl)
 	}

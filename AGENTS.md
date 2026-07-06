@@ -5,7 +5,7 @@ This file is grounded in the actual docs in `docs/` (architecture-review-complet
 bytecode-format.md, cluster-model.md, development.md, dsl-syntax.md, ffi-api.md,
 kafka-semantics.md, memory-management.md, policy-engine-implementation.md,
 replication-design.md, vm-architecture.md, README.md). Where those docs disagree with
-each other, it's called out explicitly (§9) instead of silently picked.
+each other, it's called out explicitly (see prior §9, now resolved) instead of silently picked.
 
 ---
 
@@ -99,12 +99,11 @@ docs/              architecture + Obsidian vault (26 notes, 1 canvas)
 
 ## 3. Cluster model — single-leader, NOT Raft consensus for state
 
-**Correction from an earlier version of this file:** this is a single-leader cluster with
-**no Raft, no Paxos** for cluster state distribution. Do not assume `hashicorp/raft` governs
-plan/partition state — it doesn't, per `cluster-model.md`. (There is a partial Raft mention
-elsewhere for leader election only — see the discrepancy flagged in §9. Treat
-`cluster-model.md`'s account as authoritative for day-to-day work since it's the more
-detailed, current spec.)
+**Correction from an earlier version of this file:** this is a single-leader cluster.
+Raft (`hashicorp/raft`) is used for leader election and term management only (with a
+`NoopFSM` — no state goes through the Raft log). Do not assume `hashicorp/raft` governs
+plan/partition state — it doesn't. Application state is distributed via the gRPC
+Cluster Bus. (See §9 for how this was resolved against the actual code.)
 
 **Transport:** gRPC-based **Cluster Bus** (`server/internal/cluster/`) — peer-to-peer,
 no Kafka/ZK required. Kafka (`server/internal/transport/kafka/`) is a **legacy fallback**,
@@ -309,24 +308,21 @@ different milestones in the source doc.
 
 ---
 
-## 9. ⚠ Documentation conflict — flagged, not resolved
+## 9. ✅ Documentation conflict — resolved 2026-07-06
 
-`cluster-model.md` states plainly: *"single-leader cluster with no Raft... Simple
-ordering — no Raft, no Paxos, no external dependency"* for both leader election and
-partition/plan state.
+**Resolution:** Raft IS used for leader election. `cluster-model.md` was stale.
 
-`replication-design.md` states: *"Raft is used only for leader election (NoopFSM — no
-state goes through the Raft log)"* and builds its fencing-token argument partly on
-Raft-confirmed-leader terminology ("Gossip proposes, Raft-confirmed-leader disposes").
+`cluster-model.md` has been updated to state: *"Raft (`hashicorp/raft`) for leader
+election and term management, with a `NoopFSM` — no application state is replicated
+through the Raft log."*
 
-These cannot both be fully accurate as written. Two most likely explanations: (a)
-`hashicorp/raft` is vendored/imported for its leader-election primitive only, with the
-actual term/lowest-ID mechanism in `cluster-model.md` describing the real behavior on
-top of or instead of it, or (b) `replication-design.md` is describing a target/future
-state, not current behavior. **Do not silently pick one and build on top of it.** If your
-task touches leader election, membership, or the fencing token pattern, confirm which
-account is current against the actual code in `server/internal/cluster/` and
-`server/internal/membership/` before writing anything that assumes one or the other.
+`replication-design.md` was correct all along: *"Raft is used only for leader election
+(NoopFSM — no state goes through the Raft log)."*
+
+**Evidence:** `server/internal/cluster/raft.go` creates a real `hashicorp/raft` instance
+with BoltDB stores, TCP transport, and `NoopFSM`. `RaftCluster.IsLeader()` checks
+`rc.raft.State() == raft.Leader`. `RaftLeadershipStrategy` is used when `deps.Cluster`
+is non-nil; `SingleLeaderStrategy` (always-leader) is the single-node fallback.
 
 ---
 
@@ -336,7 +332,7 @@ account is current against the actual code in `server/internal/cluster/` and
    test command supports it
 2. If you touched FFI (§5): re-run the specific bridge test by name (e.g.
    `TestExecuteStepMultiCall`), not just the suite
-3. If you touched cluster/membership/partition code (§3, §9): confirmed against actual
+3. If you touched cluster/membership/partition code (§3): confirmed against actual
    code which account (Raft-assisted or pure lowest-ID) is real before changing fencing
    logic
 4. If you added an opcode (§4): followed the full 7-step sequence, not a shortcut
@@ -346,4 +342,5 @@ account is current against the actual code in `server/internal/cluster/` and
    going nowhere)
 7. Relevant `docs/*.md` updated if you changed behavior it describes — and if you notice
    a doc conflict like §9 while doing so, add a note rather than quietly resolving it
+   yourself
    yourself

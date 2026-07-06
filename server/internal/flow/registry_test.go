@@ -104,26 +104,23 @@ func TestFlowRegistryMultipleFlows(t *testing.T) {
 	flows := []string{
 		`version 1
 flow FlowA
-services
-    svc_a
-        type grpc
-        address svc_a:50051
+service svc_a
+    type grpc
+    address svc_a:50051
 workflow
 Start -> svc_a.Call -> End`,
 		`version 1
 flow FlowB
-services
-    svc_b
-        type grpc
-        address svc_b:50052
+service svc_b
+    type grpc
+    address svc_b:50052
 workflow
 Start -> svc_b.Call -> End`,
 		`version 1
 flow FlowC
-services
-    svc_c
-        type grpc
-        address svc_c:50053
+service svc_c
+    type grpc
+    address svc_c:50053
 workflow
 Start -> svc_c.Call -> End`,
 	}
@@ -161,10 +158,9 @@ func TestFlowRegistrySemanticErrors(t *testing.T) {
 	// Flow with unknown service reference
 	flowSource := `version 1
 flow BadFlow
-services
-    auth
-        type grpc
-        address auth:50051
+service auth
+    type grpc
+    address auth:50051
 workflow
 Start -> unknown.Call -> End
 `
@@ -189,10 +185,9 @@ func TestFlowRegistryCacheHit(t *testing.T) {
 
 	flowSource := `version 1
 flow CachedFlow
-services
-    svc
-        type grpc
-        address svc:50051
+service svc
+    type grpc
+    address svc:50051
 workflow
 Start -> svc.Call -> End
 `

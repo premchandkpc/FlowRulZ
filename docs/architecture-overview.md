@@ -2,15 +2,31 @@
 
 > Last updated: 2026-07-06. Replaces the archived `restructure-plan-ARCHIVED.md`.
 
-## Package Hierarchy
+## Package Hierarchy (Hexagonal)
 
 ```
-cmd/              — entry point, config parsing, DI bootstrap
-  └─ internal/    — implementations (one package per concern)
-       └─ pkg/    — interfaces + domain types (zero internal imports)
+cmd/flowrulz/              ← thin entry point, env→Config only
+  │
+  └─ internal/bootstrap/   ← COMPOSITION ROOT: wires adapters → ports
+       │
+       ├─ internal/core/           ← DOMAIN LOGIC (zero adapter imports)
+       │    ├─ domain/             ← domain types (ExecutionID, ServiceInstance, etc.)
+       │    ├─ execution/          ← ExecutionEngine + IngressPipeline
+       │    ├─ clustering/         ← RaftLeadershipStrategy, SingleLeaderStrategy
+       │    └─ distribution/       ← PlanOrchestrator (publish → ack → activate)
+       │
+       ├─ internal/ports/          ← INTERFACES the core needs (zero internal imports)
+       │
+       ├─ internal/adapters/       ← IMPLEMENTATIONS of ports
+       │    ├─ invoker/            ← ProductionInvoker (HTTP/gRPC/TCP dispatch)
+       │    ├─ observability/      ← MetricsAdapter (wraps global singletons)
+       │    └─ cluster/            ← TransportAdapter (wraps ClusterNode)
+       │
+       └─ internal/node/           ← ProdNode: thin lifecycle orchestrator
 ```
 
-**Golden rule:** `pkg/` never imports `internal/`. `internal/` imports `pkg/`. No cycles.
+**Golden rule:** `core/` never imports `adapters/`. `adapters/` import `ports/`.
+`bootstrap/` imports both. `cmd/` imports only `bootstrap/`.
 
 ---
 
@@ -92,8 +108,8 @@ The step API inverts control: Go drives the VM loop, resolving service calls bet
 
 | Deleted | Date | Reason |
 |---|---|---|
-| `internal/adapters/` | 2026-07-06 | Zero imports, never wired |
-| `internal/ports/` | 2026-07-06 | Zero imports, never used |
+| `internal/adapters/` (old) | 2026-07-06 | Zero imports, never wired |
+| `internal/ports/` (old) | 2026-07-06 | Zero imports, never used |
 | `bridge/vm_adapter.go` | 2026-07-06 | `NewBridgeVM` never called |
 | `pkg/engine/` | 2026-07-06 | Interface never used as DI type |
 | `pkg/registry/` | 2026-07-06 | Interface never used as DI type |
@@ -106,6 +122,8 @@ The step API inverts control: Go drives the VM loop, resolving service calls bet
 | `internal/execstate/pkgsupport.go` | 2026-07-06 | Adapter for dead interface |
 | `internal/reliability/pkgsupport.go` | 2026-07-06 | Adapter for dead interface |
 
+**Re-created (2026-07-06):** `internal/ports/`, `internal/core/`, `internal/adapters/` — new hexagonal packages with clean interfaces, zero internal imports, fully wired to existing code via adapters.
+
 ---
 
 ## Cluster Model
@@ -113,6 +131,53 @@ The step API inverts control: Go drives the VM loop, resolving service calls bet
 Single-leader, **no Raft/Paxos** for cluster state (per `cluster-model.md`). Leader elected by lowest-ID ordering of alive nodes. gRPC Cluster Bus for peer-to-peer communication. Kafka is a legacy fallback only.
 
 Fencing token pattern: capture token → do work → re-validate token → publish. Skipping re-validation opens split-brain.
+
+---
+
+## Hexagonal Architecture (New — incremental migration)
+
+New packages provide clean hexagonal architecture. Existing code continues to work.
+
+### New packages (`internal/`)
+
+| Package | File | Lines | Purpose |
+|---|---|---|---|
+| `ports/` | `ports.go` | 258 | 20+ interfaces, zero internal imports |
+| `core/domain/` | `types.go` | 68 | Pure domain types |
+| `core/execution/` | `engine.go` | 205 | VM execution engine |
+| `core/execution/` | `ingress.go` | 68 | Rate limit → dedup → exec → DLQ |
+| `core/clustering/` | `leadership.go` | 97 | Raft + SingleLeader strategies |
+| `core/distribution/` | `plan_orchestrator.go` | 52 | Publish → ack → activate |
+| `adapters/invoker/` | `invoker.go` | 234 | HTTP/gRPC/TCP dispatch |
+| `adapters/observability/` | `metrics.go` | 52 | Injectable metrics adapter |
+| `adapters/cluster/` | `transport.go` | 42 | Cluster transport adapter |
+
+### Existing code (still working, not deleted)
+
+| File | Status | Notes |
+|---|---|---|
+| `node/execution_engine.go` | ✅ **Replaced** | Delegates to `core/execution.Engine` via adapters |
+| `node/adapters.go` | **NEW** | Bridges `execstate.Store`, `reliability.SagaTracker`, etc. → `ports.*` |
+| `node/leadership.go` | Kept as-is | Uses `pkgcluster.LeadershipToken` — migration deferred |
+| `node/production_invoker.go` | Kept as-is | Uses `registry.ServiceInstance` — migration deferred |
+| `node/service_caller.go` | Kept as-is | Protocol dispatch — migration deferred |
+| `node/cluster_adapter.go` | Kept as-is | Wraps `ClusterNode` — migration deferred |
+
+### Migration path (incremental, per-file)
+
+1. **`node/leadership.go`** → `core/clustering/leadership.go`: Replace `pkgcluster.LeadershipToken` with `ports.LeadershipToken` across `prod.go`, `leadership.go`, `lifecycle.go`. Update `pkgcluster.ClusterMember` references to `ports.ClusterMember`.
+
+2. **`node/production_invoker.go`** + `service_caller.go` → `adapters/invoker/invoker.go`: Replace `registry.ServiceInstance` with `ports.ServiceInstance` across `registry/` package. Update `ServiceLookup` → `ports.ServiceLookup`.
+
+3. **`node/cluster_adapter.go`** → `adapters/cluster/transport.go`: Replace `ClusterTransport` interface with `ports.ClusterTransport`.
+
+4. **`node/prod.go`**: After all adapters migrated, remove old adapter code from `node/` and have `prod.go` import from `core/` + `adapters/` directly.
+
+### When to migrate each file
+
+- When touching a file for a feature/bug fix, migrate it then
+- Don't do a big-bang rewrite — incremental is safer
+- The new packages are available for any new code that imports from `ports/`
 
 ---
 

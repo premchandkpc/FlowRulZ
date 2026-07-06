@@ -28,7 +28,9 @@ import (
 	pkgcluster "github.com/premchandkpc/FlowRulZ/server/pkg/cluster"
 )
 
-// transportFactoryAdapter wraps *transport.TransportFactory to implement TransportFactory interface.
+// --- Adapters (bridge concrete types → node interfaces) ---
+
+// transportFactoryAdapter wraps *transport.TransportFactory.
 type transportFactoryAdapter struct {
 	factory *transport.TransportFactory
 }
@@ -41,7 +43,7 @@ func (a *transportFactoryAdapter) NewProducer(topic string) transport.MessagePro
 	return a.factory.NewProducer(topic)
 }
 
-// serviceLookupAdapter wraps *registry.ServiceRegistry to implement ServiceLookup interface.
+// serviceLookupAdapter wraps *registry.ServiceRegistry.
 type serviceLookupAdapter struct {
 	registry *registry.ServiceRegistry
 }
@@ -70,7 +72,7 @@ func (a *serviceLookupAdapter) ListServicesHTTPHandler(w http.ResponseWriter, r 
 	a.registry.ListServicesHTTPHandler(w, r)
 }
 
-// rateLimiterAdapter wraps *reliability.RateLimiter to implement RateLimiter interface.
+// rateLimiterAdapter wraps *reliability.RateLimiter.
 type rateLimiterAdapter struct {
 	limiter *reliability.RateLimiter
 }
@@ -79,7 +81,7 @@ func (a *rateLimiterAdapter) Allow(key string) bool {
 	return a.limiter.Allow(key)
 }
 
-// dedupCheckerAdapter wraps *reliability.DedupTracker to implement DedupChecker interface.
+// dedupCheckerAdapter wraps *reliability.DedupTracker.
 type dedupCheckerAdapter struct {
 	tracker *reliability.DedupTracker
 }
@@ -92,7 +94,7 @@ func (a *dedupCheckerAdapter) StartCleanup(ctx context.Context, interval time.Du
 	a.tracker.StartCleanup(ctx, interval)
 }
 
-// planDistributorAdapter wraps *plandist.PlanDistributor to implement PlanDistributor interface.
+// planDistributorAdapter wraps *plandist.PlanDistributor.
 type planDistributorAdapter struct {
 	distributor *plandist.PlanDistributor
 }
@@ -142,7 +144,7 @@ func DefaultDependencies(cfg Config) Dependencies {
 		eng = engine.New(cfg.PersistPath)
 	}
 
-	// Metrics
+	// Metrics — use injectable adapter from new observability adapter
 	metrics := observability.NewMetricsCollector()
 
 	// Scheduler

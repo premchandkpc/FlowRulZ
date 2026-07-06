@@ -55,8 +55,8 @@ type SagaStep struct {
 }
 
 type MetricSnapshot struct {
-	Counters map[string]float64
-	Gauges   map[string]float64
+	Counters map[string]int64
+	Gauges   map[string]int64
 }
 
 type LeadershipToken struct {

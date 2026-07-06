@@ -47,7 +47,7 @@ func (sc *ServiceCaller) CallService(
 	method string,
 	body []byte,
 	cb *reliability.CircuitBreaker,
-	reg *registry.ServiceRegistry,
+	reg ServiceLookup,
 ) ([]byte, error) {
 	if inst == nil {
 		return nil, fmt.Errorf("nil service instance")
@@ -72,7 +72,7 @@ func (sc *ServiceCaller) callHTTP(
 	method string,
 	body []byte,
 	cb *reliability.CircuitBreaker,
-	reg *registry.ServiceRegistry,
+	reg ServiceLookup,
 ) ([]byte, error) {
 	endpoint := fmt.Sprintf("http://%s:%d/%s", inst.Endpoint.Address, inst.Endpoint.Port, method)
 	
@@ -111,14 +111,13 @@ func (sc *ServiceCaller) callHTTP(
 }
 
 // callGRPC makes a gRPC unary call to the service.
-// Uses a generic proto definition for raw byte transport.
 func (sc *ServiceCaller) callGRPC(
 	ctx context.Context,
 	inst *registry.ServiceInstance,
 	method string,
 	body []byte,
 	cb *reliability.CircuitBreaker,
-	reg *registry.ServiceRegistry,
+	reg ServiceLookup,
 ) ([]byte, error) {
 	addr := fmt.Sprintf("%s:%d", inst.Endpoint.Address, inst.Endpoint.Port)
 	
@@ -128,8 +127,6 @@ func (sc *ServiceCaller) callGRPC(
 		return nil, fmt.Errorf("grpc connect: %w", err)
 	}
 	
-	// For now, fallback to HTTP if gRPC reflection is not available
-	// In production, you would use the service's generated proto client
 	slog.Warn("gRPC service call using HTTP fallback", 
 		"service", inst.Name, 
 		"method", method,
@@ -145,7 +142,7 @@ func (sc *ServiceCaller) callTCP(
 	method string,
 	body []byte,
 	cb *reliability.CircuitBreaker,
-	reg *registry.ServiceRegistry,
+	reg ServiceLookup,
 ) ([]byte, error) {
 	addr := fmt.Sprintf("%s:%d", inst.Endpoint.Address, inst.Endpoint.Port)
 	
@@ -157,7 +154,6 @@ func (sc *ServiceCaller) callTCP(
 	}
 	defer conn.Close()
 	
-	// Set deadline
 	deadline, ok := ctx.Deadline()
 	if ok {
 		conn.SetDeadline(deadline)
@@ -165,7 +161,6 @@ func (sc *ServiceCaller) callTCP(
 		conn.SetDeadline(time.Now().Add(30 * time.Second))
 	}
 	
-	// Write length-prefixed message: [4 bytes length][method][body]
 	msg := append([]byte(method), body...)
 	lenBuf := make([]byte, 4)
 	binary.BigEndian.PutUint32(lenBuf, uint32(len(msg)))
@@ -179,14 +174,13 @@ func (sc *ServiceCaller) callTCP(
 		return nil, fmt.Errorf("tcp write body: %w", err)
 	}
 	
-	// Read response: [4 bytes length][response body]
 	if _, err := io.ReadFull(conn, lenBuf); err != nil {
 		cb.Failure()
 		return nil, fmt.Errorf("tcp read length: %w", err)
 	}
 	respLen := binary.BigEndian.Uint32(lenBuf)
 	
-	if respLen > 10*1024*1024 { // 10MB max
+	if respLen > 10*1024*1024 {
 		cb.Failure()
 		return nil, fmt.Errorf("tcp response too large: %d bytes", respLen)
 	}

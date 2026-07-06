@@ -26,9 +26,8 @@ type SimNode struct {
 	Bus    *fabric.Bus
 	Fabric *fabric.Fabric
 
-	// Simulated services.
-	MockServices *services.ServiceRegistry
-	Network      *fabric.Fabric
+	// Service invocation (decoupled from concrete registry).
+	Invoker services.ServiceInvoker
 
 	// Execution state.
 	planCache   map[string][]byte // ruleID -> planBytes
@@ -61,7 +60,7 @@ type Config struct {
 }
 
 // New creates a new SimNode with fabric-aware components.
-func New(cfg Config, f *fabric.Fabric, mockServices *services.ServiceRegistry) *SimNode {
+func New(cfg Config, f *fabric.Fabric, invoker services.ServiceInvoker) *SimNode {
 	// Create isolated state directory.
 	execDir := filepath.Join(cfg.ExecDir, cfg.ID)
 	os.MkdirAll(execDir, 0755)
@@ -70,13 +69,12 @@ func New(cfg Config, f *fabric.Fabric, mockServices *services.ServiceRegistry) *
 	bus := fabric.NewBus(f, cfg.ID)
 
 	sim := &SimNode{
-		ID:           cfg.ID,
-		Bus:          bus,
-		Fabric:       f,
-		MockServices: mockServices,
-		Network:      f,
-		planCache:    make(map[string][]byte),
-		stateStore:   make(map[string]*ExecState),
+		ID:        cfg.ID,
+		Bus:       bus,
+		Fabric:    f,
+		Invoker:   invoker,
+		planCache: make(map[string][]byte),
+		stateStore: make(map[string]*ExecState),
 	}
 
 	return sim
@@ -85,6 +83,9 @@ func New(cfg Config, f *fabric.Fabric, mockServices *services.ServiceRegistry) *
 // Start starts the simulated node.
 func (s *SimNode) Start(ctx context.Context) {
 	ctx, s.cancel = context.WithCancel(ctx)
+
+	// Reset bus state for restart.
+	s.Bus.Reset()
 
 	// Subscribe to execution requests.
 	s.Bus.Subscribe(ctx, "execution", s.handleExecution)
@@ -122,10 +123,20 @@ func (s *SimNode) handleExecution(ctx context.Context, msg *transport.Message) {
 	output, err := s.executePlan(ctx, ruleID, planBytes, msg.Body)
 	if err != nil {
 		slog.Error("execution failed", "rule_id", ruleID, "error", err)
+		// Send error reply.
+		s.Bus.Reply(ctx, msg.CorrelationID, &transport.Message{
+			Body:  []byte(err.Error()),
+			Headers: map[string]string{"error": err.Error()},
+		})
 		return
 	}
 
 	slog.Info("execution completed", "rule_id", ruleID, "output_len", len(output))
+
+	// Send success reply.
+	s.Bus.Reply(ctx, msg.CorrelationID, &transport.Message{
+		Body: output,
+	})
 }
 
 // executePlan executes a compiled plan through the real VM.
@@ -189,20 +200,9 @@ func (s *SimNode) executePlan(ctx context.Context, ruleID string, planBytes, bod
 	return nil, fmt.Errorf("exceeded max steps")
 }
 
-// callService calls a service through the fabric.
+// callService calls a service through the invoker.
 func (s *SimNode) callService(ctx context.Context, svcName string, body []byte) ([]byte, error) {
-	// Look up service in registry.
-	svc := s.MockServices.Get(svcName)
-	if svc == nil {
-		return nil, fmt.Errorf("service %s not found", svcName)
-	}
-
-	// Call the service.
-	result := svc.Call(ctx, body)
-	if result.Error != nil {
-		return nil, result.Error
-	}
-	return result.Body, nil
+	return s.Invoker.Invoke(ctx, svcName, "", body)
 }
 
 // DeployRule compiles and deploys a DSL rule to this node.

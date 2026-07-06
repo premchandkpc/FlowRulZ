@@ -253,6 +253,20 @@ func (e *Engine) ActivePlanBytes() [][]byte {
 	return plans
 }
 
+// SetAfterDeploy sets the callback invoked after a plan is deployed.
+func (e *Engine) SetAfterDeploy(fn func(id, dsl string, plan []byte, version uint64)) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.AfterDeploy = fn
+}
+
+// SetAfterPromote sets the callback invoked after a plan is promoted.
+func (e *Engine) SetAfterPromote(fn func(id string, version uint64)) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.AfterPromote = fn
+}
+
 // ExecuteAll executes all active plans sequentially using bridge.Execute (single-shot execution).
 //
 // NOTE: This method is currently unused in production code. The production path uses

@@ -6,22 +6,11 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"sync"
 	"time"
 
-	"github.com/premchandkpc/FlowRulZ/server/internal/admin"
-	"github.com/premchandkpc/FlowRulZ/server/internal/cluster"
-	"github.com/premchandkpc/FlowRulZ/server/internal/engine"
-	"github.com/premchandkpc/FlowRulZ/server/internal/execstate"
-	"github.com/premchandkpc/FlowRulZ/server/internal/observability"
-	"github.com/premchandkpc/FlowRulZ/server/internal/plandist"
+	"github.com/premchandkpc/FlowRulZ/server/internal/flow"
 	"github.com/premchandkpc/FlowRulZ/server/internal/plugins"
-	"github.com/premchandkpc/FlowRulZ/server/internal/registry"
-	"github.com/premchandkpc/FlowRulZ/server/internal/reliability"
-	"github.com/premchandkpc/FlowRulZ/server/internal/transport"
-	grpctransport "github.com/premchandkpc/FlowRulZ/server/internal/transport/grpc"
-	kafkatransport "github.com/premchandkpc/FlowRulZ/server/internal/transport/kafka"
-
+	"github.com/premchandkpc/FlowRulZ/server/internal/scheduler"
 	pkgcluster "github.com/premchandkpc/FlowRulZ/server/pkg/cluster"
 	pkgmembership "github.com/premchandkpc/FlowRulZ/server/pkg/membership"
 	pkgnode "github.com/premchandkpc/FlowRulZ/server/pkg/node"
@@ -32,108 +21,154 @@ import (
 
 var _ pkgnode.Node = (*ProdNode)(nil)
 
+// Dependencies holds all dependencies for node construction.
 type Dependencies struct {
-	Engine       *engine.Engine
-	Scheduler    pkgscheduler.Scheduler
-	ReplyRouter  pkgreplyrouter.ReplyRouter
-	PlanDist     *plandist.PlanDistributor
-	Membership   pkgmembership.Membership
-	Partitions   pkgpartition.PartitionManager
-	Rebalancer   pkgpartition.RebalanceNotifier
-	Registry     *registry.ServiceRegistry
-	DLQ          *reliability.DLQ
-	RateLimiter  *reliability.RateLimiter
-	Dedup        *reliability.DedupTracker
-	Saga         *reliability.SagaTracker
-	StateStore   execstate.Store
-	Cluster      pkgcluster.ClusterMember
-	ClusterNode  *cluster.ClusterNode
-	GRPCBus      *grpctransport.GRPCBus
-	AdminSrv     *admin.Server
-	Metrics      *observability.MetricsCollector
-	OtelExporter *observability.SpanExporter
+	Engine           NodeEngine
+	Scheduler        pkgscheduler.Scheduler
+	ReplyRouter      pkgreplyrouter.ReplyRouter
+	PlanDist         PlanDistributor
+	Membership       pkgmembership.Membership
+	Partitions       pkgpartition.PartitionManager
+	Rebalancer       pkgpartition.RebalanceNotifier
+	Registry         ServiceLookup
+	DLQ              NodeDLQ
+	RateLimiter      RateLimiter
+	Dedup            DedupChecker
+	Saga             NodeSagaTracker
+	StateStore       StateStore
+	Invoker          ServiceInvoker
+	TransportFactory TransportFactory
+	Cluster          pkgcluster.ClusterMember
+	ClusterNode      ClusterTransport
+	GRPCBus          GRPCService
+	AdminSrv         AdminHandler
+	Metrics          MetricsSnapshotProvider
+	OtelExporter     SpanExporter
+	FlowRegistry     *flow.Registry
+	FlowDirs         []string
 }
 
 type ProdNode struct {
-	// Interface dependencies
-	Scheduler   pkgscheduler.Scheduler
-	ReplyRouter pkgreplyrouter.ReplyRouter
-	Membership  pkgmembership.Membership
-	Partitions  pkgpartition.PartitionManager
-	Rebalancer  pkgpartition.RebalanceNotifier
+	execution  *ExecutionEngine
+	ingress    *IngressPipeline
+	msgRouter  *MessageRouter
+	httpServer *AdminHTTPServer
+	leadership LeadershipStrategy
+	flowWatch  *flow.FileWatcher
 
-	// Concrete dependencies
-	PlanDist *plandist.PlanDistributor
-
-	// Concrete dependencies
-	Engine       *engine.Engine
-	Registry     *registry.ServiceRegistry
-	DLQ          *reliability.DLQ
-	RateLimiter  *reliability.RateLimiter
-	Dedup        *reliability.DedupTracker
-	Saga         *reliability.SagaTracker
-	StateStore   execstate.Store
-	Execs        *ExecRegistry
-	GRPCBus      *grpctransport.GRPCBus
-	RaftCluster  pkgcluster.ClusterMember
-	ClusterNode  *cluster.ClusterNode
-	AdminSrv     *admin.Server
-	Metrics      *observability.MetricsCollector
-	OtelExporter *observability.SpanExporter
-
-	// Unexported internals
-	httpServer      *http.Server
-	consumers       []transport.MessageConsumer
-	producers       []transport.MessageProducer
-	config          Config
-	nodeID          string
-	httpAddr        string
-	httpClient      *http.Client
-	serviceCaller   *ServiceCaller
-	circuitBreakers sync.Map
-	execSem         chan struct{} // Node-wide concurrency limiter for executeAll
-	mu              sync.Mutex
+	config    NodeConfig
+	cluster   ClusterDeps
+	transport TransportDeps
+	exec      ExecutionDeps
+	reliab    ReliabilityDeps
+	api       APIDeps
+	part      PartitionDeps
 }
 
 func NewNode(cfg Config, deps Dependencies) *ProdNode {
-	n := &ProdNode{
-		nodeID:       cfg.NodeID,
-		httpAddr:     cfg.HTTPListenAddr(),
-		config:       cfg,
-		httpClient:   &http.Client{Timeout: 10 * time.Second},
-		serviceCaller: NewServiceCaller(),
-		consumers:    make([]transport.MessageConsumer, 0),
-		producers:    make([]transport.MessageProducer, 0),
-		execSem:      make(chan struct{}, executeAllSemaphore),
-
-		Engine:       deps.Engine,
-		Scheduler:    deps.Scheduler,
-		ReplyRouter:  deps.ReplyRouter,
-		PlanDist:     deps.PlanDist,
-		Membership:   deps.Membership,
-		Partitions:   deps.Partitions,
-		Rebalancer:   deps.Rebalancer,
-		Registry:     deps.Registry,
-		DLQ:          deps.DLQ,
-		RateLimiter:  deps.RateLimiter,
-		Dedup:        deps.Dedup,
-		Saga:         deps.Saga,
-		StateStore:   deps.StateStore,
-		RaftCluster:  deps.Cluster,
-		ClusterNode:  deps.ClusterNode,
-		GRPCBus:      deps.GRPCBus,
-		AdminSrv:     deps.AdminSrv,
-		Metrics:      deps.Metrics,
-		OtelExporter: deps.OtelExporter,
+	var strategy LeadershipStrategy
+	if deps.Cluster != nil {
+		strategy = NewRaftLeadershipStrategy(deps.Cluster)
+	} else {
+		sls := NewSingleLeaderStrategy(deps.PlanDist)
+		sls.SetMembership(deps.Membership)
+		strategy = sls
 	}
 
-	n.Execs = NewExecRegistry()
+	n := &ProdNode{
+		config: NodeConfig{
+			Config:     cfg,
+			httpClient: &http.Client{Timeout: 10 * time.Second},
+		},
+		leadership: strategy,
+		cluster: ClusterDeps{
+			RaftCluster: deps.Cluster,
+			ClusterNode: deps.ClusterNode,
+			Membership:  deps.Membership,
+		},
+		transport: TransportDeps{
+			TransportFactory: deps.TransportFactory,
+			GRPCBus:          deps.GRPCBus,
+		},
+		exec: ExecutionDeps{
+			Engine:     deps.Engine,
+			Scheduler:  deps.Scheduler,
+			StateStore: deps.StateStore,
+			Execs:      NewExecRegistry(),
+			Saga:       deps.Saga,
+			Invoker:    deps.Invoker,
+		},
+		reliab: ReliabilityDeps{
+			DLQ:         deps.DLQ,
+			RateLimiter: deps.RateLimiter,
+			Dedup:       deps.Dedup,
+		},
+		api: APIDeps{
+			AdminSrv:     deps.AdminSrv,
+			Registry:     deps.Registry,
+			ReplyRouter:  deps.ReplyRouter,
+			Metrics:      deps.Metrics,
+			OtelExporter: deps.OtelExporter,
+		},
+		part: PartitionDeps{
+			Partitions: deps.Partitions,
+			Rebalancer: deps.Rebalancer,
+			PlanDist:   deps.PlanDist,
+		},
+	}
 
-	n.Registry.SetHeartbeatTimeout(cfg.RegistryHeartbeatTimeout())
+	n.execution = NewExecutionEngine(
+		deps.Engine,
+		deps.Scheduler.(*scheduler.Scheduler),
+		deps.StateStore,
+		n.exec.Execs,
+		deps.Saga,
+		deps.Invoker,
+	)
+
+	n.ingress = NewIngressPipeline(
+		deps.RateLimiter,
+		deps.Dedup,
+		deps.DLQ,
+		n.execution,
+	)
+
+	n.msgRouter = NewMessageRouter(
+		cfg.NodeID,
+		cfg.Topic,
+		deps.TransportFactory,
+		deps.Membership,
+		deps.ClusterNode,
+		deps.Engine,
+		deps.PlanDist,
+		deps.Partitions,
+	)
+
+	n.httpServer = NewAdminHTTPServer(
+		cfg.HTTPListenAddr(),
+		cfg.NodeID,
+		deps.AdminSrv,
+		deps.Registry.(HTTPRegistry),
+		n,
+		n.exec.Execs,
+		deps.Partitions,
+		deps.Membership,
+		deps.Metrics,
+		deps.DLQ,
+		deps.PlanDist,
+		deps.ReplyRouter,
+		deps.Cluster,
+	)
+
+	n.api.Registry.SetHeartbeatTimeout(cfg.RegistryHeartbeatTimeout())
+
+	// Flow registry and file watcher
+	if deps.FlowRegistry != nil && len(deps.FlowDirs) > 0 {
+		n.flowWatch = flow.NewFileWatcher(deps.FlowRegistry, deps.FlowDirs...)
+	}
 
 	n.configureEngineHooks()
 
-	// Plugins
 	if cfg.PluginDir != "" {
 		if err := plugins.LoadDir(cfg.PluginDir); err != nil {
 			slog.Warn("plugin load warning", "error", err)
@@ -154,71 +189,42 @@ func NewProdNode(cfg *Config) *ProdNode {
 // --- pkg/node.Node interface compliance ---
 
 func (n *ProdNode) ID() pkgnode.ID {
-	return pkgnode.ID(n.nodeID)
+	return pkgnode.ID(n.config.NodeID)
 }
 
 func (n *ProdNode) Addr() string {
-	return n.httpAddr
+	return n.config.HTTPListenAddr()
 }
 
 func (n *ProdNode) IsLeader() bool {
-	if n.RaftCluster != nil {
-		return n.RaftCluster.IsLeader()
-	}
-	return true
+	return n.leadership.IsLeader()
 }
 
 func (n *ProdNode) CurrentTerm() uint64 {
-	if n.RaftCluster != nil {
-		return n.RaftCluster.CurrentTerm()
-	}
-	return n.PlanDist.CurrentTerm()
+	return n.leadership.CurrentTerm()
 }
 
-// CaptureLeadershipToken captures the current leadership state.
-// Use this to implement the fencing pattern:
-//
-//	token := node.CaptureLeadershipToken()
-//	if !token.Valid() { return }
-//	// ... do work ...
-//	if !node.ValidateLeadershipToken(token) { return stale error }
-//	// ... publish side effect ...
-//
-// This prevents split-brain: if leadership changed between capture and
-// validate, the token will be invalid and the publish is skipped.
 func (n *ProdNode) CaptureLeadershipToken() pkgcluster.LeadershipToken {
-	if n.RaftCluster != nil {
-		return n.RaftCluster.CaptureLeadershipToken()
-	}
-	// No Raft configured — always leader with term 0.
-	return pkgcluster.LeadershipToken{Leader: true, Term: 0}
+	return n.leadership.CaptureLeadershipToken()
 }
 
-// ValidateLeadershipToken checks if a previously captured token is still valid.
 func (n *ProdNode) ValidateLeadershipToken(token pkgcluster.LeadershipToken) bool {
-	if n.RaftCluster != nil {
-		return n.RaftCluster.ValidateLeadershipToken(token)
-	}
-	// No Raft configured — token is always valid.
-	return token.Valid()
+	return n.leadership.ValidateLeadershipToken(token)
 }
 
 func (n *ProdNode) LeaderID() pkgnode.ID {
-	if n.RaftCluster != nil && n.RaftCluster.IsLeader() {
-		return pkgnode.ID(n.nodeID)
-	}
-	return pkgnode.ID(n.Membership.LeaderID())
+	return pkgnode.ID(n.leadership.LeaderID(n.config.NodeID))
 }
 
 func (n *ProdNode) Ready(ctx context.Context) error {
-	if n.IsLeader() && n.PlanDist.CurrentTerm() == 0 {
+	if n.IsLeader() && n.part.PlanDist.CurrentTerm() == 0 {
 		return fmt.Errorf("leader not initialized")
 	}
 	return nil
 }
 
 func (n *ProdNode) Execute(ctx context.Context, req *pkgnode.ExecuteRequest) (*pkgnode.ExecuteResponse, error) {
-	out, err := n.executeAll(ctx, req.Body)
+	out, err := n.execution.ExecuteAll(ctx, req.Body)
 	if err != nil {
 		return &pkgnode.ExecuteResponse{Error: err.Error()}, err
 	}
@@ -231,97 +237,61 @@ func (n *ProdNode) Execute(ctx context.Context, req *pkgnode.ExecuteRequest) (*p
 // --- Lifecycle ---
 
 func (n *ProdNode) Start(ctx context.Context) error {
-	handler := n.handleIncomingMessage
-	kafkaCfg := kafkatransport.Config{
-		Brokers:    n.config.KafkaBrokers,
-		GroupID:    n.config.KafkaGroupID,
-		Acks:       kafkatransport.AcksLevelFromString(n.config.KafkaAcks),
-		Idempotent: n.config.KafkaIdempotent,
+	n.startCluster(ctx)
+	n.msgRouter.StartConsumers(ctx, n.ingress.HandleMessage)
+	n.startSubsystems(ctx)
+	if n.transport.GRPCBus != nil {
+		if err := n.transport.GRPCBus.Start(); err != nil {
+			slog.Error("grpc: start error", "error", err)
+		}
+	}
+	n.startOTel(ctx)
+	n.httpServer.ServeHTTP(ctx)
+
+	// Start flow file watcher
+	if n.flowWatch != nil {
+		if err := n.flowWatch.Start(ctx); err != nil {
+			slog.Error("flow watcher: start error", "error", err)
+		}
 	}
 
-	n.startCluster(ctx)
-	n.startConsumers(ctx, handler, kafkaCfg)
-	n.startSubsystems(ctx)
-	n.startGRPC()
-	n.startOTel(ctx)
-	n.serveHTTP(ctx)
-
-	slog.Info("prodnode started", "node_id", n.nodeID)
+	slog.Info("prodnode started", "node_id", n.config.NodeID)
 	return nil
 }
 
 func (n *ProdNode) Shutdown(ctx context.Context) error {
-	slog.Info("shutdown: starting", "node_id", n.nodeID)
+	slog.Info("shutdown: starting", "node_id", n.config.NodeID)
 
-	n.Execs.CancelAll()
+	n.exec.Execs.CancelAll()
+	n.msgRouter.StopConsumers()
+	n.part.PlanDist.Stop()
+	n.exec.Scheduler.Stop()
+	n.api.ReplyRouter.StopCleanup()
 
-	for _, c := range n.consumers {
-		c.Stop()
-	}
-	n.consumers = nil
-
-	n.PlanDist.Stop()
-	n.Scheduler.Stop()
-	n.ReplyRouter.StopCleanup()
-
-	for _, p := range n.producers {
-		p.Close()
-	}
-	n.producers = nil
-
-	if n.httpServer != nil {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := n.httpServer.Shutdown(shutdownCtx); err != nil {
-			slog.Error("http shutdown error", "error", err)
-		}
+	// Stop flow file watcher
+	if n.flowWatch != nil {
+		n.flowWatch.Stop()
 	}
 
-	if n.ClusterNode != nil {
-		n.ClusterNode.Stop()
+	if err := n.httpServer.Shutdown(ctx); err != nil {
+		slog.Error("http shutdown error", "error", err)
 	}
-	if n.GRPCBus != nil {
-		n.GRPCBus.Stop()
+	if n.cluster.ClusterNode != nil {
+		n.cluster.ClusterNode.Stop()
 	}
-	if n.OtelExporter != nil {
-		n.OtelExporter.Stop()
+	if n.transport.GRPCBus != nil {
+		n.transport.GRPCBus.Stop()
 	}
-	if n.RaftCluster != nil {
-		n.RaftCluster.Stop(ctx)
+	if n.api.OtelExporter != nil {
+		n.api.OtelExporter.Stop()
 	}
-	if n.StateStore != nil {
-		n.StateStore.Close()
+	if n.cluster.RaftCluster != nil {
+		n.cluster.RaftCluster.Stop(ctx)
 	}
-	if n.serviceCaller != nil {
-		n.serviceCaller.Close()
+	if n.exec.StateStore != nil {
+		n.exec.StateStore.Close()
 	}
 
-	slog.Info("shutdown: complete", "node_id", n.nodeID)
+	slog.Info("shutdown: complete", "node_id", n.config.NodeID)
 	return nil
-}
-
-// --- Internal methods ---
-
-func (n *ProdNode) makeProducer(topic string, kc kafkatransport.Config) transport.MessageProducer {
-	if len(kc.Brokers) > 0 {
-		p := kafkatransport.NewProducer(topic, kc)
-		n.mu.Lock()
-		n.producers = append(n.producers, p)
-		n.mu.Unlock()
-		return p
-	}
-	if n.ClusterNode != nil {
-		return cluster.NewClusterProducer(topic, n.ClusterNode)
-	}
-	return transport.NewProducer(topic)
-}
-
-func (n *ProdNode) makeConsumer(topic string, handler transport.MessageHandler, kc kafkatransport.Config) transport.MessageConsumer {
-	if len(kc.Brokers) > 0 {
-		return kafkatransport.NewConsumer(topic, handler, kc)
-	}
-	if n.ClusterNode != nil {
-		return cluster.NewClusterConsumer(topic, handler, n.ClusterNode)
-	}
-	return transport.NewConsumer(topic, handler)
 }

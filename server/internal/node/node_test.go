@@ -10,6 +10,7 @@ import (
 	"github.com/premchandkpc/FlowRulZ/server/internal/engine"
 	"github.com/premchandkpc/FlowRulZ/server/internal/plandist"
 	"github.com/premchandkpc/FlowRulZ/server/internal/registry"
+	"github.com/premchandkpc/FlowRulZ/server/internal/scheduler"
 	pkgcluster "github.com/premchandkpc/FlowRulZ/server/pkg/cluster"
 	pkgmembership "github.com/premchandkpc/FlowRulZ/server/pkg/membership"
 	pkgplandist "github.com/premchandkpc/FlowRulZ/server/pkg/plandist"
@@ -102,7 +103,6 @@ func TestExecRegistryRegisterAndCancel(t *testing.T) {
 	if !cancelled {
 		t.Error("Cancel returned false for existing execution")
 	}
-	// After cancel, context should be done
 	select {
 	case <-ctx.Done():
 	default:
@@ -125,7 +125,6 @@ func TestExecRegistryUnregister(t *testing.T) {
 	if er.Len() != 0 {
 		t.Errorf("Len=%d after unregister", er.Len())
 	}
-	// Context should still be valid (not cancelled by us)
 	if ctx.Err() != nil {
 		t.Error("Unregister should not cancel the context")
 	}
@@ -182,10 +181,10 @@ func TestExecRegistryConcurrentAccess(t *testing.T) {
 //
 
 type mockRaftCluster struct {
-	leader    bool
-	term      uint64
-	leaderID  pkgcluster.MemberID
-	leaderFn  func(bool)
+	leader   bool
+	term     uint64
+	leaderID pkgcluster.MemberID
+	leaderFn func(bool)
 }
 
 func (m *mockRaftCluster) ID() pkgcluster.MemberID                   { return "mock" }
@@ -216,29 +215,47 @@ type mockMembership struct {
 	leaderID string
 }
 
-func (m *mockMembership) Add(id, address string)           {}
-func (m *mockMembership) Remove(id string)                 {}
-func (m *mockMembership) Heartbeat(id, address string)     {}
-func (m *mockMembership) MarkDead(id string)               {}
-func (m *mockMembership) MarkAlive(id string)              {}
-func (m *mockMembership) AliveCount() int                  { return 0 }
-func (m *mockMembership) AliveNodes() []string             { return nil }
-func (m *mockMembership) LeaderID() string                 { return m.leaderID }
-func (m *mockMembership) Snapshot() []pkgmembership.NodeInfo { return nil }
-func (m *mockMembership) Lookup(id string) *pkgmembership.NodeInfo { return nil }
-func (m *mockMembership) LeaderLastSeen() time.Time        { return time.Time{} }
-func (m *mockMembership) SetLeaderLease(d time.Duration)   {}
+func (m *mockMembership) Add(id, address string)                      {}
+func (m *mockMembership) Remove(id string)                            {}
+func (m *mockMembership) Heartbeat(id, address string)                {}
+func (m *mockMembership) MarkDead(id string)                          {}
+func (m *mockMembership) MarkAlive(id string)                         {}
+func (m *mockMembership) AliveCount() int                             { return 0 }
+func (m *mockMembership) AliveNodes() []string                        { return nil }
+func (m *mockMembership) LeaderID() string                            { return m.leaderID }
+func (m *mockMembership) Snapshot() []pkgmembership.NodeInfo           { return nil }
+func (m *mockMembership) Lookup(id string) *pkgmembership.NodeInfo     { return nil }
+func (m *mockMembership) LeaderLastSeen() time.Time                   { return time.Time{} }
+func (m *mockMembership) SetLeaderLease(d time.Duration)              {}
 func (m *mockMembership) OnLeaseExpiry(cb func(leaderID string)) pkgmembership.CancelFunc { return func() {} }
-func (m *mockMembership) StartEviction(ctx context.Context, interval time.Duration) {}
+func (m *mockMembership) StartEviction(ctx context.Context, interval time.Duration)       {}
 func (m *mockMembership) StartLeaderLeaseChecker(ctx context.Context, interval time.Duration) {}
 
+type mockEngine struct{}
+
+func (e *mockEngine) ActivePlanBytes() [][]byte { return nil }
+func (e *mockEngine) AddVersion(id, dsl string, plan []byte, version uint64) error { return nil }
+func (e *mockEngine) Promote(id string, version uint64) error { return nil }
+func (e *mockEngine) SetAfterDeploy(fn func(id, dsl string, plan []byte, version uint64)) {}
+func (e *mockEngine) SetAfterPromote(fn func(id string, version uint64)) {}
+
 func minimalProdNode() *ProdNode {
+	planDist := plandist.New("test")
 	return &ProdNode{
-		nodeID:     "test-node",
-		httpAddr:   ":8080",
-		httpClient: &http.Client{Timeout: 10 * time.Second},
-		Execs:      NewExecRegistry(),
-		Membership: &mockMembership{},
+		config: NodeConfig{
+			Config:     Config{NodeID: "test-node", HTTPAddr: ":8080"},
+			httpClient: &http.Client{Timeout: 10 * time.Second},
+		},
+		leadership: NewSingleLeaderStrategy(planDist),
+		cluster: ClusterDeps{
+			Membership: &mockMembership{},
+		},
+		exec: ExecutionDeps{
+			Execs: NewExecRegistry(),
+		},
+		part: PartitionDeps{
+			PlanDist: planDist,
+		},
 	}
 }
 
@@ -265,11 +282,13 @@ func TestProdNodeIsLeaderNoRaft(t *testing.T) {
 
 func TestProdNodeIsLeaderWithRaft(t *testing.T) {
 	n := minimalProdNode()
-	n.RaftCluster = &mockRaftCluster{leader: true}
+	raft := &mockRaftCluster{leader: true}
+	n.cluster.RaftCluster = raft
+	n.leadership = NewRaftLeadershipStrategy(raft)
 	if !n.IsLeader() {
 		t.Error("expected leader")
 	}
-	n.RaftCluster = &mockRaftCluster{leader: false}
+	raft.leader = false
 	if n.IsLeader() {
 		t.Error("expected not leader")
 	}
@@ -277,7 +296,9 @@ func TestProdNodeIsLeaderWithRaft(t *testing.T) {
 
 func TestProdNodeCurrentTermWithRaft(t *testing.T) {
 	n := minimalProdNode()
-	n.RaftCluster = &mockRaftCluster{term: 42}
+	raft := &mockRaftCluster{term: 42}
+	n.cluster.RaftCluster = raft
+	n.leadership = NewRaftLeadershipStrategy(raft)
 	if n.CurrentTerm() != 42 {
 		t.Errorf("CurrentTerm=%d", n.CurrentTerm())
 	}
@@ -285,9 +306,7 @@ func TestProdNodeCurrentTermWithRaft(t *testing.T) {
 
 func TestProdNodeCurrentTermWithoutRaft(t *testing.T) {
 	n := minimalProdNode()
-	pd := plandist.New("test")
-	pd.SetTerm(7)
-	n.PlanDist = pd
+	n.part.PlanDist.SetTerm(7)
 	if n.CurrentTerm() != 7 {
 		t.Errorf("CurrentTerm=%d", n.CurrentTerm())
 	}
@@ -295,8 +314,10 @@ func TestProdNodeCurrentTermWithoutRaft(t *testing.T) {
 
 func TestProdNodeLeaderIDWithRaft(t *testing.T) {
 	n := minimalProdNode()
-	n.RaftCluster = &mockRaftCluster{leader: true, leaderID: "leader-1"}
-	n.nodeID = "leader-1"
+	raft := &mockRaftCluster{leader: true, leaderID: "leader-1"}
+	n.cluster.RaftCluster = raft
+	n.leadership = NewRaftLeadershipStrategy(raft)
+	n.config.NodeID = "leader-1"
 	if n.LeaderID() != "leader-1" {
 		t.Errorf("LeaderID=%s", n.LeaderID())
 	}
@@ -305,7 +326,8 @@ func TestProdNodeLeaderIDWithRaft(t *testing.T) {
 func TestProdNodeLeaderIDWithoutRaft(t *testing.T) {
 	n := minimalProdNode()
 	m := &mockMembership{leaderID: "mem-leader"}
-	n.Membership = m
+	n.cluster.Membership = m
+	n.leadership.(*SingleLeaderStrategy).SetMembership(m)
 	if n.LeaderID() != "mem-leader" {
 		t.Errorf("LeaderID=%s", n.LeaderID())
 	}
@@ -313,92 +335,76 @@ func TestProdNodeLeaderIDWithoutRaft(t *testing.T) {
 
 func TestProdNodeReady(t *testing.T) {
 	n := minimalProdNode()
-	pd := plandist.New("test")
-	n.PlanDist = pd
+	n.part.PlanDist.SetTerm(1)
 
-	// Without Raft, IsLeader() returns true.
-	// If term is 0, Ready returns error.
-	if err := n.Ready(context.Background()); err == nil {
-		t.Error("expected error when leader with term=0")
-	}
-
-	pd.SetTerm(1)
 	if err := n.Ready(context.Background()); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
 
-func TestProdNodeNextDeployTermWithRaft(t *testing.T) {
-	n := minimalProdNode()
-	n.RaftCluster = &mockRaftCluster{term: 99}
-	if term := n.nextDeployTerm(); term != 99 {
-		t.Errorf("nextDeployTerm=%d", term)
-	}
-}
-
-func TestProdNodeNextDeployTermWithoutRaft(t *testing.T) {
-	n := minimalProdNode()
-	pd := plandist.New("test")
-	pd.SetTerm(5)
-	n.PlanDist = pd
-	if term := n.nextDeployTerm(); term != 6 {
-		t.Errorf("nextDeployTerm=%d, expected 6", term)
-	}
-}
-
 //
-// Message handler tests
+// MessageRouter handler tests
 //
+
+func newTestMessageRouter() *MessageRouter {
+	return NewMessageRouter(
+		"test-node",
+		"test-topic",
+		nil,
+		&mockMembership{},
+		nil,
+		&mockEngine{},
+		plandist.New("test"),
+		nil,
+	)
+}
 
 func TestHandleNodeDiscoveryMessage(t *testing.T) {
-	n := minimalProdNode()
+	r := newTestMessageRouter()
 	m := &mockMembership{}
-	n.Membership = m
+	r.membership = m
 
 	msg := NodeDiscoveryMessage{NodeID: "node-b", Address: "10.0.0.2"}
 	data, _ := json.Marshal(msg)
-	_, err := n.handleNodeDiscoveryMessage(context.Background(), data)
+	_, err := r.handleNodeDiscoveryMessage(context.Background(), data)
 	if err != nil {
 		t.Fatalf("handleNodeDiscoveryMessage: %v", err)
 	}
 }
 
 func TestHandleNodeDiscoveryMessageSelf(t *testing.T) {
-	n := minimalProdNode()
-	n.nodeID = "node-a"
-	msg := NodeDiscoveryMessage{NodeID: "node-a", Address: "10.0.0.1"}
+	r := newTestMessageRouter()
+	msg := NodeDiscoveryMessage{NodeID: "test-node", Address: "10.0.0.1"}
 	data, _ := json.Marshal(msg)
-	_, err := n.handleNodeDiscoveryMessage(context.Background(), data)
+	_, err := r.handleNodeDiscoveryMessage(context.Background(), data)
 	if err != nil {
 		t.Fatalf("handleNodeDiscoveryMessage: %v", err)
 	}
 }
 
 func TestHandleNodeDiscoveryMessageInvalidJSON(t *testing.T) {
-	n := minimalProdNode()
-	_, err := n.handleNodeDiscoveryMessage(context.Background(), []byte("{{{"))
+	r := newTestMessageRouter()
+	_, err := r.handleNodeDiscoveryMessage(context.Background(), []byte("{{{"))
 	if err != nil {
 		t.Fatalf("expected nil, got %v", err)
 	}
 }
 
 func TestHandleAckMessage(t *testing.T) {
-	n := minimalProdNode()
-	n.PlanDist = plandist.New("test")
+	r := newTestMessageRouter()
 
 	msg := pkgplandist.AckMessage{NodeID: "node-a", RuleID: "rule-1", Version: 1, Status: "ok"}
 	data, _ := json.Marshal(msg)
-	_, err := n.handleAckMessage(context.Background(), data)
+	_, err := r.handleAckMessage(context.Background(), data)
 	if err != nil {
 		t.Fatalf("handleAckMessage: %v", err)
 	}
 }
 
 func TestHandleAckMessageInvalidJSON(t *testing.T) {
-	n := minimalProdNode()
-	n.PlanDist = plandist.New("test")
+	r := newTestMessageRouter()
 
-	_, err := n.handleAckMessage(context.Background(), []byte("{{{"))
+	_, err := r.handleAckMessage(context.Background(), []byte("{{{"))
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
 	}
@@ -411,8 +417,9 @@ func TestHandleAckMessageInvalidJSON(t *testing.T) {
 func TestNewNodeMinimal(t *testing.T) {
 	cfg := Config{NodeID: "minimal"}
 	deps := Dependencies{
-		Engine:   engine.New(""),
-		Registry: registry.New(),
+		Engine:    engine.New(""),
+		Registry:  registry.New(),
+		Scheduler: scheduler.New(nil),
 	}
 	n := NewNode(cfg, deps)
 	if n == nil {
@@ -421,7 +428,7 @@ func TestNewNodeMinimal(t *testing.T) {
 	if n.ID() != "minimal" {
 		t.Errorf("ID=%s", n.ID())
 	}
-	if n.Execs == nil {
+	if n.exec.Execs == nil {
 		t.Error("Execs should be initialized")
 	}
 }
@@ -463,9 +470,9 @@ func TestExecRegistryRegisterAfterCancel(t *testing.T) {
 	_, cancel := context.WithCancel(context.Background())
 	er.Register("x", cancel, "")
 	er.Unregister("x")
-	er.Cancel("x") // should return false, not panic
+	er.Cancel("x")
 	_, cancel2 := context.WithCancel(context.Background())
-	er.Register("x", cancel2, "") // re-register same ID
+	er.Register("x", cancel2, "")
 	if er.Len() != 1 {
 		t.Errorf("Len=%d", er.Len())
 	}
@@ -473,11 +480,15 @@ func TestExecRegistryRegisterAfterCancel(t *testing.T) {
 
 func TestProdNodeExecuteEmptyEngine(t *testing.T) {
 	n := &ProdNode{
-		nodeID:   "test",
-		httpAddr: ":0",
-		Engine:   engine.New(""),
+		config: NodeConfig{
+			Config: Config{NodeID: "test", HTTPAddr: ":0"},
+		},
+		exec: ExecutionDeps{
+			Engine: engine.New(""),
+		},
 	}
-	out, err := n.executeAll(context.Background(), []byte(`{"test":1}`))
+	n.execution = NewExecutionEngine(n.exec.Engine, nil, nil, nil, nil, nil)
+	out, err := n.execution.ExecuteAll(context.Background(), []byte(`{"test":1}`))
 	if err != nil {
 		t.Fatalf("executeAll: %v", err)
 	}

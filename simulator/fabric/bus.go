@@ -195,6 +195,16 @@ func (b *Bus) Close() error {
 	return nil
 }
 
+// Reset resets the bus state for restart.
+func (b *Bus) Reset() {
+	b.closed.Store(false)
+	b.mu.Lock()
+	b.topics = make(map[string]map[string]transport.MessageHandler)
+	b.subs = make(map[string]*subscription)
+	b.mu.Unlock()
+	b.fabric.registerBus(b.nodeID, b)
+}
+
 // TopicStats returns subscriber counts per topic.
 func (b *Bus) TopicStats() map[string]int {
 	b.mu.RLock()

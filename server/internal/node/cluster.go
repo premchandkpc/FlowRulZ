@@ -10,18 +10,18 @@ import (
 )
 
 func (n *ProdNode) startCluster(ctx context.Context) {
-	if n.ClusterNode == nil {
+	if n.cluster.ClusterNode == nil {
 		return
 	}
 
-	if err := n.ClusterNode.Start(); err != nil {
+	if err := n.cluster.ClusterNode.Start(); err != nil {
 		slog.Error("cluster: start error", "error", err)
 	}
 
-	n.ClusterNode.Gossiper().OnNodeJoin(func(nodeID, address string) {
-		n.Membership.Heartbeat(nodeID, address)
-		if address != "" && nodeID != n.nodeID {
-			if err := n.ClusterNode.AddPeer(nodeID, address); err != nil {
+	n.cluster.ClusterNode.Gossiper().OnNodeJoin(func(nodeID, address string) {
+		n.cluster.Membership.Heartbeat(nodeID, address)
+		if address != "" && nodeID != n.config.NodeID {
+			if err := n.cluster.ClusterNode.AddPeer(nodeID, address); err != nil {
 				slog.Debug("cluster: auto-add peer from gossip", "peer", nodeID, "addr", address, "error", err)
 			}
 		}
@@ -34,10 +34,10 @@ func (n *ProdNode) startCluster(ctx context.Context) {
 			select {
 			case <-ticker.C:
 				discMsg, _ := json.Marshal(NodeDiscoveryMessage{
-					NodeID:  n.nodeID,
+					NodeID:  n.config.NodeID,
 					Address: n.config.GRPCAddr,
 				})
-				n.ClusterNode.Publish(DefaultMembersTopic, n.nodeID, discMsg)
+				n.cluster.ClusterNode.Publish(DefaultMembersTopic, n.config.NodeID, discMsg)
 			case <-ctx.Done():
 				return
 			}
@@ -49,19 +49,16 @@ func (n *ProdNode) startCluster(ctx context.Context) {
 			continue
 		}
 		seedID := fmt.Sprintf("seed-%s", seedAddr)
-		if err := n.ClusterNode.AddPeer(seedID, seedAddr); err != nil {
+		if err := n.cluster.ClusterNode.AddPeer(seedID, seedAddr); err != nil {
 			slog.Error("cluster: connect to seed", "seed_addr", seedAddr, "error", err)
 		}
 	}
 }
 
 func (n *ProdNode) joinRaftCluster(ctx context.Context) {
-	// Use advertise address if configured, otherwise fall back to localhost.
-	// In k8s, set AdvertiseAddr to the pod's DNS name (e.g.
-	// flowrulz-0.flowrulz-bus.<ns>.svc.cluster.local).
 	raftAddr := fmt.Sprintf("%s:%d", n.config.AdvertiseHost(), n.config.RaftPort)
 	body, _ := json.Marshal(map[string]string{
-		"node_id":   n.nodeID,
+		"node_id":   n.config.NodeID,
 		"raft_addr": raftAddr,
 	})
 
@@ -74,7 +71,7 @@ func (n *ProdNode) joinRaftCluster(ctx context.Context) {
 			default:
 			}
 
-			resp, err := n.httpClient.Post(seedURL, "application/json", bytes.NewReader(body))
+			resp, err := n.config.httpClient.Post(seedURL, "application/json", bytes.NewReader(body))
 			if err != nil {
 				slog.Warn("raft join: attempt failed", "attempt", i+1, "seed_url", seedURL, "error", err)
 				time.Sleep(2 * time.Second)
@@ -90,11 +87,4 @@ func (n *ProdNode) joinRaftCluster(ctx context.Context) {
 		}
 	}
 	slog.Error("raft join: failed to join cluster after 30 attempts")
-}
-
-func (n *ProdNode) nextDeployTerm() uint64 {
-	if n.RaftCluster != nil {
-		return n.RaftCluster.CurrentTerm()
-	}
-	return n.PlanDist.CurrentTerm() + 1
 }

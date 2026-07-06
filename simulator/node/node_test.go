@@ -23,6 +23,7 @@ func TestSimNodeBasic(t *testing.T) {
 	f.RegisterNode("node-1", "localhost:8001")
 
 	mockServices := services.DefaultServices()
+	invoker := services.NewServiceRegistryInvoker(mockServices)
 
 	// Create node.
 	cfg := Config{
@@ -32,7 +33,7 @@ func TestSimNodeBasic(t *testing.T) {
 		ExecDir: tmpDir,
 	}
 
-	node := New(cfg, f, mockServices)
+	node := New(cfg, f, invoker)
 
 	// Start the node.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -60,6 +61,7 @@ func TestSimNodeDeployRule(t *testing.T) {
 	f.RegisterNode("node-1", "localhost:8001")
 
 	mockServices := services.DefaultServices()
+	invoker := services.NewServiceRegistryInvoker(mockServices)
 
 	// Create node.
 	cfg := Config{
@@ -69,7 +71,7 @@ func TestSimNodeDeployRule(t *testing.T) {
 		ExecDir: tmpDir,
 	}
 
-	node := New(cfg, f, mockServices)
+	node := New(cfg, f, invoker)
 
 	// Start the node.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

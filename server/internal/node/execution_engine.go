@@ -3,8 +3,8 @@ package node
 import (
 	"context"
 	"fmt"
-	"hash/fnv"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,11 +21,45 @@ const (
 	defaultExecTimeout  = 30 * time.Second
 )
 
-func (n *ProdNode) executePlan(ctx context.Context, plan []byte, body []byte) ([]byte, error) {
+// ExecutionEngine runs bytecode execution plans through the VM step-loop.
+type ExecutionEngine struct {
+	engine     NodeEngine
+	scheduler  *scheduler.Scheduler
+	stateStore StateStore
+	execs      ExecRegistry
+	saga       NodeSagaTracker
+	invoker    ServiceInvoker
+
+	circuitBreakers sync.Map
+	execSem         chan struct{}
+}
+
+// NewExecutionEngine creates an ExecutionEngine with the given dependencies.
+func NewExecutionEngine(
+	engine NodeEngine,
+	sched *scheduler.Scheduler,
+	stateStore StateStore,
+	execs ExecRegistry,
+	saga NodeSagaTracker,
+	invoker ServiceInvoker,
+) *ExecutionEngine {
+	return &ExecutionEngine{
+		engine:     engine,
+		scheduler:  sched,
+		stateStore: stateStore,
+		execs:      execs,
+		saga:       saga,
+		invoker:    invoker,
+		execSem:    make(chan struct{}, executeAllSemaphore),
+	}
+}
+
+// ExecutePlan runs a single bytecode plan to completion.
+func (e *ExecutionEngine) ExecutePlan(ctx context.Context, plan []byte, body []byte) ([]byte, error) {
 	names := make(map[uint16]string)
 	if entries, err := bridge.PlanServices(plan); err == nil {
-		for _, e := range entries {
-			names[e.ID] = e.Name
+		for _, entry := range entries {
+			names[entry.ID] = entry.Name
 		}
 	}
 
@@ -33,10 +67,10 @@ func (n *ProdNode) executePlan(ctx context.Context, plan []byte, body []byte) ([
 	now := time.Now().UTC()
 
 	execCtx, cancel := context.WithCancel(ctx)
-	n.Execs.Register(execID, cancel, "")
+	e.execs.Register(execID, cancel, "")
 
 	defer func() {
-		n.Execs.Unregister(execID)
+		e.execs.Unregister(execID)
 		cancel()
 	}()
 
@@ -47,24 +81,24 @@ func (n *ProdNode) executePlan(ctx context.Context, plan []byte, body []byte) ([
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	if n.StateStore != nil {
-		if err := n.StateStore.Create(execCtx, st); err != nil {
+	if e.stateStore != nil {
+		if err := e.stateStore.Create(execCtx, st); err != nil {
 			slog.Warn("state store create failed", "exec_id", execID, "error", err)
 		}
 	}
 
-	out, err := n.runSteps(execCtx, execID, plan, names, nil, nil, st)
-	if n.StateStore != nil {
+	out, err := e.runSteps(execCtx, execID, plan, names, nil, nil, st)
+	if e.stateStore != nil {
 		if err != nil {
 			st.Status = execstate.StatusFailed
 			st.Error = err.Error()
-			if saveErr := n.StateStore.Save(execCtx, st); saveErr != nil {
+			if saveErr := e.stateStore.Save(execCtx, st); saveErr != nil {
 				slog.Warn("state store save failed", "exec_id", execID, "error", saveErr)
 			}
 		} else {
 			st.Status = execstate.StatusCompleted
 			st.Output = out
-			if saveErr := n.StateStore.Save(execCtx, st); saveErr != nil {
+			if saveErr := e.stateStore.Save(execCtx, st); saveErr != nil {
 				slog.Warn("state store save failed", "exec_id", execID, "error", saveErr)
 			}
 		}
@@ -72,20 +106,20 @@ func (n *ProdNode) executePlan(ctx context.Context, plan []byte, body []byte) ([
 	return out, err
 }
 
-func (n *ProdNode) runSteps(ctx context.Context, execID string, plan []byte, names map[uint16]string, startCtx, startResp []byte, st *execstate.State) ([]byte, error) {
+func (e *ExecutionEngine) runSteps(ctx context.Context, execID string, plan []byte, names map[uint16]string, startCtx, startResp []byte, st *execstate.State) ([]byte, error) {
 	ctxBytes, respBytes := startCtx, startResp
 
 	for step := 0; step < maxExecutionSteps; step++ {
 		select {
 		case <-ctx.Done():
-			n.tryCompensate(execID)
+			e.tryCompensate(execID)
 			return nil, fmt.Errorf("execution cancelled at step %d: %w", step, ctx.Err())
 		default:
 		}
 
 		out, err := bridge.ExecuteStep(plan, ctxBytes, respBytes, nil)
 		if err != nil {
-			n.tryCompensate(execID)
+			e.tryCompensate(execID)
 			return nil, fmt.Errorf("step %d: %w", step, err)
 		}
 
@@ -94,19 +128,19 @@ func (n *ProdNode) runSteps(ctx context.Context, execID string, plan []byte, nam
 		switch out.Result {
 		case bridge.StepDone:
 			observability.RecordExec("completed")
-			if n.Saga != nil {
-				n.Saga.Clear(execID)
+			if e.saga != nil {
+				e.saga.Clear(execID)
 			}
 			return out.Output, nil
 
 		case bridge.StepPending:
 			observability.RecordExec("svc_pending")
-			if n.StateStore != nil {
+			if e.stateStore != nil {
 				st.Status = execstate.StatusWaitingForService
 				st.PendingSvc = out.PendingSvc
 				st.PendingBody = out.PendingBody
 				st.CtxBytes = ctxBytes
-				if err := n.StateStore.Save(ctx, st); err != nil {
+				if err := e.stateStore.Save(ctx, st); err != nil {
 					slog.Warn("state store save failed", "exec_id", execID, "error", err)
 				}
 			}
@@ -117,8 +151,8 @@ func (n *ProdNode) runSteps(ctx context.Context, execID string, plan []byte, nam
 			}
 			svcName, method, compSvc, compMethod := bridge.ParseCompensation(rawName)
 
-			if n.Saga != nil && compSvc != "" {
-				n.Saga.RegisterStep(execID, reliability.SagaStep{
+			if e.saga != nil && compSvc != "" {
+				e.saga.RegisterStep(execID, reliability.SagaStep{
 					ServiceName: svcName,
 					Method:      method,
 					Body:        out.PendingBody,
@@ -127,18 +161,18 @@ func (n *ProdNode) runSteps(ctx context.Context, execID string, plan []byte, nam
 				})
 			}
 
-			resp, err := n.callService(svcName, method, out.PendingBody, out.TimeoutMs)
+			resp, err := e.callService(svcName, method, out.PendingBody, out.TimeoutMs)
 			if err != nil {
-				n.tryCompensate(execID)
+				e.tryCompensate(execID)
 				return nil, fmt.Errorf("service %s: %w", svcName, err)
 			}
 
-			if n.StateStore != nil {
+			if e.stateStore != nil {
 				st.Status = execstate.StatusRunning
 				st.PendingSvc = 0
 				st.PendingBody = nil
 				st.CtxBytes = ctxBytes
-				if err := n.StateStore.Save(ctx, st); err != nil {
+				if err := e.stateStore.Save(ctx, st); err != nil {
 					slog.Warn("state store save failed", "exec_id", execID, "error", err)
 				}
 			}
@@ -146,29 +180,25 @@ func (n *ProdNode) runSteps(ctx context.Context, execID string, plan []byte, nam
 
 		case bridge.StepContinue:
 			respBytes = nil
-			if n.StateStore != nil {
+			if e.stateStore != nil {
 				st.Status = execstate.StatusRunning
 				st.CtxBytes = ctxBytes
-				if err := n.StateStore.Save(ctx, st); err != nil {
+				if err := e.stateStore.Save(ctx, st); err != nil {
 					slog.Warn("state store save failed", "exec_id", execID, "error", err)
 				}
 			}
 		}
 	}
 
-	n.tryCompensate(execID)
+	e.tryCompensate(execID)
 	return nil, fmt.Errorf("execution exceeded max steps")
 }
 
-func (n *ProdNode) executeAll(ctx context.Context, body []byte) ([][]byte, error) {
-	plans := n.Engine.ActivePlanBytes()
+// ExecuteAll runs all active plans concurrently.
+func (e *ExecutionEngine) ExecuteAll(ctx context.Context, body []byte) ([][]byte, error) {
+	plans := e.engine.ActivePlanBytes()
 	if len(plans) == 0 {
 		return nil, nil
-	}
-
-	sched, ok := n.Scheduler.(*scheduler.Scheduler)
-	if !ok {
-		return nil, fmt.Errorf("scheduler not available")
 	}
 
 	type planResult struct {
@@ -185,25 +215,24 @@ func (n *ProdNode) executeAll(ctx context.Context, body []byte) ([][]byte, error
 
 	for i, plan := range plans {
 		idx, p := i, plan
-		
-		// Acquire node-wide semaphore to limit total concurrency
+
 		select {
-		case n.execSem <- struct{}{}:
+		case e.execSem <- struct{}{}:
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
-		
+
 		go func() {
-			defer func() { <-n.execSem }()
+			defer func() { <-e.execSem }()
 			task := &scheduler.Task{
 				ID:       fmt.Sprintf("plan-%d", idx),
 				Priority: scheduler.PriorityNormal,
 				Body:     body,
 				Execute: func(execCtx context.Context, task *scheduler.Task) ([]byte, error) {
-					return n.executePlan(execCtx, p, task.Body)
+					return e.ExecutePlan(execCtx, p, task.Body)
 				},
 			}
-			out, err := sched.EnqueueAndWait(ctx, task)
+			out, err := e.scheduler.EnqueueAndWait(ctx, task)
 			ch <- planResult{idx, out, err}
 		}()
 	}
@@ -223,47 +252,7 @@ func (n *ProdNode) executeAll(ctx context.Context, body []byte) ([][]byte, error
 	return results, firstErr
 }
 
-func (n *ProdNode) handleIncomingMessage(ctx context.Context, msg []byte) ([]byte, error) {
-	if !n.RateLimiter.Allow("ingress") {
-		observability.RecordError("rate_limited")
-		n.DLQ.Send(&reliability.DeadLetterEntry{
-			ID:    "ratelimited",
-			Body:  msg,
-			Error: "rate limited",
-		})
-		return nil, nil
-	}
-
-	h := fnv.New128a()
-	h.Write(msg)
-	msgIDStr := fmt.Sprintf("%x", h.Sum(nil))
-
-	if n.Dedup.CheckAndMark(msgIDStr) {
-		observability.RecordExec("dedup_skipped")
-		return nil, nil
-	}
-
-	execCtx, execCancel := context.WithTimeout(ctx, defaultExecTimeout)
-	defer execCancel()
-
-	results, err := n.executeAll(execCtx, msg)
-	if err != nil {
-		observability.RecordError("exec")
-		n.DLQ.Send(&reliability.DeadLetterEntry{
-			ID:    "exec-error",
-			Body:  msg,
-			Error: err.Error(),
-		})
-		return nil, err
-	}
-	if len(results) == 0 {
-		return nil, nil
-	}
-	observability.RecordExec("msg")
-	return results[0], nil
-}
-
-func (n *ProdNode) callService(svcName, method string, body []byte, timeoutMs uint64) ([]byte, error) {
+func (e *ExecutionEngine) callService(svcName, method string, body []byte, timeoutMs uint64) ([]byte, error) {
 	observability.RecordExec("svc_call")
 
 	svcTimeout := 10 * time.Second
@@ -273,7 +262,7 @@ func (n *ProdNode) callService(svcName, method string, body []byte, timeoutMs ui
 	svcCtx, svcCancel := context.WithTimeout(context.Background(), svcTimeout)
 	defer svcCancel()
 
-	cbI, _ := n.circuitBreakers.LoadOrStore(svcName, reliability.NewCircuitBreaker(5, 30*time.Second))
+	cbI, _ := e.circuitBreakers.LoadOrStore(svcName, reliability.NewCircuitBreaker(5, 30*time.Second))
 	cb := cbI.(*reliability.CircuitBreaker)
 
 	if !cb.Allow() {
@@ -282,27 +271,21 @@ func (n *ProdNode) callService(svcName, method string, body []byte, timeoutMs ui
 		return nil, fmt.Errorf("circuit breaker open for service %s", svcName)
 	}
 
-	inst, err := n.Registry.LookupInstance(svcName, method)
+	resp, err := e.invoker.Invoke(svcCtx, svcName, method, body)
 	if err != nil {
-		slog.Warn("registry lookup failed, using passthrough", 
-			"service", svcName, 
-			"method", method, 
-			"error", err)
-		cb.Success()
-		return body, nil
-	}
-	
-	if inst == nil {
-		slog.Info("service call (passthrough)", "service", svcName, "method", method, "body_bytes", len(body))
-		cb.Success()
-		return body, nil
-	}
-
-	// Protocol-aware dispatch
-	resp, err := n.serviceCaller.CallService(svcCtx, inst, method, body, cb, n.Registry)
-	if err != nil {
+		cb.Failure()
 		return nil, fmt.Errorf("service %s: %w", svcName, err)
 	}
-	
+
+	cb.Success()
 	return resp, nil
+}
+
+func (e *ExecutionEngine) tryCompensate(execID string) {
+	if e.saga == nil {
+		return
+	}
+	if err := e.saga.Compensate(execID); err != nil {
+		slog.Error("saga compensation failed", "exec_id", execID, "error", err)
+	}
 }

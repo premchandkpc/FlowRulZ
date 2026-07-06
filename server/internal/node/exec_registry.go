@@ -12,28 +12,38 @@ type execEntry struct {
 	name    string
 }
 
-type ExecRegistry struct {
+type execRegistry struct {
 	mu   sync.RWMutex
 	exec map[string]*execEntry
 }
 
-func NewExecRegistry() *ExecRegistry {
-	return &ExecRegistry{exec: make(map[string]*execEntry)}
+// ExecRegistry tracks in-flight executions for cancellation and observability.
+type ExecRegistry interface {
+	Register(id string, cancel context.CancelFunc, name string)
+	Unregister(id string)
+	Cancel(id string) bool
+	CancelAll()
+	List() map[string]time.Time
+	Len() int
 }
 
-func (er *ExecRegistry) Register(id string, cancel context.CancelFunc, name string) {
+func NewExecRegistry() ExecRegistry {
+	return &execRegistry{exec: make(map[string]*execEntry)}
+}
+
+func (er *execRegistry) Register(id string, cancel context.CancelFunc, name string) {
 	er.mu.Lock()
 	defer er.mu.Unlock()
 	er.exec[id] = &execEntry{cancel: cancel, started: time.Now(), name: name}
 }
 
-func (er *ExecRegistry) Unregister(id string) {
+func (er *execRegistry) Unregister(id string) {
 	er.mu.Lock()
 	defer er.mu.Unlock()
 	delete(er.exec, id)
 }
 
-func (er *ExecRegistry) Cancel(id string) bool {
+func (er *execRegistry) Cancel(id string) bool {
 	er.mu.Lock()
 	entry, ok := er.exec[id]
 	if ok {
@@ -44,7 +54,7 @@ func (er *ExecRegistry) Cancel(id string) bool {
 	return ok
 }
 
-func (er *ExecRegistry) CancelAll() {
+func (er *execRegistry) CancelAll() {
 	er.mu.Lock()
 	defer er.mu.Unlock()
 	for _, entry := range er.exec {
@@ -52,7 +62,7 @@ func (er *ExecRegistry) CancelAll() {
 	}
 }
 
-func (er *ExecRegistry) List() map[string]time.Time {
+func (er *execRegistry) List() map[string]time.Time {
 	er.mu.Lock()
 	defer er.mu.Unlock()
 	out := make(map[string]time.Time, len(er.exec))
@@ -62,7 +72,7 @@ func (er *ExecRegistry) List() map[string]time.Time {
 	return out
 }
 
-func (er *ExecRegistry) Len() int {
+func (er *execRegistry) Len() int {
 	er.mu.RLock()
 	defer er.mu.RUnlock()
 	return len(er.exec)

@@ -59,6 +59,9 @@ func New(cfg Config) *Harness {
 	// Create mock services.
 	mockServices := services.DefaultServices()
 
+	// Create service invoker (decoupled from concrete registry).
+	invoker := services.NewServiceRegistryInvoker(mockServices)
+
 	// Create nodes.
 	nodes := make([]*node.SimNode, cfg.NumNodes)
 	for i := 0; i < cfg.NumNodes; i++ {
@@ -75,7 +78,7 @@ func New(cfg Config) *Harness {
 			Workers: cfg.Workers,
 			ExecDir: execDir,
 		}
-		nodes[i] = node.New(nodeCfg, f, mockServices)
+		nodes[i] = node.New(nodeCfg, f, invoker)
 	}
 
 	// Apply scenario configuration.

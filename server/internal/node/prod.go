@@ -8,7 +8,10 @@ import (
 	"os"
 	"time"
 
+	"github.com/premchandkpc/FlowRulZ/server/internal/adminhandler"
+	"github.com/premchandkpc/FlowRulZ/server/internal/execstate"
 	"github.com/premchandkpc/FlowRulZ/server/internal/flow"
+	"github.com/premchandkpc/FlowRulZ/server/internal/messagerouter"
 	"github.com/premchandkpc/FlowRulZ/server/internal/plugins"
 	"github.com/premchandkpc/FlowRulZ/server/internal/ports"
 	"github.com/premchandkpc/FlowRulZ/server/internal/scheduler"
@@ -41,7 +44,7 @@ type Dependencies struct {
 	ClusterNode      ClusterTransport
 	GRPCBus          GRPCService
 	AdminSrv         AdminHandler
-	Metrics          MetricsSnapshotProvider
+	Metrics          ports.MetricsCollector
 	OtelExporter     SpanExporter
 	FlowRegistry     *flow.Registry
 	FlowDirs         []string
@@ -50,8 +53,8 @@ type Dependencies struct {
 type ProdNode struct {
 	execution  *ExecutionEngine
 	ingress    *IngressPipeline
-	msgRouter  *MessageRouter
-	httpServer *AdminHTTPServer
+	msgRouter  *messagerouter.Router
+	httpServer *adminhandler.Server
 	leadership LeadershipStrategy
 	flowWatch  *flow.FileWatcher
 
@@ -93,7 +96,7 @@ func NewNode(cfg Config, deps Dependencies) *ProdNode {
 			Engine:     deps.Engine,
 			Scheduler:  deps.Scheduler,
 			StateStore: deps.StateStore,
-			Execs:      NewExecRegistry(),
+			Execs:      execstate.NewExecRegistry(),
 			Saga:       deps.Saga,
 			Invoker:    deps.Invoker,
 		},
@@ -123,6 +126,7 @@ func NewNode(cfg Config, deps Dependencies) *ProdNode {
 		n.exec.Execs,
 		deps.Saga,
 		deps.Invoker,
+		deps.Metrics,
 	)
 
 	n.ingress = NewIngressPipeline(
@@ -130,9 +134,10 @@ func NewNode(cfg Config, deps Dependencies) *ProdNode {
 		deps.Dedup,
 		deps.DLQ,
 		n.execution,
+		deps.Metrics,
 	)
 
-	n.msgRouter = NewMessageRouter(
+	n.msgRouter = messagerouter.NewRouter(
 		cfg.NodeID,
 		cfg.Topic,
 		deps.TransportFactory,
@@ -143,11 +148,11 @@ func NewNode(cfg Config, deps Dependencies) *ProdNode {
 		deps.Partitions,
 	)
 
-	n.httpServer = NewAdminHTTPServer(
+	n.httpServer = adminhandler.NewServer(
 		cfg.HTTPListenAddr(),
 		cfg.NodeID,
 		deps.AdminSrv,
-		deps.Registry.(HTTPRegistry),
+		deps.Registry.(adminhandler.HTTPRegistry),
 		n,
 		n.exec.Execs,
 		deps.Partitions,
@@ -245,7 +250,7 @@ func (n *ProdNode) Start(ctx context.Context) error {
 		}
 	}
 	n.startOTel(ctx)
-	n.httpServer.ServeHTTP(ctx)
+	n.httpServer.Serve(ctx)
 
 	// Start flow file watcher
 	if n.flowWatch != nil {

@@ -5,10 +5,8 @@ import (
 	"time"
 
 	"github.com/premchandkpc/FlowRulZ/server/internal/execstate"
-	"github.com/premchandkpc/FlowRulZ/server/internal/observability"
 	"github.com/premchandkpc/FlowRulZ/server/internal/ports"
 	"github.com/premchandkpc/FlowRulZ/server/internal/reliability"
-	pkgcluster "github.com/premchandkpc/FlowRulZ/server/pkg/cluster"
 )
 
 // --- Adapter types that bridge port interfaces → concrete types ---
@@ -110,37 +108,26 @@ func (a *sagaAdapter) Clear(execID string) {
 	a.inner.Clear(execID)
 }
 
-// metricsAdapter bridges observability.MetricsCollector → ports.MetricsCollector
+// metricsAdapter bridges ports.MetricsCollector → ports.MetricsCollector (passthrough for core engine)
 type metricsAdapter struct {
-	inner *observability.MetricsCollector
+	inner ports.MetricsCollector
 }
 
 func (a *metricsAdapter) RecordExec(name string) {
-	observability.RecordExec(name)
+	a.inner.RecordExec(name)
 }
 
 func (a *metricsAdapter) RecordError(name string) {
-	observability.RecordError(name)
+	a.inner.RecordError(name)
 }
 
 func (a *metricsAdapter) Snapshot() ports.MetricSnapshot {
-	snap := a.inner.Snapshot()
-	result := ports.MetricSnapshot{
-		Counters: make(map[string]int64, len(snap.Counters)),
-		Gauges:   make(map[string]int64, len(snap.Gauges)),
-	}
-	for k, v := range snap.Counters {
-		result.Counters[k] = v
-	}
-	for k, v := range snap.Gauges {
-		result.Gauges[k] = v
-	}
-	return result
+	return a.inner.Snapshot()
 }
 
 // execRegistryAdapter bridges ExecRegistry → ports.ExecTracker
 type execRegistryAdapter struct {
-	inner ExecRegistry
+	inner execstate.ExecRegistry
 }
 
 func (a *execRegistryAdapter) Register(id string, cancel context.CancelFunc, name string) {
@@ -191,21 +178,4 @@ func statusFromString(s string) execstate.Status {
 	}
 }
 
-// --- Leadership token conversion ---
-
-// leadershipTokenToPort converts pkgcluster.LeadershipToken → ports.LeadershipToken
-func leadershipTokenToPort(t pkgcluster.LeadershipToken) ports.LeadershipToken {
-	return ports.LeadershipToken{
-		Term:     t.Term,
-		LeaderID: "",
-		Valid:    t.Valid(),
-	}
-}
-
-// leadershipTokenFromPort converts ports.LeadershipToken → pkgcluster.LeadershipToken
-func leadershipTokenFromPort(t ports.LeadershipToken) pkgcluster.LeadershipToken {
-	return pkgcluster.LeadershipToken{
-		Leader: t.Valid,
-		Term:   t.Term,
-	}
-}
+// --- Leadership token conversion (delegated to cluster package) ---

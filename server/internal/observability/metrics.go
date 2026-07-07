@@ -3,6 +3,8 @@ package observability
 import (
 	"sync"
 	"sync/atomic"
+
+	"github.com/premchandkpc/FlowRulZ/server/internal/ports"
 )
 
 type Counter struct {
@@ -107,10 +109,7 @@ func (h *Histogram) Observe(v float64) {
 
 // -- Snapshot --
 
-type MetricSnapshot struct {
-	Counters map[string]int64 `json:"counters"`
-	Gauges   map[string]int64 `json:"gauges"`
-}
+type MetricSnapshot = ports.MetricSnapshot
 
 func (mc *MetricsCollector) Snapshot() MetricSnapshot {
 	mc.mu.RLock()
@@ -136,3 +135,9 @@ func GetGauge(name string) *Gauge     { return defaultCollector.Gauge(name) }
 
 func RecordExec(name string)  { GetCounter("exec." + name).Inc() }
 func RecordError(name string) { GetCounter("error." + name).Inc() }
+
+// RecordExecWithCollector records an exec event on the given collector.
+func (mc *MetricsCollector) RecordExec(name string)  { mc.Counter("exec." + name).Inc() }
+
+// RecordErrorWithCollector records an error event on the given collector.
+func (mc *MetricsCollector) RecordError(name string) { mc.Counter("error." + name).Inc() }

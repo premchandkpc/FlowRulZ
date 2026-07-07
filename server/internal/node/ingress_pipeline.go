@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"hash/fnv"
 
-	"github.com/premchandkpc/FlowRulZ/server/internal/observability"
+	"github.com/premchandkpc/FlowRulZ/server/internal/ports"
 	"github.com/premchandkpc/FlowRulZ/server/internal/reliability"
 )
 
@@ -16,6 +16,7 @@ type IngressPipeline struct {
 	dedup       DedupChecker
 	dlq         NodeDLQ
 	executor    *ExecutionEngine
+	metrics     ports.MetricsCollector
 }
 
 // NewIngressPipeline creates an IngressPipeline with the given dependencies.
@@ -24,19 +25,21 @@ func NewIngressPipeline(
 	dedup DedupChecker,
 	dlq NodeDLQ,
 	executor *ExecutionEngine,
+	metrics ports.MetricsCollector,
 ) *IngressPipeline {
 	return &IngressPipeline{
 		rateLimiter: rateLimiter,
 		dedup:       dedup,
 		dlq:         dlq,
 		executor:    executor,
+		metrics:     metrics,
 	}
 }
 
 // HandleMessage processes an inbound message through the reliability pipeline.
 func (p *IngressPipeline) HandleMessage(ctx context.Context, msg []byte) ([]byte, error) {
 	if !p.rateLimiter.Allow("ingress") {
-		observability.RecordError("rate_limited")
+		p.metrics.RecordError("rate_limited")
 		p.dlq.Send(&reliability.DeadLetterEntry{
 			ID:    "ratelimited",
 			Body:  msg,
@@ -50,13 +53,13 @@ func (p *IngressPipeline) HandleMessage(ctx context.Context, msg []byte) ([]byte
 	msgIDStr := fmt.Sprintf("%x", h.Sum(nil))
 
 	if p.dedup.CheckAndMark(msgIDStr) {
-		observability.RecordExec("dedup_skipped")
+		p.metrics.RecordExec("dedup_skipped")
 		return nil, nil
 	}
 
 	results, err := p.executor.ExecuteAll(ctx, msg)
 	if err != nil {
-		observability.RecordError("exec")
+		p.metrics.RecordError("exec")
 		p.dlq.Send(&reliability.DeadLetterEntry{
 			ID:    "exec-error",
 			Body:  msg,
@@ -67,6 +70,6 @@ func (p *IngressPipeline) HandleMessage(ctx context.Context, msg []byte) ([]byte
 	if len(results) == 0 {
 		return nil, nil
 	}
-	observability.RecordExec("msg")
+	p.metrics.RecordExec("msg")
 	return results[0], nil
 }

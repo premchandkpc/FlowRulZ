@@ -3,6 +3,8 @@ package node
 import (
 	"net/http"
 
+	"github.com/premchandkpc/FlowRulZ/server/internal/execstate"
+	"github.com/premchandkpc/FlowRulZ/server/internal/ports"
 	pkgcluster "github.com/premchandkpc/FlowRulZ/server/pkg/cluster"
 	pkgmembership "github.com/premchandkpc/FlowRulZ/server/pkg/membership"
 	pkgpartition "github.com/premchandkpc/FlowRulZ/server/pkg/partition"
@@ -30,7 +32,7 @@ type ExecutionDeps struct {
 	Engine     NodeEngine
 	Scheduler  pkgscheduler.Scheduler
 	StateStore StateStore
-	Execs      ExecRegistry
+	Execs      execstate.ExecRegistry
 	Saga       NodeSagaTracker
 	Invoker    ServiceInvoker
 }
@@ -45,7 +47,7 @@ type APIDeps struct {
 	AdminSrv     AdminHandler
 	Registry     ServiceLookup
 	ReplyRouter  pkgreplyrouter.ReplyRouter
-	Metrics      MetricsSnapshotProvider
+	Metrics      ports.MetricsCollector
 	OtelExporter SpanExporter
 }
 

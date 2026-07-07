@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/premchandkpc/FlowRulZ/server/internal/execstate"
-	"github.com/premchandkpc/FlowRulZ/server/internal/observability"
 	"github.com/premchandkpc/FlowRulZ/server/internal/plandist"
 	"github.com/premchandkpc/FlowRulZ/server/internal/ports"
 	"github.com/premchandkpc/FlowRulZ/server/internal/registry"
@@ -46,10 +45,6 @@ type GRPCService interface {
 
 type AdminHandler interface {
 	Handler() http.Handler
-}
-
-type MetricsSnapshotProvider interface {
-	Snapshot() observability.MetricSnapshot
 }
 
 type SpanExporter interface {
@@ -101,12 +96,6 @@ type PlanDistributor interface {
 	ActivatePlan(ctx context.Context, id string, version uint64) error
 }
 
-type ProtocolDispatcher interface {
-	CallHTTP(ctx context.Context, inst *registry.ServiceInstance, method string, body []byte) ([]byte, error)
-	CallGRPC(ctx context.Context, inst *registry.ServiceInstance, method string, body []byte) ([]byte, error)
-	CallTCP(ctx context.Context, inst *registry.ServiceInstance, method string, body []byte) ([]byte, error)
-}
-
 type LeadershipStrategy interface {
 	IsLeader() bool
 	CurrentTerm() uint64
@@ -115,20 +104,11 @@ type LeadershipStrategy interface {
 	LeaderID(selfNodeID string) string
 }
 
-type CircuitBreakerRegistry interface {
-	For(serviceName string) *reliability.CircuitBreaker
-}
-
 type ExecTracker interface {
 	Register(id string, cancel context.CancelFunc, name string)
 	Unregister(id string)
 	Cancel(id string) bool
 	CancelAll()
-}
-
-type ExecLister interface {
-	List() map[string]time.Time
-	Len() int
 }
 
 type StateStore = execstate.Store

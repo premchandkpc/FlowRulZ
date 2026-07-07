@@ -1,4 +1,5 @@
-package node
+// Package messagerouter handles transport message demux and routing.
+package messagerouter
 
 import (
 	"context"
@@ -13,19 +14,10 @@ import (
 	pkgpartition "github.com/premchandkpc/FlowRulZ/server/pkg/partition"
 )
 
-// MessageRouter handles transport message demux and routing.
-type MessageRouter struct {
-	nodeID      string
-	topic       string
-	factory     TransportFactory
-	membership  NodeDiscovery
-	clusterNode ClusterTransport
-	engine      NodeEngine
-	planDist    PlanDistributor
-	partitions  pkgpartition.PartitionManager
-
-	consumers []transport.MessageConsumer
-	mu        sync.Mutex
+// TransportFactory creates message consumers and producers.
+type TransportFactory interface {
+	NewConsumer(topic string, handler transport.MessageHandler) transport.MessageConsumer
+	NewProducer(topic string) transport.MessageProducer
 }
 
 // NodeDiscovery handles node heartbeat and discovery.
@@ -33,18 +25,57 @@ type NodeDiscovery interface {
 	Heartbeat(nodeID, address string)
 }
 
-// NewMessageRouter creates a MessageRouter with the given dependencies.
-func NewMessageRouter(
+// ClusterTransport manages cluster peers.
+type ClusterTransport interface {
+	AddPeer(id, addr string) error
+}
+
+// RuleEngine manages rule versions and activation.
+type RuleEngine interface {
+	AddVersion(id, dsl string, plan []byte, version uint64) error
+	Promote(id string, version uint64) error
+}
+
+// PlanDistributor handles plan distribution and acknowledgments.
+type PlanDistributor interface {
+	CurrentTerm() uint64
+	SendAck(ctx context.Context, ruleID string, version uint64, status string) error
+	RecordAck(msg plandist.AckMessage)
+}
+
+// NodeDiscoveryMessage is the payload for node discovery heartbeats.
+type NodeDiscoveryMessage struct {
+	NodeID  string `json:"node_id"`
+	Address string `json:"address"`
+}
+
+// Router handles transport message demux and routing.
+type Router struct {
+	nodeID      string
+	topic       string
+	factory     TransportFactory
+	membership  NodeDiscovery
+	clusterNode ClusterTransport
+	engine      RuleEngine
+	planDist    PlanDistributor
+	partitions  pkgpartition.PartitionManager
+
+	consumers []transport.MessageConsumer
+	mu        sync.Mutex
+}
+
+// NewRouter creates a Router with the given dependencies.
+func NewRouter(
 	nodeID string,
 	topic string,
 	factory TransportFactory,
 	membership NodeDiscovery,
 	clusterNode ClusterTransport,
-	engine NodeEngine,
+	engine RuleEngine,
 	planDist PlanDistributor,
 	partitions pkgpartition.PartitionManager,
-) *MessageRouter {
-	return &MessageRouter{
+) *Router {
+	return &Router{
 		nodeID:      nodeID,
 		topic:       topic,
 		factory:     factory,
@@ -58,7 +89,7 @@ func NewMessageRouter(
 }
 
 // StartConsumers sets up transport consumers and routes messages.
-func (r *MessageRouter) StartConsumers(ctx context.Context, handler transport.MessageHandler) {
+func (r *Router) StartConsumers(ctx context.Context, handler transport.MessageHandler) {
 	membersConsumer := r.factory.NewConsumer("_flowrulz_members", r.handleNodeDiscoveryMessage)
 	planConsumer := r.factory.NewConsumer(plandist.DefaultPlanTopic, r.handlePlanMessage)
 	ackConsumer := r.factory.NewConsumer(plandist.DefaultAckTopic, r.handleAckMessage)
@@ -77,7 +108,7 @@ func (r *MessageRouter) StartConsumers(ctx context.Context, handler transport.Me
 }
 
 // StopConsumers stops all transport consumers.
-func (r *MessageRouter) StopConsumers() {
+func (r *Router) StopConsumers() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, c := range r.consumers {
@@ -86,7 +117,7 @@ func (r *MessageRouter) StopConsumers() {
 	r.consumers = nil
 }
 
-func (r *MessageRouter) handleNodeDiscoveryMessage(ctx context.Context, msg []byte) ([]byte, error) {
+func (r *Router) handleNodeDiscoveryMessage(ctx context.Context, msg []byte) ([]byte, error) {
 	var nd NodeDiscoveryMessage
 	if err := json.Unmarshal(msg, &nd); err != nil {
 		slog.Error("discovery: unmarshal error", "error", err)
@@ -104,7 +135,7 @@ func (r *MessageRouter) handleNodeDiscoveryMessage(ctx context.Context, msg []by
 	return nil, nil
 }
 
-func (r *MessageRouter) handlePlanMessage(ctx context.Context, msg []byte) ([]byte, error) {
+func (r *Router) handlePlanMessage(ctx context.Context, msg []byte) ([]byte, error) {
 	pm, err := plandist.PlanMessageFromBytes(msg)
 	if err != nil {
 		return nil, fmt.Errorf("plandist: unmarshal plan: %w", err)
@@ -131,7 +162,7 @@ func (r *MessageRouter) handlePlanMessage(ctx context.Context, msg []byte) ([]by
 	return nil, nil
 }
 
-func (r *MessageRouter) handleAckMessage(ctx context.Context, msg []byte) ([]byte, error) {
+func (r *Router) handleAckMessage(ctx context.Context, msg []byte) ([]byte, error) {
 	am, err := plandist.AckMessageFromBytes(msg)
 	if err != nil {
 		return nil, fmt.Errorf("plandist: unmarshal ack: %w", err)
@@ -140,7 +171,7 @@ func (r *MessageRouter) handleAckMessage(ctx context.Context, msg []byte) ([]byt
 	return nil, nil
 }
 
-func (r *MessageRouter) handlePartitionMessage(ctx context.Context, msg []byte) ([]byte, error) {
+func (r *Router) handlePartitionMessage(ctx context.Context, msg []byte) ([]byte, error) {
 	if err := r.partitions.HandleAssignmentMessage(msg); err != nil {
 		slog.Error("partition: handle message error", "error", err)
 	}

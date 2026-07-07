@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/premchandkpc/FlowRulZ/server/internal/engine"
+	"github.com/premchandkpc/FlowRulZ/server/internal/execstate"
 	"github.com/premchandkpc/FlowRulZ/server/internal/plandist"
 	"github.com/premchandkpc/FlowRulZ/server/internal/registry"
 	"github.com/premchandkpc/FlowRulZ/server/internal/scheduler"
@@ -84,14 +85,14 @@ func TestConfigDerivedValues(t *testing.T) {
 //
 
 func TestNewExecRegistry(t *testing.T) {
-	er := NewExecRegistry()
+	er := execstate.NewExecRegistry()
 	if er.Len() != 0 {
 		t.Errorf("expected empty, Len=%d", er.Len())
 	}
 }
 
 func TestExecRegistryRegisterAndCancel(t *testing.T) {
-	er := NewExecRegistry()
+	er := execstate.NewExecRegistry()
 	ctx, cancel := context.WithCancel(context.Background())
 	er.Register("exec-1", cancel, "test-plan")
 
@@ -111,14 +112,14 @@ func TestExecRegistryRegisterAndCancel(t *testing.T) {
 }
 
 func TestExecRegistryCancelNonexistent(t *testing.T) {
-	er := NewExecRegistry()
+	er := execstate.NewExecRegistry()
 	if er.Cancel("nonexistent") {
 		t.Error("Cancel should return false for nonexistent ID")
 	}
 }
 
 func TestExecRegistryUnregister(t *testing.T) {
-	er := NewExecRegistry()
+	er := execstate.NewExecRegistry()
 	ctx, cancel := context.WithCancel(context.Background())
 	er.Register("exec-1", cancel, "test")
 	er.Unregister("exec-1")
@@ -131,7 +132,7 @@ func TestExecRegistryUnregister(t *testing.T) {
 }
 
 func TestExecRegistryCancelAll(t *testing.T) {
-	er := NewExecRegistry()
+	er := execstate.NewExecRegistry()
 	ctx1, cancel1 := context.WithCancel(context.Background())
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	er.Register("a", cancel1, "")
@@ -146,7 +147,7 @@ func TestExecRegistryCancelAll(t *testing.T) {
 }
 
 func TestExecRegistryList(t *testing.T) {
-	er := NewExecRegistry()
+	er := execstate.NewExecRegistry()
 	_, cancel := context.WithCancel(context.Background())
 	er.Register("id-1", cancel, "plan-a")
 	list := er.List()
@@ -159,7 +160,7 @@ func TestExecRegistryList(t *testing.T) {
 }
 
 func TestExecRegistryConcurrentAccess(t *testing.T) {
-	er := NewExecRegistry()
+	er := execstate.NewExecRegistry()
 	done := make(chan struct{})
 	for i := 0; i < 10; i++ {
 		go func() {
@@ -251,7 +252,7 @@ func minimalProdNode() *ProdNode {
 			Membership: &mockMembership{},
 		},
 		exec: ExecutionDeps{
-			Execs: NewExecRegistry(),
+			Execs: execstate.NewExecRegistry(),
 		},
 		part: PartitionDeps{
 			PlanDist: planDist,
@@ -466,7 +467,7 @@ func TestDependenciesDefaultHasComponents(t *testing.T) {
 //
 
 func TestExecRegistryRegisterAfterCancel(t *testing.T) {
-	er := NewExecRegistry()
+	er := execstate.NewExecRegistry()
 	_, cancel := context.WithCancel(context.Background())
 	er.Register("x", cancel, "")
 	er.Unregister("x")
@@ -487,7 +488,7 @@ func TestProdNodeExecuteEmptyEngine(t *testing.T) {
 			Engine: engine.New(""),
 		},
 	}
-	n.execution = NewExecutionEngine(n.exec.Engine, nil, nil, nil, nil, nil)
+	n.execution = NewExecutionEngine(n.exec.Engine, nil, nil, nil, nil, nil, nil)
 	out, err := n.execution.ExecuteAll(context.Background(), []byte(`{"test":1}`))
 	if err != nil {
 		t.Fatalf("executeAll: %v", err)

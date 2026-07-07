@@ -1,4 +1,5 @@
-package node
+// Package adminhandler provides the HTTP admin server for node management.
+package adminhandler
 
 import (
 	"context"
@@ -10,36 +11,15 @@ import (
 	"os"
 	"time"
 
+	"github.com/premchandkpc/FlowRulZ/server/internal/execstate"
 	"github.com/premchandkpc/FlowRulZ/server/internal/ports"
 	pkgcluster "github.com/premchandkpc/FlowRulZ/server/pkg/cluster"
 	pkgpartition "github.com/premchandkpc/FlowRulZ/server/pkg/partition"
 )
 
-// LeadershipProvider abstracts leadership queries for the HTTP server.
-type LeadershipProvider interface {
-	IsLeader() bool
-	CurrentTerm() uint64
-	CaptureLeadershipToken() ports.LeadershipToken
-	ValidateLeadershipToken(token ports.LeadershipToken) bool
-}
-
-// AdminHTTPServer handles HTTP API handlers and server lifecycle.
-type AdminHTTPServer struct {
-	httpAddr   string
-	nodeID     string
-	httpServer *http.Server
-
-	adminSrv   AdminHandler
-	registry   HTTPRegistry
-	leadership LeadershipProvider
-	execs      ExecLister
-	partitions pkgpartition.PartitionManager
-	membership MembershipProvider
-	metrics    MetricsSnapshotProvider
-	dlq        NodeDLQ
-	planDist   PlanDistancer
-	replyRouter ReplyRouter
-	raftCluster pkgcluster.ClusterMember
+// AdminHandler provides the rule management HTTP handler.
+type AdminHandler interface {
+	Handler() http.Handler
 }
 
 // HTTPRegistry provides HTTP handlers for service registration.
@@ -47,6 +27,14 @@ type HTTPRegistry interface {
 	RegisterHTTPHandler(w http.ResponseWriter, r *http.Request)
 	HeartbeatHTTPHandler(w http.ResponseWriter, r *http.Request)
 	ListServicesHTTPHandler(w http.ResponseWriter, r *http.Request)
+}
+
+// LeadershipProvider abstracts leadership queries.
+type LeadershipProvider interface {
+	IsLeader() bool
+	CurrentTerm() uint64
+	CaptureLeadershipToken() ports.LeadershipToken
+	ValidateLeadershipToken(token ports.LeadershipToken) bool
 }
 
 // PlanDistancer provides the current term for readiness checks.
@@ -64,23 +52,47 @@ type MembershipProvider interface {
 	AliveNodes() []string
 }
 
-// NewAdminHTTPServer creates an AdminHTTPServer with the given dependencies.
-func NewAdminHTTPServer(
+// DeadLetterQueue provides DLQ size for metrics.
+type DeadLetterQueue interface {
+	Len() int
+}
+
+// Server handles HTTP API handlers and server lifecycle.
+type Server struct {
+	httpAddr   string
+	nodeID     string
+	httpServer *http.Server
+
+	adminSrv   AdminHandler
+	registry   HTTPRegistry
+	leadership LeadershipProvider
+	execs      execstate.ExecRegistry
+	partitions pkgpartition.PartitionManager
+	membership MembershipProvider
+	metrics    ports.MetricsCollector
+	dlq        DeadLetterQueue
+	planDist   PlanDistancer
+	replyRouter ReplyRouter
+	raftCluster pkgcluster.ClusterMember
+}
+
+// NewServer creates an admin HTTP server with the given dependencies.
+func NewServer(
 	httpAddr string,
 	nodeID string,
 	adminSrv AdminHandler,
 	registry HTTPRegistry,
 	leadership LeadershipProvider,
-	execs ExecLister,
+	execs execstate.ExecRegistry,
 	partitions pkgpartition.PartitionManager,
 	membership MembershipProvider,
-	metrics MetricsSnapshotProvider,
-	dlq NodeDLQ,
+	metrics ports.MetricsCollector,
+	dlq DeadLetterQueue,
 	planDist PlanDistancer,
 	replyRouter ReplyRouter,
 	raftCluster pkgcluster.ClusterMember,
-) *AdminHTTPServer {
-	return &AdminHTTPServer{
+) *Server {
+	return &Server{
 		httpAddr:    httpAddr,
 		nodeID:      nodeID,
 		adminSrv:    adminSrv,
@@ -97,8 +109,8 @@ func NewAdminHTTPServer(
 	}
 }
 
-// ServeHTTP starts the HTTP server.
-func (s *AdminHTTPServer) ServeHTTP(ctx context.Context) {
+// Serve starts the HTTP server.
+func (s *Server) Serve(ctx context.Context) {
 	mux := http.NewServeMux()
 	mux.Handle("/admin/", http.StripPrefix("/admin", s.adminSrv.Handler()))
 	mux.HandleFunc("/register", s.registry.RegisterHTTPHandler)
@@ -116,7 +128,7 @@ func (s *AdminHTTPServer) ServeHTTP(ctx context.Context) {
 }
 
 // Shutdown gracefully shuts down the HTTP server.
-func (s *AdminHTTPServer) Shutdown(ctx context.Context) error {
+func (s *Server) Shutdown(ctx context.Context) error {
 	if s.httpServer != nil {
 		shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
@@ -125,7 +137,7 @@ func (s *AdminHTTPServer) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-func (s *AdminHTTPServer) registerHandlers(mux *http.ServeMux) {
+func (s *Server) registerHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/cluster/join", s.requireClusterAuth(s.handleClusterJoin))
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/readyz", s.handleReadyz)
@@ -136,7 +148,7 @@ func (s *AdminHTTPServer) registerHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("POST /partitions/rebalance", s.handleRebalance)
 }
 
-func (s *AdminHTTPServer) requireClusterAuth(next http.HandlerFunc) http.HandlerFunc {
+func (s *Server) requireClusterAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		apiKey := os.Getenv("FLOWRULZ_API_KEY")
 		if apiKey == "" {
@@ -152,7 +164,7 @@ func (s *AdminHTTPServer) requireClusterAuth(next http.HandlerFunc) http.Handler
 	}
 }
 
-func (s *AdminHTTPServer) handleClusterJoin(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleClusterJoin(w http.ResponseWriter, r *http.Request) {
 	if s.raftCluster == nil {
 		http.Error(w, "raft not configured", http.StatusBadRequest)
 		return
@@ -202,7 +214,7 @@ func (s *AdminHTTPServer) handleClusterJoin(w http.ResponseWriter, r *http.Reque
 	json.NewEncoder(w).Encode(map[string]string{"status": "joined"})
 }
 
-func (s *AdminHTTPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":    "ok",
 		"node_id":   s.nodeID,
@@ -211,7 +223,7 @@ func (s *AdminHTTPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *AdminHTTPServer) handleReadyz(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	if s.leadership.IsLeader() && s.planDist.CurrentTerm() == 0 {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		json.NewEncoder(w).Encode(map[string]string{"status": "not ready", "reason": "leader not initialized"})
@@ -220,7 +232,7 @@ func (s *AdminHTTPServer) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
 }
 
-func (s *AdminHTTPServer) handleMetrics(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	snap := s.metrics.Snapshot()
 	snap.Gauges["pending_requests"] = int64(s.replyRouter.PendingCount())
 	snap.Gauges["dlq_size"] = int64(s.dlq.Len())
@@ -228,9 +240,9 @@ func (s *AdminHTTPServer) handleMetrics(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(snap)
 }
 
-func (s *AdminHTTPServer) handleDeleteExecution(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleDeleteExecution(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if s.execs.(*execRegistry).Cancel(id) {
+	if s.execs.Cancel(id) {
 		w.WriteHeader(http.StatusAccepted)
 		json.NewEncoder(w).Encode(map[string]string{"status": "cancelling", "id": id})
 	} else {
@@ -238,11 +250,11 @@ func (s *AdminHTTPServer) handleDeleteExecution(w http.ResponseWriter, r *http.R
 	}
 }
 
-func (s *AdminHTTPServer) handleListExecutions(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleListExecutions(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(s.execs.List())
 }
 
-func (s *AdminHTTPServer) handleListPartitions(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleListPartitions(w http.ResponseWriter, r *http.Request) {
 	assignments := s.partitions.Assignments()
 	nodeParts := make(map[string][]pkgpartition.PartitionID)
 	for _, nodeID := range s.membership.AliveNodes() {
@@ -255,7 +267,7 @@ func (s *AdminHTTPServer) handleListPartitions(w http.ResponseWriter, r *http.Re
 	})
 }
 
-func (s *AdminHTTPServer) handleRebalance(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleRebalance(w http.ResponseWriter, r *http.Request) {
 	token := s.leadership.CaptureLeadershipToken()
 	if !token.Valid {
 		http.Error(w, "not leader", http.StatusForbidden)

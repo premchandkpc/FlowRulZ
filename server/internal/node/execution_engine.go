@@ -7,7 +7,7 @@ import (
 	"github.com/premchandkpc/FlowRulZ/server/bridge"
 	"github.com/premchandkpc/FlowRulZ/server/internal/core/execution"
 	"github.com/premchandkpc/FlowRulZ/server/internal/execstate"
-	"github.com/premchandkpc/FlowRulZ/server/internal/observability"
+	"github.com/premchandkpc/FlowRulZ/server/internal/ports"
 )
 
 // ExecutionEngine wraps core/execution.Engine and provides the node-local API.
@@ -16,9 +16,10 @@ type ExecutionEngine struct {
 	core    *execution.Engine
 	engine  NodeEngine
 	state   StateStore
-	execs   ExecRegistry
+	execs   execstate.ExecRegistry
 	saga    NodeSagaTracker
 	invoker ServiceInvoker
+	metrics ports.MetricsCollector
 }
 
 // NewExecutionEngine creates an ExecutionEngine delegating to core/execution.Engine.
@@ -26,9 +27,10 @@ func NewExecutionEngine(
 	engine NodeEngine,
 	_ interface{}, // scheduler (unused in core engine)
 	stateStore StateStore,
-	execs ExecRegistry,
+	execs execstate.ExecRegistry,
 	saga NodeSagaTracker,
 	invoker ServiceInvoker,
+	metrics ports.MetricsCollector,
 ) *ExecutionEngine {
 	coreEngine := execution.NewEngine(
 		engine,
@@ -36,7 +38,7 @@ func NewExecutionEngine(
 		&execRegistryAdapter{inner: execs},
 		&sagaAdapter{inner: saga},
 		invoker,
-		&metricsAdapter{inner: observability.NewMetricsCollector()},
+		metrics,
 	)
 	return &ExecutionEngine{
 		core:    coreEngine,
@@ -45,6 +47,7 @@ func NewExecutionEngine(
 		execs:   execs,
 		saga:    saga,
 		invoker: invoker,
+		metrics: metrics,
 	}
 }
 
@@ -78,11 +81,11 @@ func (e *ExecutionEngine) runSteps(ctx context.Context, execID string, plan []by
 
 		switch out.Result {
 		case bridge.StepDone:
-			observability.RecordExec("completed")
+			e.metrics.RecordExec("completed")
 			return out.Output, nil
 
 		case bridge.StepPending:
-			observability.RecordExec("svc_pending")
+			e.metrics.RecordExec("svc_pending")
 			rawName, ok := names[out.PendingSvc]
 			if !ok {
 				rawName = fmt.Sprintf("svc-%d", out.PendingSvc)

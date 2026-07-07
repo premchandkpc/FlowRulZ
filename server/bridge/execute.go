@@ -180,8 +180,7 @@ func ExecuteStep(plan, ctxBytes, respBytes []byte, caller ServiceCaller) (*StepO
 	outBuf := *outputBufPool.Get().(*[]byte)
 	defer outputBufPool.Put(&outBuf)
 	var outLen C.size_t
-	errBuf := *outputBufPool.Get().(*[]byte)
-	defer outputBufPool.Put(&errBuf)
+	errBuf := make([]byte, 4096)
 	var errLen C.size_t
 	var pendingSvcID C.uint16_t
 	pendingBodyBuf := *outputBufPool.Get().(*[]byte)
@@ -217,7 +216,7 @@ func ExecuteStep(plan, ctxBytes, respBytes []byte, caller ServiceCaller) (*StepO
 	}
 
 	if rc == -8 || rc == -1 {
-		out.Error = string(copyBytes(errBuf, int(errLen)))
+		out.Error = string(errBuf[:errLen])
 	}
 
 	return out, nil

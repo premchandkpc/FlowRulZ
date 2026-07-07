@@ -1,6 +1,6 @@
 # Cluster Model
 
-FlowRulZ operates as a **single-leader cluster** using Raft (`hashicorp/raft`) for leader election and term management, with a `NoopFSM` — no application state is replicated through the Raft log. The gRPC-based Cluster Bus provides peer-to-peer messaging for state distribution; no Kafka, no ZK required.
+FlowRulZ operates as a **single-leader cluster** with no Raft. The gRPC-based Cluster Bus provides peer-to-peer messaging; no Kafka, no ZK, no external dependencies.
 
 ## Node Roles
 
@@ -40,22 +40,7 @@ The **Cluster Bus** (`server/internal/cluster/`) is a gRPC-based peer-to-peer ov
 - **ClusterNode**: manages Publish/Subscribe, peer membership, topic handlers
 - **ClusterProducer** / **ClusterConsumer**: adapters implementing `transport.MessageProducer` / `transport.MessageConsumer`
 - **Topics**: in-memory per-node routing tables — messages published to a topic are delivered to all subscribers across the cluster via gRPC streams
-- **No external deps for messaging**: no Kafka, no ZK required — pure gRPC p2p Cluster Bus
-
-### Transport Factory
-
-The `TransportFactory` (`server/internal/transport/factory.go`) abstracts all transport backends behind a single interface. At startup:
-
-1. Always registers in-memory backend as fallback
-2. If `FLOWRULZ_KAFKA_BROKERS` is set → registers Kafka, selects `KindKafka`
-3. If no Kafka brokers → creates `ClusterNode`, registers cluster, selects `KindCluster`
-4. If neither → stays at `KindMemory`
-
-The `MessageRouter` creates all 5 consumers (members, plans, acks, partitions, user topic) through the factory. Producers for DLQ, plans, acks, and partitions also use the factory.
-
-`cluster.RegisterClusterTransport(factory, node)` is the adapter that plugs the cluster's gRPC producer/consumer into the factory.
-
-See `docs/transport-factory.md` for details.
+- **No external deps**: no Kafka, no ZK, no Raft — pure gRPC p2p
 
 Kafka (`server/internal/transport/kafka/`) remains as a legacy fallback when `FLOWRULZ_KAFKA_BROKERS` is explicitly set.
 
@@ -119,18 +104,17 @@ This converges membership state across the cluster faster than heartbeat-only de
 
 ## Leader Election
 
-**Raft consensus (`hashicorp/raft`) with `NoopFSM` — leader election and term management only, no state replication.**
+**Simple ordering — no Raft, no Paxos, no external dependency.**
 
 ```
-Algorithm (via Raft):
-1. Nodes join Raft cluster via seed node's /cluster/join endpoint
-2. Raft elects leader via standard Raft protocol (log-based heartbeat)
-3. Leader status tracked via RaftCluster.LeaderCh()
-4. NoopFSM: Apply/Snapshot/Restore are all no-ops — no state goes through Raft log
-5. Application state (plans, partitions) distributed via gRPC Cluster Bus
+Algorithm:
+1. Every node consumes `_flowrulz_members` topic
+2. Sort alive nodes by (ID, ascending)
+3. Lowest-ID node is leader
+4. If leader stops heartbeating → nodes detect absence (3x timeout)
+5. Next-lowest-ID node promotes itself to leader
+6. New leader publishes its leadership claim to `_flowrulz_members`
 ```
-
-**Fallback**: When Raft is not configured (`deps.Cluster == nil`), `SingleLeaderStrategy` assumes the node is always leader (single-node mode). The `membership.go` lowest-ID logic exists only in this fallback path.
 
 **Epoch-based fencing**: Each leader election increments a monotonic `term` number. The leader embeds its term in every `PlanMessage`. Followers reject plan activation from any term lower than their known current term. `PlanDistributor.SetTerm()` / `CurrentTerm()` manage the term atomically.
 
@@ -257,7 +241,7 @@ Per-node component (`server/internal/replyrouter/`). Tracks pending request/repl
 | Failure | Detection | Recovery |
 |---------|-----------|----------|
 | Node crash | Missing 3 heartbeats | Leader marks Dead, partitions reassigned |
-| Leader crash | Raft heartbeat timeout | Raft re-elects new leader; next-lowest-ID in Raft cluster |
+| Leader crash | Missing 3 heartbeats from leader | Next-lowest-ID follower becomes leader |
 | Service unhealthy | Active health check fails | Removed from rotation |
 | Network partition | Heartbeats lost from subset | On heal, rejoining nodes catch up via plans topic |
 

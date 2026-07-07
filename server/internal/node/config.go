@@ -56,7 +56,8 @@ type Config struct {
 	KafkaIdempotent bool
 
 	// Persistence
-	PersistPath string
+	PersistPath  string
+	ExecStateDir string
 
 	// Topics
 	Topic string
@@ -73,6 +74,17 @@ func DefaultConfig() *Config {
 		Topic:         DefaultTopic,
 		KafkaGroupID:  DefaultGroupID,
 	}
+}
+
+func (c *Config) ExecDir() string {
+	if c.ExecStateDir != "" {
+		return c.ExecStateDir
+	}
+	return filepath.Join(os.TempDir(), "flowrulz-execstate")
+}
+
+func (c *Config) DLQDir() string {
+	return filepath.Join(os.TempDir(), "flowrulz-dlq")
 }
 
 func (c *Config) GRPCListenAddr() string {

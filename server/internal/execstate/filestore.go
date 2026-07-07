@@ -14,45 +14,15 @@ import (
 )
 
 type FileStore struct {
-	dir   string
-	mu    sync.RWMutex
-	index map[string]Status // id → status (in-memory index for O(1) ListByStatus)
+	dir string
+	mu  sync.RWMutex
 }
 
 func NewFileStore(dir string) (*FileStore, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("execstate: mkdir: %w", err)
 	}
-	fs := &FileStore{
-		dir:   dir,
-		index: make(map[string]Status),
-	}
-	// Build index from existing files
-	if err := fs.buildIndex(); err != nil {
-		return nil, err
-	}
-	return fs, nil
-}
-
-func (fs *FileStore) buildIndex() error {
-	entries, err := os.ReadDir(fs.dir)
-	if err != nil {
-		return fmt.Errorf("execstate: read dir: %w", err)
-	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		id := strings.TrimSuffix(e.Name(), ".json")
-		s, err := fs.readLocked(filepath.Join(fs.dir, e.Name()))
-		if err != nil {
-			slog.Warn("execstate: skip bad file during index build", "file", e.Name(), "error", err)
-			continue
-		}
-		fs.index[id] = s.Status
-	}
-	slog.Info("execstate: index built", "entries", len(fs.index))
-	return nil
+	return &FileStore{dir: dir}, nil
 }
 
 func (fs *FileStore) path(id string) string {
@@ -64,14 +34,10 @@ func (fs *FileStore) Create(_ context.Context, s *State) error {
 	defer fs.mu.Unlock()
 
 	p := fs.path(s.ID)
-	if _, exists := fs.index[s.ID]; exists {
+	if _, err := os.Stat(p); err == nil {
 		return fmt.Errorf("execstate: %s already exists", s.ID)
 	}
-	if err := fs.writeLocked(p, s); err != nil {
-		return err
-	}
-	fs.index[s.ID] = s.Status
-	return nil
+	return fs.writeLocked(p, s)
 }
 
 func (fs *FileStore) Save(_ context.Context, s *State) error {
@@ -79,11 +45,7 @@ func (fs *FileStore) Save(_ context.Context, s *State) error {
 	defer fs.mu.Unlock()
 
 	s.UpdatedAt = makeTimestamp()
-	if err := fs.writeLocked(fs.path(s.ID), s); err != nil {
-		return err
-	}
-	fs.index[s.ID] = s.Status
-	return nil
+	return fs.writeLocked(fs.path(s.ID), s)
 }
 
 func (fs *FileStore) Load(_ context.Context, id string) (*State, error) {
@@ -97,26 +59,27 @@ func (fs *FileStore) ListByStatus(_ context.Context, statuses ...Status) ([]*Sta
 	fs.mu.RLock()
 	defer fs.mu.RUnlock()
 
+	entries, err := os.ReadDir(fs.dir)
+	if err != nil {
+		return nil, fmt.Errorf("execstate: read dir: %w", err)
+	}
+
 	want := make(map[Status]bool)
 	for _, s := range statuses {
 		want[s] = true
 	}
 
-	// Collect IDs matching the requested statuses from index
-	var ids []string
-	for id, status := range fs.index {
-		if len(want) > 0 && !want[status] {
+	var result []*State
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
-		ids = append(ids, id)
-	}
-
-	// Read only the matching files
-	var result []*State
-	for _, id := range ids {
-		s, err := fs.readLocked(filepath.Join(fs.dir, id+".json"))
+		s, err := fs.readLocked(filepath.Join(fs.dir, e.Name()))
 		if err != nil {
-			slog.Warn("execstate: skip", "id", id, "error", err)
+			slog.Warn("execstate: skip", "file", e.Name(), "error", err)
+			continue
+		}
+		if len(want) > 0 && !want[s.Status] {
 			continue
 		}
 		result = append(result, s)
@@ -136,7 +99,6 @@ func (fs *FileStore) Delete(_ context.Context, id string) error {
 	if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("execstate: remove %s: %w", id, err)
 	}
-	delete(fs.index, id)
 	return nil
 }
 

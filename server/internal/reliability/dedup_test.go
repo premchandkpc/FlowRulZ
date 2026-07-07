@@ -22,14 +22,14 @@ func TestDedupMarkAndSeen(t *testing.T) {
 }
 
 func TestDedupMaxSize(t *testing.T) {
-	// Use small total size (16 = 1 per shard) to test per-shard eviction
-	dt := NewDedupTracker(16, time.Minute)
-	for i := 0; i < 100; i++ {
-		dt.Mark("key-" + string(rune('a'+i%26)) + "-" + string(rune('0'+i/26)))
-	}
-	// Total entries <= numShards (16)
-	if dt.Len() > 16 {
-		t.Fatalf("expected <= 16 entries, got %d", dt.Len())
+	dt := NewDedupTracker(3, time.Minute)
+	dt.Mark("a")
+	dt.Mark("b")
+	dt.Mark("c")
+	dt.Mark("d") // evicts oldest
+
+	if dt.Len() != 3 {
+		t.Fatalf("expected 3 entries, got %d", dt.Len())
 	}
 }
 
@@ -62,9 +62,8 @@ func TestDedupCleanupExpired(t *testing.T) {
 
 func TestDedupDefaults(t *testing.T) {
 	dt := NewDedupTracker(0, 0)
-	// Per-shard maxSize = 10000/16 = 625
-	if dt.maxSize != 625 {
-		t.Errorf("expected default per-shard maxSize 625, got %d", dt.maxSize)
+	if dt.maxSize != 10000 {
+		t.Errorf("expected default maxSize 10000, got %d", dt.maxSize)
 	}
 	if dt.ttl != 5*time.Minute {
 		t.Errorf("expected default ttl 5m, got %v", dt.ttl)
@@ -72,13 +71,19 @@ func TestDedupDefaults(t *testing.T) {
 }
 
 func TestDedupEvictsOldest(t *testing.T) {
-	// With sharding, use many keys to ensure same-shard collision and eviction
-	dt := NewDedupTracker(32, time.Minute) // 2 per shard
-	for i := 0; i < 100; i++ {
-		dt.Mark("key-" + string(rune('a'+i%26)) + "-" + string(rune('0'+i/26)))
+	dt := NewDedupTracker(2, time.Minute)
+	dt.Mark("old")
+	time.Sleep(time.Millisecond)
+	dt.Mark("new")
+	dt.Mark("latest") // evicts "old"
+
+	if dt.Seen("old") {
+		t.Error("expected 'old' evicted (oldest)")
 	}
-	// At least some eviction must have occurred
-	if dt.Len() > 32 {
-		t.Errorf("expected <= 32 entries, got %d", dt.Len())
+	if !dt.Seen("new") {
+		t.Error("expected 'new' still present")
+	}
+	if !dt.Seen("latest") {
+		t.Error("expected 'latest' present")
 	}
 }

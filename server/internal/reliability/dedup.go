@@ -3,12 +3,9 @@ package reliability
 import (
 	"container/list"
 	"context"
-	"hash/maphash"
 	"sync"
 	"time"
 )
-
-const numShards = 16
 
 type dedupEntry struct {
 	key       string
@@ -16,17 +13,12 @@ type dedupEntry struct {
 	elem      *list.Element
 }
 
-type dedupShard struct {
-	mu      sync.Mutex
+type DedupTracker struct {
+	mu      sync.RWMutex
 	entries map[string]dedupEntry
 	order   *list.List
-}
-
-type DedupTracker struct {
-	shards  [numShards]dedupShard
 	maxSize int
 	ttl     time.Duration
-	hasher  maphash.Hash
 }
 
 func NewDedupTracker(maxSize int, ttl time.Duration) *DedupTracker {
@@ -36,84 +28,64 @@ func NewDedupTracker(maxSize int, ttl time.Duration) *DedupTracker {
 	if ttl <= 0 {
 		ttl = 5 * time.Minute
 	}
-	dt := &DedupTracker{
-		maxSize: maxSize / numShards,
+	return &DedupTracker{
+		entries: make(map[string]dedupEntry),
+		order:   list.New(),
+		maxSize: maxSize,
 		ttl:     ttl,
 	}
-	for i := range dt.shards {
-		dt.shards[i].entries = make(map[string]dedupEntry)
-		dt.shards[i].order = list.New()
-	}
-	return dt
-}
-
-func (dt *DedupTracker) shard(key string) *dedupShard {
-	dt.hasher.Reset()
-	dt.hasher.WriteString(key)
-	return &dt.shards[dt.hasher.Sum64()%numShards]
 }
 
 func (dt *DedupTracker) Seen(key string) bool {
-	s := dt.shard(key)
-	s.mu.Lock()
-	e, ok := s.entries[key]
-	if ok && time.Since(e.timestamp) > dt.ttl {
-		s.order.Remove(e.elem)
-		delete(s.entries, key)
-		s.mu.Unlock()
-		return false
-	}
-	s.mu.Unlock()
+	dt.mu.RLock()
+	_, ok := dt.entries[key]
+	dt.mu.RUnlock()
 	return ok
 }
 
 func (dt *DedupTracker) Mark(key string) {
-	s := dt.shard(key)
-	s.mu.Lock()
-	dt.markLocked(s, key)
-	s.mu.Unlock()
+	dt.mu.Lock()
+	defer dt.mu.Unlock()
+	dt.markLocked(key)
 }
 
-func (dt *DedupTracker) markLocked(s *dedupShard, key string) {
-	now := time.Now()
-	if existing, ok := s.entries[key]; ok {
-		existing.timestamp = now
-		s.order.MoveToFront(existing.elem)
+func (dt *DedupTracker) markLocked(key string) {
+	if existing, ok := dt.entries[key]; ok {
+		existing.timestamp = time.Now()
+		dt.order.MoveToFront(existing.elem)
+		dt.entries[key] = existing
 		return
 	}
-	if len(s.entries) >= dt.maxSize {
-		oldest := s.order.Back()
+	if len(dt.entries) >= dt.maxSize {
+		oldest := dt.order.Back()
 		if oldest != nil {
-			delete(s.entries, oldest.Value.(string))
-			s.order.Remove(oldest)
+			oldestKey := dt.order.Remove(oldest).(string)
+			delete(dt.entries, oldestKey)
 		}
 	}
-	elem := s.order.PushFront(key)
-	s.entries[key] = dedupEntry{key: key, timestamp: now, elem: elem}
+	elem := dt.order.PushFront(key)
+	dt.entries[key] = dedupEntry{key: key, timestamp: time.Now(), elem: elem}
 }
 
 // CheckAndMark atomically checks if a key has been seen and marks it if not.
 // Returns true if the key was already seen (duplicate), false if it's new.
+// This eliminates the TOCTOU race between Seen() and Mark().
 func (dt *DedupTracker) CheckAndMark(key string) bool {
-	s := dt.shard(key)
-	s.mu.Lock()
-
-	if e, ok := s.entries[key]; ok {
-		if time.Since(e.timestamp) > dt.ttl {
-			s.order.Remove(e.elem)
-			delete(s.entries, key)
-			s.mu.Unlock()
-			dt.markLocked(s, key)
-			return false
+	dt.mu.Lock()
+	defer dt.mu.Unlock()
+	
+	if _, ok := dt.entries[key]; ok {
+		// Already seen - update timestamp and move to front
+		if existing, ok := dt.entries[key]; ok {
+			existing.timestamp = time.Now()
+			dt.order.MoveToFront(existing.elem)
+			dt.entries[key] = existing
 		}
-		e.timestamp = time.Now()
-		s.order.MoveToFront(e.elem)
-		s.mu.Unlock()
 		return true
 	}
-
-	dt.markLocked(s, key)
-	s.mu.Unlock()
+	
+	// Not seen - mark it
+	dt.markLocked(key)
 	return false
 }
 
@@ -126,53 +98,29 @@ func (dt *DedupTracker) StartCleanup(ctx context.Context, interval time.Duration
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				dt.mu.Lock()
 				now := time.Now()
-				for i := range dt.shards {
-					s := &dt.shards[i]
-					s.mu.Lock()
-				// Walk from back (oldest), stop at first non-expired
-				for e := s.order.Back(); e != nil; {
-					key := e.Value.(string)
-					entry, ok := s.entries[key]
-					if !ok {
-						prev := e.Prev()
-						s.order.Remove(e)
-						e = prev
-						continue
-					}
-					if now.Sub(entry.timestamp) > dt.ttl {
-						prev := e.Prev()
-						s.order.Remove(e)
-						delete(s.entries, key)
-						e = prev
-					} else {
-						break // rest are newer
+				for k, v := range dt.entries {
+					if now.Sub(v.timestamp) > dt.ttl {
+						dt.order.Remove(v.elem)
+						delete(dt.entries, k)
 					}
 				}
-					s.mu.Unlock()
-				}
+				dt.mu.Unlock()
 			}
 		}
 	}()
 }
 
 func (dt *DedupTracker) Len() int {
-	n := 0
-	for i := range dt.shards {
-		s := &dt.shards[i]
-		s.mu.Lock()
-		n += len(s.entries)
-		s.mu.Unlock()
-	}
-	return n
+	dt.mu.RLock()
+	defer dt.mu.RUnlock()
+	return len(dt.entries)
 }
 
 func (dt *DedupTracker) Clear() {
-	for i := range dt.shards {
-		s := &dt.shards[i]
-		s.mu.Lock()
-		s.entries = make(map[string]dedupEntry)
-		s.order.Init()
-		s.mu.Unlock()
-	}
+	dt.mu.Lock()
+	defer dt.mu.Unlock()
+	dt.entries = make(map[string]dedupEntry)
+	dt.order.Init()
 }

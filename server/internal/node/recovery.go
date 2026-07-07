@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/premchandkpc/FlowRulZ/server/bridge"
 	"github.com/premchandkpc/FlowRulZ/server/internal/execstate"
 )
+
+const maxRecoveryConcurrency = 8
 
 func (n *ProdNode) tryCompensate(execID string) {
 	if n.Saga == nil {
@@ -29,9 +32,27 @@ func (n *ProdNode) recoverInFlight(ctx context.Context) {
 		return
 	}
 
-	for _, st := range inflight {
-		go n.recoverExecution(st)
+	if len(inflight) == 0 {
+		return
 	}
+
+	slog.Info("recovery: found in-flight executions", "count", len(inflight))
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, maxRecoveryConcurrency)
+
+	for _, st := range inflight {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(s *execstate.State) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			n.recoverExecution(s)
+		}(st)
+	}
+
+	wg.Wait()
+	slog.Info("recovery: completed", "count", len(inflight))
 }
 
 func (n *ProdNode) recoverExecution(st *execstate.State) {

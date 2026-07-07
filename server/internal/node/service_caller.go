@@ -3,19 +3,27 @@ package node
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"regexp"
 	"sync"
 	"time"
 
 	"github.com/premchandkpc/FlowRulZ/server/internal/registry"
 	"github.com/premchandkpc/FlowRulZ/server/internal/reliability"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+)
+
+var (
+	validServiceName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`)
+	validMethodName  = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9/_-]{0,255}$`)
 )
 
 // ServiceCaller handles protocol-aware service calls.
@@ -23,6 +31,16 @@ type ServiceCaller struct {
 	httpClient    *http.Client
 	grpcConns     map[string]*grpc.ClientConn
 	grpcConnsMu   sync.Mutex
+	tcpConns      map[string]*tcpConnPool
+	tcpConnsMu    sync.Mutex
+	tlsCertFile   string
+	tlsKeyFile    string
+}
+
+type tcpConnPool struct {
+	mu    sync.Mutex
+	conns chan net.Conn
+	addr  string
 }
 
 // NewServiceCaller creates a new ServiceCaller with default HTTP client.
@@ -37,7 +55,89 @@ func NewServiceCaller() *ServiceCaller {
 			},
 		},
 		grpcConns: make(map[string]*grpc.ClientConn),
+		tcpConns:  make(map[string]*tcpConnPool),
 	}
+}
+
+// NewServiceCallerWithTLS creates a new ServiceCaller with TLS for gRPC connections.
+func NewServiceCallerWithTLS(certFile, keyFile string) *ServiceCaller {
+	return &ServiceCaller{
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 10,
+				IdleConnTimeout:     90 * time.Second,
+			},
+		},
+		grpcConns:   make(map[string]*grpc.ClientConn),
+		tcpConns:    make(map[string]*tcpConnPool),
+		tlsCertFile: certFile,
+		tlsKeyFile:  keyFile,
+	}
+}
+
+const tcpPoolSize = 5
+
+func (sc *ServiceCaller) getTCPPool(addr string) *tcpConnPool {
+	sc.tcpConnsMu.Lock()
+	defer sc.tcpConnsMu.Unlock()
+
+	if pool, ok := sc.tcpConns[addr]; ok {
+		return pool
+	}
+
+	pool := &tcpConnPool{
+		conns: make(chan net.Conn, tcpPoolSize),
+		addr:  addr,
+	}
+	sc.tcpConns[addr] = pool
+	return pool
+}
+
+func (p *tcpConnPool) get() (net.Conn, error) {
+	select {
+	case conn := <-p.conns:
+		if conn != nil {
+			return conn, nil
+		}
+	default:
+	}
+	return net.DialTimeout("tcp", p.addr, 10*time.Second)
+}
+
+func (p *tcpConnPool) put(conn net.Conn) {
+	if conn == nil {
+		return
+	}
+	select {
+	case p.conns <- conn:
+	default:
+		conn.Close()
+	}
+}
+
+func (p *tcpConnPool) close() {
+	close(p.conns)
+	for conn := range p.conns {
+		conn.Close()
+	}
+}
+
+// validateServiceName checks that a service name contains only safe characters.
+func validateServiceName(name string) error {
+	if !validServiceName.MatchString(name) {
+		return fmt.Errorf("invalid service name: %q (must be 1-128 alphanumeric/dot/dash/underscore)", name)
+	}
+	return nil
+}
+
+// validateMethodName checks that a method name contains only safe characters.
+func validateMethodName(method string) error {
+	if !validMethodName.MatchString(method) {
+		return fmt.Errorf("invalid method name: %q (must be 1-256 alphanumeric/slash/dash/underscore)", method)
+	}
+	return nil
 }
 
 // CallService dispatches a service call based on the endpoint's protocol.
@@ -51,6 +151,17 @@ func (sc *ServiceCaller) CallService(
 ) ([]byte, error) {
 	if inst == nil {
 		return nil, fmt.Errorf("nil service instance")
+	}
+
+	if err := validateServiceName(inst.Name); err != nil {
+		return nil, err
+	}
+	if err := validateMethodName(method); err != nil {
+		return nil, err
+	}
+
+	if len(body) > 10*1024*1024 {
+		return nil, fmt.Errorf("request body too large: %d bytes (max 10MB)", len(body))
 	}
 
 	switch inst.Endpoint.Protocol {
@@ -148,15 +259,15 @@ func (sc *ServiceCaller) callTCP(
 	reg *registry.ServiceRegistry,
 ) ([]byte, error) {
 	addr := fmt.Sprintf("%s:%d", inst.Endpoint.Address, inst.Endpoint.Port)
-	
-	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
+	pool := sc.getTCPPool(addr)
+
+	conn, err := pool.get()
 	if err != nil {
 		cb.Failure()
 		reg.MarkUnhealthy(inst.Name, inst.Endpoint.NodeID)
 		return nil, fmt.Errorf("tcp dial: %w", err)
 	}
-	defer conn.Close()
-	
+
 	// Set deadline
 	deadline, ok := ctx.Deadline()
 	if ok {
@@ -164,39 +275,48 @@ func (sc *ServiceCaller) callTCP(
 	} else {
 		conn.SetDeadline(time.Now().Add(30 * time.Second))
 	}
-	
+
 	// Write length-prefixed message: [4 bytes length][method][body]
 	msg := append([]byte(method), body...)
 	lenBuf := make([]byte, 4)
 	binary.BigEndian.PutUint32(lenBuf, uint32(len(msg)))
-	
+
 	if _, err := conn.Write(lenBuf); err != nil {
+		conn.Close()
 		cb.Failure()
 		return nil, fmt.Errorf("tcp write length: %w", err)
 	}
 	if _, err := conn.Write(msg); err != nil {
+		conn.Close()
 		cb.Failure()
 		return nil, fmt.Errorf("tcp write body: %w", err)
 	}
-	
+
 	// Read response: [4 bytes length][response body]
 	if _, err := io.ReadFull(conn, lenBuf); err != nil {
+		conn.Close()
 		cb.Failure()
 		return nil, fmt.Errorf("tcp read length: %w", err)
 	}
 	respLen := binary.BigEndian.Uint32(lenBuf)
-	
+
 	if respLen > 10*1024*1024 { // 10MB max
+		conn.Close()
 		cb.Failure()
 		return nil, fmt.Errorf("tcp response too large: %d bytes", respLen)
 	}
-	
+
 	respBody := make([]byte, respLen)
 	if _, err := io.ReadFull(conn, respBody); err != nil {
+		conn.Close()
 		cb.Failure()
 		return nil, fmt.Errorf("tcp read body: %w", err)
 	}
-	
+
+	// Reset deadline and return connection to pool
+	conn.SetDeadline(time.Time{})
+	pool.put(conn)
+
 	cb.Success()
 	return respBody, nil
 }
@@ -205,30 +325,48 @@ func (sc *ServiceCaller) callTCP(
 func (sc *ServiceCaller) getGRPCConn(addr string) (*grpc.ClientConn, error) {
 	sc.grpcConnsMu.Lock()
 	defer sc.grpcConnsMu.Unlock()
-	
+
 	if conn, ok := sc.grpcConns[addr]; ok {
 		return conn, nil
 	}
-	
-	conn, err := grpc.NewClient(addr, 
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
-	)
+
+	var opts []grpc.DialOption
+	if sc.tlsCertFile != "" && sc.tlsKeyFile != "" {
+		cert, err := tls.LoadX509KeyPair(sc.tlsCertFile, sc.tlsKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("load TLS cert: %w", err)
+		}
+		creds := credentials.NewTLS(&tls.Config{
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS12,
+		})
+		opts = append(opts, grpc.WithTransportCredentials(creds))
+	} else {
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	}
+
+	conn, err := grpc.NewClient(addr, opts...)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	sc.grpcConns[addr] = conn
 	return conn, nil
 }
 
-// Close closes all gRPC connections.
+// Close closes all gRPC connections and TCP pools.
 func (sc *ServiceCaller) Close() {
 	sc.grpcConnsMu.Lock()
-	defer sc.grpcConnsMu.Unlock()
-	
 	for addr, conn := range sc.grpcConns {
 		conn.Close()
 		delete(sc.grpcConns, addr)
 	}
+	sc.grpcConnsMu.Unlock()
+
+	sc.tcpConnsMu.Lock()
+	for addr, pool := range sc.tcpConns {
+		pool.close()
+		delete(sc.tcpConns, addr)
+	}
+	sc.tcpConnsMu.Unlock()
 }

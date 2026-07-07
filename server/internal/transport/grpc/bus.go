@@ -2,6 +2,7 @@ package grpctransport
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/premchandkpc/FlowRulZ/server/pkg/transport"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -17,6 +19,8 @@ type TopicHandler func(ctx context.Context, msg *BusMessage)
 
 type GRPCBus struct {
 	addr        string
+	tlsCertFile string
+	tlsKeyFile  string
 	subscribers map[string]map[string]chan *BusMessage
 	handlers    map[string]TopicHandler
 	mu          sync.RWMutex
@@ -31,6 +35,18 @@ type GRPCBus struct {
 func NewGRPCBus(addr string) *GRPCBus {
 	return &GRPCBus{
 		addr:        addr,
+		subscribers: make(map[string]map[string]chan *BusMessage),
+		handlers:    make(map[string]TopicHandler),
+		stopCh:      make(chan struct{}),
+	}
+}
+
+// NewGRPCBusWithTLS creates a gRPC bus with TLS credentials.
+func NewGRPCBusWithTLS(addr, certFile, keyFile string) *GRPCBus {
+	return &GRPCBus{
+		addr:        addr,
+		tlsCertFile: certFile,
+		tlsKeyFile:  keyFile,
 		subscribers: make(map[string]map[string]chan *BusMessage),
 		handlers:    make(map[string]TopicHandler),
 		stopCh:      make(chan struct{}),
@@ -62,7 +78,24 @@ func (b *GRPCBus) Start() error {
 		return fmt.Errorf("grpc listen: %w", err)
 	}
 	b.lis = lis
-	b.server = grpc.NewServer()
+
+	var opts []grpc.ServerOption
+	if b.tlsCertFile != "" && b.tlsKeyFile != "" {
+		cert, err := tls.LoadX509KeyPair(b.tlsCertFile, b.tlsKeyFile)
+		if err != nil {
+			return fmt.Errorf("grpc TLS cert: %w", err)
+		}
+		creds := credentials.NewTLS(&tls.Config{
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS12,
+		})
+		opts = append(opts, grpc.Creds(creds))
+		slog.Info("gRPC bus starting with TLS", "addr", b.addr)
+	} else {
+		slog.Info("gRPC bus starting (plaintext)", "addr", b.addr)
+	}
+
+	b.server = grpc.NewServer(opts...)
 	RegisterEventBusServer(b.server, b)
 	b.started = true
 

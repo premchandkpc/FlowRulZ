@@ -35,6 +35,10 @@ type Config struct {
 	// In k8s, set to pod DNS name (e.g. flowrulz-0.flowrulz-bus.<ns>.svc.cluster.local).
 	AdvertiseAddr string
 
+	// TLS
+	TLSCertFile string
+	TLSKeyFile  string
+
 	// Raft
 	RaftPort      int
 	RaftDir       string
@@ -68,6 +72,8 @@ func DefaultConfig() *Config {
 		NodeID:        DefaultNodeID,
 		HTTPAddr:      DefaultHTTPAddr,
 		GRPCAddr:      DefaultGRPCAddr,
+		TLSCertFile:   os.Getenv("FLOWRULZ_TLS_CERT"),
+		TLSKeyFile:    os.Getenv("FLOWRULZ_TLS_KEY"),
 		RaftPort:      cluster.DefaultRaftPort,
 		RaftDir:       filepath.Join(os.TempDir(), "flowrulz-raft"),
 		RaftBootstrap: false,
@@ -127,6 +133,11 @@ func (c *Config) RegistryHeartbeatTimeout() time.Duration {
 
 func (c *Config) NumPartitions() int {
 	return defaultNumPartitions
+}
+
+// HasTLS returns true if TLS certificate and key are configured.
+func (c *Config) HasTLS() bool {
+	return c.TLSCertFile != "" && c.TLSKeyFile != ""
 }
 
 // AdvertiseHost returns the host portion of the advertise address.

@@ -18,12 +18,13 @@ import (
 const maxRequestBodySize = 1 << 20
 
 type Server struct {
-	engine   *engine.Engine
-	mux      *http.ServeMux
-	apiKey   string
-	dlq      *reliability.DLQ
-	compiler compiler.Compiler
-	rules    *ruleService
+	engine      *engine.Engine
+	mux         *http.ServeMux
+	apiKey      string
+	dlq         *reliability.DLQ
+	compiler    compiler.Compiler
+	rules       *ruleService
+	rateLimiter *reliability.RateLimiter
 }
 
 func New(eng *engine.Engine) *Server {
@@ -36,36 +37,39 @@ func NewWithCompiler(eng *engine.Engine, comp compiler.Compiler) *Server {
 	}
 	apiKey := os.Getenv("FLOWRULZ_API_KEY")
 	if apiKey == "" {
-		slog.Warn("FLOWRULZ_API_KEY not set, admin API will require authentication on startup")
+		slog.Warn("FLOWRULZ_API_KEY not set — admin API requires authentication; all mutating endpoints will reject unauthenticated requests")
 	}
+	rl := reliability.NewRateLimiter()
+	rl.SetBucket("admin-api", 50, 100) // 50 req/s, burst of 100
 	s := &Server{
-		engine:   eng,
-		mux:      http.NewServeMux(),
-		apiKey:   apiKey,
-		compiler: comp,
-		rules:    newRuleService(eng, comp),
+		engine:      eng,
+		mux:         http.NewServeMux(),
+		apiKey:      apiKey,
+		compiler:    comp,
+		rules:       newRuleService(eng, comp),
+		rateLimiter: rl,
 	}
-	s.mux.HandleFunc("POST /rules", s.auth(s.deployRule))
-	s.mux.HandleFunc("DELETE /rules/{id}", s.auth(s.removeRule))
-	s.mux.HandleFunc("GET /rules", s.auth(s.listRules))
-	s.mux.HandleFunc("GET /rules/{id}", s.auth(s.getRule))
-	s.mux.HandleFunc("GET /rules/{id}/versions", s.auth(s.listVersions))
-	s.mux.HandleFunc("POST /rules/{id}/validate", s.auth(s.validateRule))
-	s.mux.HandleFunc("POST /rules/{id}/promote", s.auth(s.promoteVersion))
-	s.mux.HandleFunc("POST /rules/{id}/rollback", s.auth(s.rollbackVersion))
-	s.mux.HandleFunc("GET /lanes", s.auth(s.listLanes))
+	s.mux.HandleFunc("POST /rules", s.auth(s.rateLimit(s.deployRule)))
+	s.mux.HandleFunc("DELETE /rules/{id}", s.auth(s.rateLimit(s.removeRule)))
+	s.mux.HandleFunc("GET /rules", s.auth(s.rateLimit(s.listRules)))
+	s.mux.HandleFunc("GET /rules/{id}", s.auth(s.rateLimit(s.getRule)))
+	s.mux.HandleFunc("GET /rules/{id}/versions", s.auth(s.rateLimit(s.listVersions)))
+	s.mux.HandleFunc("POST /rules/{id}/validate", s.auth(s.rateLimit(s.validateRule)))
+	s.mux.HandleFunc("POST /rules/{id}/promote", s.auth(s.rateLimit(s.promoteVersion)))
+	s.mux.HandleFunc("POST /rules/{id}/rollback", s.auth(s.rateLimit(s.rollbackVersion)))
+	s.mux.HandleFunc("GET /lanes", s.auth(s.rateLimit(s.listLanes)))
 	s.mux.HandleFunc("GET /health", s.health)
-	s.mux.HandleFunc("GET /metrics", s.auth(s.metrics))
-	s.mux.HandleFunc("GET /debug", s.auth(s.debug))
+	s.mux.HandleFunc("GET /metrics", s.auth(s.rateLimit(s.metrics)))
+	s.mux.HandleFunc("GET /debug", s.auth(s.rateLimit(s.debug)))
 	return s
 }
 
 func (s *Server) RegisterDLQ(dlq *reliability.DLQ) {
 	s.dlq = dlq
-	s.mux.HandleFunc("GET /dlq", s.auth(s.listDLQ))
-	s.mux.HandleFunc("POST /dlq/replay/{id}", s.auth(s.replayDLQ))
-	s.mux.HandleFunc("POST /dlq/replay", s.auth(s.replayAllDLQ))
-	s.mux.HandleFunc("DELETE /dlq", s.auth(s.clearDLQ))
+	s.mux.HandleFunc("GET /dlq", s.auth(s.rateLimit(s.listDLQ)))
+	s.mux.HandleFunc("POST /dlq/replay/{id}", s.auth(s.rateLimit(s.replayDLQ)))
+	s.mux.HandleFunc("POST /dlq/replay", s.auth(s.rateLimit(s.replayAllDLQ)))
+	s.mux.HandleFunc("DELETE /dlq", s.auth(s.rateLimit(s.clearDLQ)))
 }
 
 func (s *Server) Handler() http.Handler {
@@ -80,14 +84,33 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	}
 }
 
+func (s *Server) rateLimit(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.rateLimiter.Allow("admin-api") {
+			slog.Warn("admin API rate limited", "remote", r.RemoteAddr)
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+		next(w, r)
+	}
+}
+
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if s.apiKey == "" {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			slog.Warn("admin API request rejected: no API key configured",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"remote", r.RemoteAddr)
+			http.Error(w, "admin API requires authentication; set FLOWRULZ_API_KEY", http.StatusUnauthorized)
 			return
 		}
 		key := r.Header.Get("Authorization")
 		if subtle.ConstantTimeCompare([]byte(key), []byte("Bearer "+s.apiKey)) != 1 {
+			slog.Warn("admin API request rejected: invalid credentials",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"remote", r.RemoteAddr)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -105,7 +128,15 @@ func (s *Server) deployRule(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	slog.Info("deploy rule", "id", req.ID)
+	if req.ID == "" || len(req.ID) > 256 {
+		http.Error(w, "invalid rule ID: must be 1-256 characters", http.StatusBadRequest)
+		return
+	}
+	if len(req.DSL) == 0 || len(req.DSL) > 1<<20 {
+		http.Error(w, "invalid DSL: must be 1-1MB", http.StatusBadRequest)
+		return
+	}
+	slog.Info("deploy rule", "id", req.ID, "remote", r.RemoteAddr)
 	if err := s.rules.DeployRule(req.ID, req.DSL); err != nil {
 		slog.Error("deploy rule failed", "id", req.ID, "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -116,6 +147,11 @@ func (s *Server) deployRule(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) removeRule(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if id == "" || len(id) > 256 {
+		http.Error(w, "invalid rule ID", http.StatusBadRequest)
+		return
+	}
+	slog.Info("remove rule", "id", id, "remote", r.RemoteAddr)
 	s.rules.RemoveRule(id)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -145,6 +181,10 @@ func (s *Server) validateRule(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if len(req.DSL) == 0 || len(req.DSL) > 1<<20 {
+		http.Error(w, "invalid DSL: must be 1-1MB", http.StatusBadRequest)
 		return
 	}
 	result, _ := s.rules.ValidateDSL(req.DSL)

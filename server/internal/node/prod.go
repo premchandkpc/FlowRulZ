@@ -101,7 +101,6 @@ func NewNode(cfg Config, deps Dependencies) *ProdNode {
 		httpAddr:     cfg.HTTPListenAddr(),
 		config:       cfg,
 		httpClient:   &http.Client{Timeout: 10 * time.Second},
-		serviceCaller: NewServiceCaller(),
 		consumers:    make([]transport.MessageConsumer, 0),
 		producers:    make([]transport.MessageProducer, 0),
 		execSem:      make(chan struct{}, executeAllSemaphore),
@@ -125,6 +124,12 @@ func NewNode(cfg Config, deps Dependencies) *ProdNode {
 		AdminSrv:     deps.AdminSrv,
 		Metrics:      deps.Metrics,
 		OtelExporter: deps.OtelExporter,
+	}
+
+	if cfg.HasTLS() {
+		n.serviceCaller = NewServiceCallerWithTLS(cfg.TLSCertFile, cfg.TLSKeyFile)
+	} else {
+		n.serviceCaller = NewServiceCaller()
 	}
 
 	n.Execs = NewExecRegistry()

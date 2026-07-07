@@ -13,9 +13,15 @@ import (
 	"time"
 )
 
+const shardCount = 16
+
+type shard struct {
+	mu sync.RWMutex
+}
+
 type FileStore struct {
-	dir string
-	mu  sync.RWMutex
+	dir    string
+	shards [shardCount]shard
 }
 
 func NewFileStore(dir string) (*FileStore, error) {
@@ -25,13 +31,28 @@ func NewFileStore(dir string) (*FileStore, error) {
 	return &FileStore{dir: dir}, nil
 }
 
+func (fs *FileStore) shardFor(id string) *shard {
+	h := fnv32(id)
+	return &fs.shards[h%shardCount]
+}
+
+func fnv32(s string) uint32 {
+	h := uint32(2166136261)
+	for i := 0; i < len(s); i++ {
+		h ^= uint32(s[i])
+		h *= 16777619
+	}
+	return h
+}
+
 func (fs *FileStore) path(id string) string {
 	return filepath.Join(fs.dir, id+".json")
 }
 
 func (fs *FileStore) Create(_ context.Context, s *State) error {
-	fs.mu.Lock()
-	defer fs.mu.Unlock()
+	sh := fs.shardFor(s.ID)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
 
 	p := fs.path(s.ID)
 	if _, err := os.Stat(p); err == nil {
@@ -41,24 +62,23 @@ func (fs *FileStore) Create(_ context.Context, s *State) error {
 }
 
 func (fs *FileStore) Save(_ context.Context, s *State) error {
-	fs.mu.Lock()
-	defer fs.mu.Unlock()
+	sh := fs.shardFor(s.ID)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
 
 	s.UpdatedAt = makeTimestamp()
 	return fs.writeLocked(fs.path(s.ID), s)
 }
 
 func (fs *FileStore) Load(_ context.Context, id string) (*State, error) {
-	fs.mu.RLock()
-	defer fs.mu.RUnlock()
+	sh := fs.shardFor(id)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
 
 	return fs.readLocked(fs.path(id))
 }
 
 func (fs *FileStore) ListByStatus(_ context.Context, statuses ...Status) ([]*State, error) {
-	fs.mu.RLock()
-	defer fs.mu.RUnlock()
-
 	entries, err := os.ReadDir(fs.dir)
 	if err != nil {
 		return nil, fmt.Errorf("execstate: read dir: %w", err)
@@ -74,7 +94,11 @@ func (fs *FileStore) ListByStatus(_ context.Context, statuses ...Status) ([]*Sta
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
+		id := strings.TrimSuffix(e.Name(), ".json")
+		sh := fs.shardFor(id)
+		sh.mu.RLock()
 		s, err := fs.readLocked(filepath.Join(fs.dir, e.Name()))
+		sh.mu.RUnlock()
 		if err != nil {
 			slog.Warn("execstate: skip", "file", e.Name(), "error", err)
 			continue
@@ -92,8 +116,9 @@ func (fs *FileStore) ListByStatus(_ context.Context, statuses ...Status) ([]*Sta
 }
 
 func (fs *FileStore) Delete(_ context.Context, id string) error {
-	fs.mu.Lock()
-	defer fs.mu.Unlock()
+	sh := fs.shardFor(id)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
 
 	p := fs.path(id)
 	if err := os.Remove(p); err != nil && !os.IsNotExist(err) {

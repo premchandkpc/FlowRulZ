@@ -128,7 +128,11 @@ func DefaultDependencies(cfg Config) Dependencies {
 	// gRPC bus
 	var grpcBus *grpctransport.GRPCBus
 	if cfg.GRPCAddr != "" {
-		grpcBus = grpctransport.NewGRPCBus(cfg.GRPCAddr)
+		if cfg.HasTLS() {
+			grpcBus = grpctransport.NewGRPCBusWithTLS(cfg.GRPCAddr, cfg.TLSCertFile, cfg.TLSKeyFile)
+		} else {
+			grpcBus = grpctransport.NewGRPCBus(cfg.GRPCAddr)
+		}
 	}
 
 	// OpenTelemetry

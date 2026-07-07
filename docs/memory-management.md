@@ -54,15 +54,16 @@ Simple `std::alloc` allocator (was slab pool). No pooling — each call allocate
 
 ## Span Ring Buffer
 
-Per-thread lock-free ring buffer for VM tracing spans (1024 entries):
+Global lock-free ring buffer for VM tracing spans (1024 entries):
 
 ```rust
-thread_local! {
-    pub static SPAN_BUFFER: RefCell<SpanRingBuffer> = ...;
-}
+pub static SPAN_BUFFER: Lazy<Mutex<SpanRingBuffer>> = Lazy::new(|| {
+    Mutex::new(SpanRingBuffer::new(1024))
+});
 ```
 
 - Atomic head/tail with `Acquire`/`Release` ordering
-- Span emitted at each `dispatch()` call
+- Span emitted at each `dispatch()` call via `emit_span()`
+- Protected by `Mutex` for cross-thread safety (Go poller + Rust VM overlap)
 - Drained via `flowrulz_get_spans` after execution
 - Compatible with OpenTelemetry span output format

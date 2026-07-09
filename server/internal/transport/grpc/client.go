@@ -47,15 +47,6 @@ func NewGRPCClient(addr string) *GRPCClient {
 	}
 }
 
-// NewGRPCClientWithConfig creates a new gRPC client with the given config.
-// Supports TLS if certificate files are provided.
-func NewGRPCClientWithConfig(cfg GRPCConfig) *GRPCClient {
-	return &GRPCClient{
-		addr: cfg.Addr,
-		subs: make(map[string]func()),
-	}
-}
-
 func (c *GRPCClient) Connect() error {
 	return c.connectWithCredentials(insecure.NewCredentials())
 }

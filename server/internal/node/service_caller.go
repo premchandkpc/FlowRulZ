@@ -253,6 +253,7 @@ func (sc *ServiceCaller) callGRPC(
 	_, err := sc.getGRPCConn(addr)
 	if err != nil {
 		cb.Failure()
+		sc.evictGRPCConn(addr)
 		return nil, fmt.Errorf("grpc connect: %w", err)
 	}
 	
@@ -369,6 +370,16 @@ func (sc *ServiceCaller) getGRPCConn(addr string) (*grpc.ClientConn, error) {
 
 	sc.grpcConns[addr] = conn
 	return conn, nil
+}
+
+// evictGRPCConn removes a cached gRPC connection so the next call creates a fresh one.
+func (sc *ServiceCaller) evictGRPCConn(addr string) {
+	sc.grpcConnsMu.Lock()
+	if conn, ok := sc.grpcConns[addr]; ok {
+		conn.Close()
+		delete(sc.grpcConns, addr)
+	}
+	sc.grpcConnsMu.Unlock()
 }
 
 // Close closes all gRPC connections and TCP pools.

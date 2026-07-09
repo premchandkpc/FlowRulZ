@@ -571,10 +571,22 @@ pub unsafe extern "C" fn flowrulz_execute_step(
                     }
                     let ctx_bytes = bincode::serialize(&vm.ctx).unwrap_or_default();
                     if !ctx_out_ptr.is_null() && ctx_out_cap > 0 {
-                        let n = ctx_bytes.len().min(ctx_out_cap);
+                        if ctx_bytes.len() > ctx_out_cap {
+                            write_error(
+                                err_ptr,
+                                err_cap,
+                                err_len,
+                                &format!(
+                                    "flowrulz_execute_step: context too large ({} bytes, capacity {})",
+                                    ctx_bytes.len(),
+                                    ctx_out_cap
+                                ),
+                            );
+                            return FfiError::BufferTooSmall.code();
+                        }
                         unsafe {
-                            std::ptr::copy_nonoverlapping(ctx_bytes.as_ptr(), ctx_out_ptr, n);
-                            *ctx_out_len = n;
+                            std::ptr::copy_nonoverlapping(ctx_bytes.as_ptr(), ctx_out_ptr, ctx_bytes.len());
+                            *ctx_out_len = ctx_bytes.len();
                         }
                     }
                     0
@@ -582,10 +594,22 @@ pub unsafe extern "C" fn flowrulz_execute_step(
                 StepResult::Continue => {
                     let ctx_bytes = bincode::serialize(&vm.ctx).unwrap_or_default();
                     if !ctx_out_ptr.is_null() && ctx_out_cap > 0 {
-                        let n = ctx_bytes.len().min(ctx_out_cap);
+                        if ctx_bytes.len() > ctx_out_cap {
+                            write_error(
+                                err_ptr,
+                                err_cap,
+                                err_len,
+                                &format!(
+                                    "flowrulz_execute_step: context too large ({} bytes, capacity {})",
+                                    ctx_bytes.len(),
+                                    ctx_out_cap
+                                ),
+                            );
+                            return FfiError::BufferTooSmall.code();
+                        }
                         unsafe {
-                            std::ptr::copy_nonoverlapping(ctx_bytes.as_ptr(), ctx_out_ptr, n);
-                            *ctx_out_len = n;
+                            std::ptr::copy_nonoverlapping(ctx_bytes.as_ptr(), ctx_out_ptr, ctx_bytes.len());
+                            *ctx_out_len = ctx_bytes.len();
                         }
                     }
                     2
@@ -613,17 +637,32 @@ pub unsafe extern "C" fn flowrulz_execute_step(
                     }
                     let ctx_bytes = bincode::serialize(&vm.ctx).unwrap_or_default();
                     if !ctx_out_ptr.is_null() && ctx_out_cap > 0 {
-                        let n = ctx_bytes.len().min(ctx_out_cap);
+                        if ctx_bytes.len() > ctx_out_cap {
+                            write_error(
+                                err_ptr,
+                                err_cap,
+                                err_len,
+                                &format!(
+                                    "flowrulz_execute_step: context too large ({} bytes, capacity {})",
+                                    ctx_bytes.len(),
+                                    ctx_out_cap
+                                ),
+                            );
+                            return FfiError::BufferTooSmall.code();
+                        }
                         unsafe {
-                            std::ptr::copy_nonoverlapping(ctx_bytes.as_ptr(), ctx_out_ptr, n);
-                            *ctx_out_len = n;
+                            std::ptr::copy_nonoverlapping(ctx_bytes.as_ptr(), ctx_out_ptr, ctx_bytes.len());
+                            *ctx_out_len = ctx_bytes.len();
                         }
                     }
                     1
                 }
                 StepResult::Delay(ms) => {
                     if !pending_svc_id.is_null() {
-                        unsafe { *pending_svc_id = ms as u16 }
+                        unsafe { *pending_svc_id = 0 }
+                    }
+                    if !pending_timeout_ms.is_null() {
+                        unsafe { *pending_timeout_ms = ms }
                     }
                     if !pending_body_ptr.is_null()
                         && !pending_body_len.is_null()
@@ -636,10 +675,22 @@ pub unsafe extern "C" fn flowrulz_execute_step(
                     }
                     let ctx_bytes = bincode::serialize(&vm.ctx).unwrap_or_default();
                     if !ctx_out_ptr.is_null() && ctx_out_cap > 0 {
-                        let n = ctx_bytes.len().min(ctx_out_cap);
+                        if ctx_bytes.len() > ctx_out_cap {
+                            write_error(
+                                err_ptr,
+                                err_cap,
+                                err_len,
+                                &format!(
+                                    "flowrulz_execute_step: context too large ({} bytes, capacity {})",
+                                    ctx_bytes.len(),
+                                    ctx_out_cap
+                                ),
+                            );
+                            return FfiError::BufferTooSmall.code();
+                        }
                         unsafe {
-                            std::ptr::copy_nonoverlapping(ctx_bytes.as_ptr(), ctx_out_ptr, n);
-                            *ctx_out_len = n;
+                            std::ptr::copy_nonoverlapping(ctx_bytes.as_ptr(), ctx_out_ptr, ctx_bytes.len());
+                            *ctx_out_len = ctx_bytes.len();
                         }
                     }
                     3

@@ -152,10 +152,6 @@ func NewNode(cfg Config, deps Dependencies) *ProdNode {
 	return n
 }
 
-func NewProdNode(cfg *Config) *ProdNode {
-	return NewNode(*cfg, DefaultDependencies(*cfg))
-}
-
 // --- pkg/node.Node interface compliance ---
 
 func (n *ProdNode) ID() pkgnode.ID {

@@ -174,12 +174,4 @@ func MakeProducerFromCluster(topic string, clusterNode *cluster.ClusterNode, kc 
 	return transport.NewProducer(topic)
 }
 
-func MakeConsumerFromCluster(topic string, handler transport.MessageHandler, clusterNode *cluster.ClusterNode, kc kafkatransport.Config) transport.MessageConsumer {
-	if len(kc.Brokers) > 0 {
-		return kafkatransport.NewConsumer(topic, handler, kc)
-	}
-	if clusterNode != nil {
-		return cluster.NewClusterConsumer(topic, handler, clusterNode)
-	}
-	return transport.NewConsumer(topic, handler)
-}
+

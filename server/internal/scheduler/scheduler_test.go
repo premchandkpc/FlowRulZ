@@ -204,7 +204,7 @@ func TestNilTask(t *testing.T) {
 }
 
 func TestTimerWheel(t *testing.T) {
-	tw := DefaultTimerWheel()
+	tw := NewTimerWheel(10*time.Millisecond, 256)
 	tw.Start()
 	defer tw.Stop()
 
@@ -223,7 +223,7 @@ func TestTimerWheel(t *testing.T) {
 }
 
 func TestTimerWheelCancel(t *testing.T) {
-	tw := DefaultTimerWheel()
+	tw := NewTimerWheel(10*time.Millisecond, 256)
 	tw.Start()
 	defer tw.Stop()
 
@@ -238,7 +238,7 @@ func TestTimerWheelCancel(t *testing.T) {
 }
 
 func TestTimerWheelOrder(t *testing.T) {
-	tw := DefaultTimerWheel()
+	tw := NewTimerWheel(10*time.Millisecond, 256)
 	tw.Start()
 	defer tw.Stop()
 

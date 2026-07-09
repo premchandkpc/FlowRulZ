@@ -38,21 +38,4 @@ func RegisterKafka(factory *transport.TransportFactory, cfg RegistrationConfig) 
 	slog.Info("transport: registered kafka backend", "brokers", cfg.Brokers)
 }
 
-// NewTransportFactoryFromConfig creates a TransportFactory with Kafka backend
-// registered if brokers are configured, otherwise falls back to in-memory.
-func NewTransportFactoryFromConfig(cfg RegistrationConfig) *transport.TransportFactory {
-	f := transport.NewTransportFactory(transport.KindMemory)
 
-	// Always register memory as fallback
-	transport.RegisterMemory(f)
-
-	// Register Kafka if configured
-	RegisterKafka(f, cfg)
-
-	// Select active kind
-	if len(cfg.Brokers) > 0 {
-		f.SetKind(transport.KindKafka)
-	}
-
-	return f
-}

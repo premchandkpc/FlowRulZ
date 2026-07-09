@@ -28,6 +28,7 @@ type GRPCBus struct {
 	lis         net.Listener
 	started     bool
 	stopCh      chan struct{}
+	stopOnce    sync.Once
 
 	UnimplementedEventBusServer
 }
@@ -259,7 +260,9 @@ func (b *GRPCBus) Stop() {
 	if srv != nil {
 		srv.GracefulStop()
 	}
-	close(b.stopCh)
+	b.stopOnce.Do(func() {
+		close(b.stopCh)
+	})
 }
 
 func toBusMessage(msg *BusMessage) *transport.Message {

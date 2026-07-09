@@ -42,10 +42,6 @@ func WithDLQProducer(p transport.MessageProducer) DLQOption {
 	return func(d *DLQ) { d.producer = p }
 }
 
-func WithDLQTopic(t string) DLQOption {
-	return func(d *DLQ) { d.topic = t }
-}
-
 func WithDLQDir(dir string) DLQOption {
 	return func(d *DLQ) { d.dir = dir }
 }

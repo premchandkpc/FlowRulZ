@@ -3,7 +3,6 @@ package node
 import (
 	"context"
 	"fmt"
-	"hash/fnv"
 	"log/slog"
 	"time"
 
@@ -13,6 +12,7 @@ import (
 	"github.com/premchandkpc/FlowRulZ/server/internal/observability"
 	"github.com/premchandkpc/FlowRulZ/server/internal/reliability"
 	"github.com/premchandkpc/FlowRulZ/server/internal/scheduler"
+	"github.com/premchandkpc/FlowRulZ/server/pkg/common"
 )
 
 const (
@@ -127,7 +127,7 @@ func (n *ProdNode) runSteps(ctx context.Context, execID string, plan []byte, nam
 				})
 			}
 
-			resp, err := n.callService(svcName, method, out.PendingBody, out.TimeoutMs)
+			resp, err := n.callService(ctx, svcName, method, out.PendingBody, out.TimeoutMs)
 			if err != nil {
 				n.tryCompensate(execID)
 				return nil, fmt.Errorf("service %s: %w", svcName, err)
@@ -153,6 +153,10 @@ func (n *ProdNode) runSteps(ctx context.Context, execID string, plan []byte, nam
 					slog.Warn("state store save failed", "exec_id", execID, "error", err)
 				}
 			}
+
+		default:
+			n.tryCompensate(execID)
+			return nil, fmt.Errorf("step %d: unexpected step result %d (ctx truncated or invalid)", step, out.Result)
 		}
 	}
 
@@ -226,9 +230,7 @@ func (n *ProdNode) executeAll(ctx context.Context, body []byte) ([][]byte, error
 func (n *ProdNode) handleIncomingMessage(ctx context.Context, msg []byte) ([]byte, error) {
 	if !n.RateLimiter.Allow("ingress") {
 		observability.RecordError("rate_limited")
-		h := fnv.New128a()
-		h.Write(msg)
-		msgID := fmt.Sprintf("rl-%x", h.Sum(nil))
+		msgID := common.HashBodyPrefixed("rl", msg)
 		n.DLQ.Send(&reliability.DeadLetterEntry{
 			ID:    msgID,
 			Body:  msg,
@@ -237,9 +239,7 @@ func (n *ProdNode) handleIncomingMessage(ctx context.Context, msg []byte) ([]byt
 		return nil, nil
 	}
 
-	h := fnv.New128a()
-	h.Write(msg)
-	msgIDStr := fmt.Sprintf("%x", h.Sum(nil))
+	msgIDStr := common.HashBody(msg)
 
 	if n.Dedup.CheckAndMark(msgIDStr) {
 		observability.RecordExec("dedup_skipped")
@@ -266,14 +266,14 @@ func (n *ProdNode) handleIncomingMessage(ctx context.Context, msg []byte) ([]byt
 	return results[0], nil
 }
 
-func (n *ProdNode) callService(svcName, method string, body []byte, timeoutMs uint64) ([]byte, error) {
+func (n *ProdNode) callService(ctx context.Context, svcName, method string, body []byte, timeoutMs uint64) ([]byte, error) {
 	observability.RecordExec("svc_call")
 
 	svcTimeout := 10 * time.Second
 	if timeoutMs > 0 {
 		svcTimeout = time.Duration(timeoutMs) * time.Millisecond
 	}
-	svcCtx, svcCancel := context.WithTimeout(context.Background(), svcTimeout)
+	svcCtx, svcCancel := context.WithTimeout(ctx, svcTimeout)
 	defer svcCancel()
 
 	cbI, _ := n.circuitBreakers.LoadOrStore(svcName, reliability.NewCircuitBreaker(5, 30*time.Second))

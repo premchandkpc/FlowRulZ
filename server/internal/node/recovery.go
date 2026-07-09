@@ -47,7 +47,7 @@ func (n *ProdNode) recoverInFlight(ctx context.Context) {
 		go func(s *execstate.State) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			n.recoverExecution(s)
+			n.recoverExecution(ctx, s)
 		}(st)
 	}
 
@@ -55,7 +55,7 @@ func (n *ProdNode) recoverInFlight(ctx context.Context) {
 	slog.Info("recovery: completed", "count", len(inflight))
 }
 
-func (n *ProdNode) recoverExecution(st *execstate.State) {
+func (n *ProdNode) recoverExecution(ctx context.Context, st *execstate.State) {
 	slog.Info("recovery: resuming execution", "exec_id", st.ID, "status", st.Status, "rule_id", st.RuleID)
 
 	names := make(map[uint16]string)
@@ -72,7 +72,7 @@ func (n *ProdNode) recoverExecution(st *execstate.State) {
 			rawName = fmt.Sprintf("svc-%d", st.PendingSvc)
 		}
 		svcName, method := bridge.ParseServiceMethod(rawName)
-		resp, err := n.callService(svcName, method, st.PendingBody, 0)
+		resp, err := n.callService(ctx, svcName, method, st.PendingBody, 0)
 		if err != nil {
 			slog.Warn("recovery: exec retry failed", "exec_id", st.ID, "service", svcName, "error", err)
 			st.Status = execstate.StatusFailed

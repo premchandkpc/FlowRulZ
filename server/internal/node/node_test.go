@@ -448,9 +448,9 @@ func TestNewNodeMinimal(t *testing.T) {
 
 func TestNewProdNodeDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
-	n := NewProdNode(cfg)
+	n := NewNode(*cfg, DefaultDependencies(*cfg))
 	if n == nil {
-		t.Fatal("NewProdNode returned nil")
+		t.Fatal("NewNode returned nil")
 	}
 	if n.ID() != DefaultNodeID {
 		t.Errorf("ID=%s", n.ID())

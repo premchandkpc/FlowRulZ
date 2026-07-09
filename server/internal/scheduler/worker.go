@@ -47,10 +47,6 @@ func NewTimerWheel(tick time.Duration, slotCount int) *TimerWheel {
 	}
 }
 
-func DefaultTimerWheel() *TimerWheel {
-	return NewTimerWheel(10*time.Millisecond, 256)
-}
-
 func (tw *TimerWheel) Start() {
 	tw.ticker = time.NewTicker(tw.tick)
 	go tw.run()

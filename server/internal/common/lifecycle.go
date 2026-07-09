@@ -12,15 +12,6 @@ type Service interface {
 	Stop() error
 }
 
-type HealthStatus struct {
-	Alive   bool
-	Details map[string]any
-}
-
-type HealthChecker interface {
-	Health(ctx context.Context) HealthStatus
-}
-
 type LifecycleRegistry struct {
 	mu       sync.Mutex
 	services []Service

@@ -1,12 +1,12 @@
 package registry
 
 import (
-	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"os"
 	"time"
+
+	"github.com/premchandkpc/FlowRulZ/server/pkg/common"
 )
 
 type RegisterRequest struct {
@@ -32,22 +32,14 @@ type HeartbeatRequest struct {
 
 const maxRequestBodySize = 1 << 20
 
-func (r *ServiceRegistry) checkAuth(req *http.Request) bool {
-	apiKey := os.Getenv("FLOWRULZ_API_KEY")
-	if apiKey == "" {
-		slog.Warn("registry: FLOWRULZ_API_KEY not set, auth disabled")
-		return true
-	}
-	key := req.Header.Get("Authorization")
-	return subtle.ConstantTimeCompare([]byte(key), []byte("Bearer "+apiKey)) == 1
-}
+var auth = common.NewBearerAuth()
 
 func (r *ServiceRegistry) RegisterHTTPHandler(w http.ResponseWriter, req *http.Request) {
 	if req.Method != "POST" {
 		http.Error(w, "POST required", 405)
 		return
 	}
-	if !r.checkAuth(req) {
+	if !auth.Check(req) {
 		http.Error(w, "unauthorized", 401)
 		return
 	}
@@ -114,7 +106,7 @@ func (r *ServiceRegistry) HeartbeatHTTPHandler(w http.ResponseWriter, req *http.
 		http.Error(w, "POST required", 405)
 		return
 	}
-	if !r.checkAuth(req) {
+	if !auth.Check(req) {
 		http.Error(w, "unauthorized", 401)
 		return
 	}

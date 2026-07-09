@@ -10,18 +10,21 @@ func (m *Membership) evictStale() {
 	m.mu.Lock()
 	now := time.Now()
 	leaderBefore := m.leaderIDLocked()
+	var expiredLeader string
 	for id, n := range m.nodes {
 		if n.IsAlive && now.Sub(n.LastSeen) > m.heartbeatTimeout {
 			n.IsAlive = false
 			slog.Warn("membership: node timed out", "node", id, "last_seen_ago", now.Sub(n.LastSeen))
+			if id == leaderBefore {
+				expiredLeader = id
+			}
 		}
 	}
-	leaderAfter := m.leaderIDLocked()
 	m.mu.Unlock()
 
-	if leaderBefore != "" && leaderBefore != leaderAfter && m.leaseCallback != nil {
-		slog.Warn("membership: leader lost due to heartbeat timeout, notifying lease callback", "leader", leaderBefore)
-		m.leaseCallback(leaderBefore)
+	if expiredLeader != "" && m.leaseCallback != nil {
+		slog.Warn("membership: leader lost due to heartbeat timeout, notifying lease callback", "leader", expiredLeader)
+		m.leaseCallback(expiredLeader)
 	}
 }
 
@@ -43,6 +46,7 @@ func (m *Membership) StartLeaderLeaseChecker(ctx context.Context, interval time.
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
+		var lastNotified string
 		for {
 			select {
 			case <-ticker.C:
@@ -50,22 +54,26 @@ func (m *Membership) StartLeaderLeaseChecker(ctx context.Context, interval time.
 				leaderID := m.leaderIDLocked()
 				if leaderID == "" {
 					m.mu.Unlock()
+					lastNotified = ""
 					continue
 				}
 				n, ok := m.nodes[leaderID]
 				if !ok || !n.IsAlive {
 					m.mu.Unlock()
+					lastNotified = ""
 					continue
 				}
 				if time.Since(n.LastSeen) > m.leaderLease {
 					n.IsAlive = false
 					slog.Warn("membership: leader lease expired", "leader", leaderID, "last_seen_ago", time.Since(n.LastSeen))
 					m.mu.Unlock()
-					if m.leaseCallback != nil {
+					if m.leaseCallback != nil && lastNotified != leaderID {
+						lastNotified = leaderID
 						m.leaseCallback(leaderID)
 					}
 				} else {
 					m.mu.Unlock()
+					lastNotified = ""
 				}
 			case <-ctx.Done():
 				return

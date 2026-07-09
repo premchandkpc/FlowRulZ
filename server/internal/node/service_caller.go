@@ -96,14 +96,31 @@ func (sc *ServiceCaller) getTCPPool(addr string) *tcpConnPool {
 }
 
 func (p *tcpConnPool) get() (net.Conn, error) {
-	select {
-	case conn := <-p.conns:
-		if conn != nil {
-			return conn, nil
+	for {
+		select {
+		case conn := <-p.conns:
+			if conn == nil {
+				continue
+			}
+			if isConnAlive(conn) {
+				return conn, nil
+			}
+			conn.Close()
+		default:
+			return net.DialTimeout("tcp", p.addr, 10*time.Second)
 		}
-	default:
 	}
-	return net.DialTimeout("tcp", p.addr, 10*time.Second)
+}
+
+func isConnAlive(conn net.Conn) bool {
+	_ = conn.SetReadDeadline(time.Now())
+	one := make([]byte, 1)
+	_, err := conn.Read(one)
+	_ = conn.SetReadDeadline(time.Time{})
+	if err != nil {
+		return false
+	}
+	return true
 }
 
 func (p *tcpConnPool) put(conn net.Conn) {

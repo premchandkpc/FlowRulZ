@@ -226,8 +226,11 @@ func (n *ProdNode) executeAll(ctx context.Context, body []byte) ([][]byte, error
 func (n *ProdNode) handleIncomingMessage(ctx context.Context, msg []byte) ([]byte, error) {
 	if !n.RateLimiter.Allow("ingress") {
 		observability.RecordError("rate_limited")
+		h := fnv.New128a()
+		h.Write(msg)
+		msgID := fmt.Sprintf("rl-%x", h.Sum(nil))
 		n.DLQ.Send(&reliability.DeadLetterEntry{
-			ID:    "ratelimited",
+			ID:    msgID,
 			Body:  msg,
 			Error: "rate limited",
 		})
@@ -284,17 +287,16 @@ func (n *ProdNode) callService(svcName, method string, body []byte, timeoutMs ui
 
 	inst, err := n.Registry.LookupInstance(svcName, method)
 	if err != nil {
-		slog.Warn("registry lookup failed, using passthrough", 
+		slog.Warn("registry lookup failed", 
 			"service", svcName, 
 			"method", method, 
 			"error", err)
-		cb.Success()
-		return body, nil
+		cb.Failure()
+		return nil, fmt.Errorf("registry lookup %s: %w", svcName, err)
 	}
 	
 	if inst == nil {
 		slog.Info("service call (passthrough)", "service", svcName, "method", method, "body_bytes", len(body))
-		cb.Success()
 		return body, nil
 	}
 

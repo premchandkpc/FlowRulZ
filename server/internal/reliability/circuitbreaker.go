@@ -2,7 +2,6 @@ package reliability
 
 import (
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -84,5 +83,7 @@ func (cb *CircuitBreaker) Failure() {
 
 // FailureCount returns the current failure count.
 func (cb *CircuitBreaker) FailureCount() int64 {
-	return atomic.LoadInt64(&cb.failureCount)
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	return cb.failureCount
 }

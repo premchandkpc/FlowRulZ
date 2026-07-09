@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"time"
 )
@@ -80,6 +81,7 @@ func (n *ProdNode) joinRaftCluster(ctx context.Context) {
 				time.Sleep(2 * time.Second)
 				continue
 			}
+			_, _ = io.Copy(io.Discard, resp.Body)
 			resp.Body.Close()
 			if resp.StatusCode == 200 {
 				slog.Info("raft join: successfully joined cluster", "seed_url", seedURL)

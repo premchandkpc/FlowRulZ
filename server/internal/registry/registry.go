@@ -191,7 +191,19 @@ func (r *ServiceRegistry) RegisterInstance(inst *ServiceInstance) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	r.services[inst.Name] = append(r.services[inst.Name], &Endpoint{
+	existing := r.instances[inst.Name]
+	found := false
+	for i, e := range existing {
+		if e.ID == inst.ID {
+			existing[i] = inst
+			r.instances[inst.Name] = existing
+			found = true
+			break
+		}
+	}
+
+	eps := r.services[inst.Name]
+	ep := &Endpoint{
 		NodeID:        inst.Endpoint.NodeID,
 		Address:       inst.Endpoint.Address,
 		Port:          inst.Endpoint.Port,
@@ -200,17 +212,23 @@ func (r *ServiceRegistry) RegisterInstance(inst *ServiceInstance) error {
 		Topic:         inst.Endpoint.Topic,
 		ReplyTopic:    inst.Endpoint.ReplyTopic,
 		ConsumerGroup: inst.Endpoint.ConsumerGroup,
-	})
-
-	existing := r.instances[inst.Name]
-	for i, e := range existing {
-		if e.ID == inst.ID {
-			existing[i] = inst
-			r.instances[inst.Name] = existing
-			return nil
+	}
+	epExists := false
+	for i, e := range eps {
+		if e.NodeID == ep.NodeID && e.Address == ep.Address && e.Port == ep.Port {
+			eps[i] = ep
+			r.services[inst.Name] = eps
+			epExists = true
+			break
 		}
 	}
-	r.instances[inst.Name] = append(existing, inst)
+	if !epExists {
+		r.services[inst.Name] = append(eps, ep)
+	}
+
+	if !found {
+		r.instances[inst.Name] = append(existing, inst)
+	}
 	if _, ok := r.roundRobin[inst.Name]; !ok {
 		var zero uint64
 		r.roundRobin[inst.Name] = &zero

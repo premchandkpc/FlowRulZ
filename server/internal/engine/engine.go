@@ -215,17 +215,22 @@ func (e *Engine) Drain(id string, version uint64) error {
 func (e *Engine) Remove(id string) {
 	e.mu.Lock()
 	r, ok := e.rules[id]
-	e.mu.Unlock()
 	if !ok {
+		e.mu.Unlock()
 		return
 	}
-	for _, v := range r.Versions {
+	versions := make([]*VersionedPlan, len(r.Versions))
+	copy(versions, r.Versions)
+	e.mu.Unlock()
+
+	for _, v := range versions {
 		v.ActiveExec.Wait()
 	}
+
 	e.mu.Lock()
 	delete(e.rules, id)
-	e.mu.Unlock()
 	e.saveRules()
+	e.mu.Unlock()
 }
 
 func (e *Engine) Rules() []Rule {

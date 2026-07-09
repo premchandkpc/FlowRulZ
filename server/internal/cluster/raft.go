@@ -349,10 +349,12 @@ func (rc *RaftCluster) trackLeadership() {
 			slog.Info("raft cluster: leadership changed", "node_id", rc.nodeID, "is_leader", isLeader)
 
 			rc.leaderSubsMu.RLock()
-			for _, fn := range rc.leaderSubs {
+			subs := make([]func(bool), len(rc.leaderSubs))
+			copy(subs, rc.leaderSubs)
+			rc.leaderSubsMu.RUnlock()
+			for _, fn := range subs {
 				fn(isLeader)
 			}
-			rc.leaderSubsMu.RUnlock()
 
 		case <-rc.stopCh:
 			return

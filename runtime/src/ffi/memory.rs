@@ -175,6 +175,10 @@ pub unsafe extern "C" fn flowrulz_intern_lookup(
                 std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_ptr, bytes.len());
                 *out_len = bytes.len();
             }
+        } else {
+            unsafe {
+                *out_len = 0;
+            }
         }
     }));
 }

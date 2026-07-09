@@ -307,7 +307,20 @@ pub unsafe extern "C" fn flowrulz_execute(
         match vm.run() {
             Ok(()) => {
                 let result = &vm.ctx.body;
-                if result.len() <= out_cap {
+                if result.len() > out_cap {
+                    write_error(
+                        err_ptr,
+                        err_cap,
+                        err_len,
+                        &format!(
+                            "flowrulz_execute: output too large ({} bytes, capacity {})",
+                            result.len(),
+                            out_cap
+                        ),
+                    );
+                    return FfiError::BufferTooSmall.code();
+                }
+                if !out_ptr.is_null() && out_cap > 0 {
                     unsafe {
                         std::ptr::copy_nonoverlapping(result.as_ptr(), out_ptr, result.len());
                         *out_len = result.len();
@@ -438,11 +451,23 @@ pub unsafe extern "C" fn flowrulz_execute_step(
             Ok(step_result) => match step_result {
                 StepResult::Done => {
                     let result = &vm.ctx.body;
+                    if result.len() > out_cap {
+                        write_error(
+                            err_ptr,
+                            err_cap,
+                            err_len,
+                            &format!(
+                                "flowrulz_execute_step: output too large ({} bytes, capacity {})",
+                                result.len(),
+                                out_cap
+                            ),
+                        );
+                        return FfiError::BufferTooSmall.code();
+                    }
                     if !out_ptr.is_null() && out_cap > 0 {
-                        let n = result.len().min(out_cap);
                         unsafe {
-                            std::ptr::copy_nonoverlapping(result.as_ptr(), out_ptr, n);
-                            *out_len = n;
+                            std::ptr::copy_nonoverlapping(result.as_ptr(), out_ptr, result.len());
+                            *out_len = result.len();
                         }
                     }
                     let ctx_bytes = bincode::serialize(&vm.ctx).unwrap_or_default();
@@ -548,6 +573,9 @@ pub unsafe extern "C" fn flowrulz_init_context(
     err_len: *mut usize,
 ) -> i32 {
     ffi_catch_unwind(|| {
+        if out_ptr.is_null() || out_len.is_null() {
+            return FfiError::NullPointer.code();
+        }
         let body = match read_slice(body_ptr, body_len) {
             Some(s) => s.to_vec(),
             None => return FfiError::NullPointer.code(),

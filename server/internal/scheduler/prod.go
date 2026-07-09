@@ -135,7 +135,10 @@ func (s *Scheduler) EnqueueAndWait(ctx context.Context, task *Task) ([]byte, err
 		return res.Output, res.Error
 	case <-ctx.Done():
 		go func() {
-			<-task.ResultCh
+			select {
+			case <-task.ResultCh:
+			case <-s.stopCh:
+			}
 		}()
 		return nil, ctx.Err()
 	}

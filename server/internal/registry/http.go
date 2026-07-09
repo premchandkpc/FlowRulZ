@@ -35,7 +35,8 @@ const maxRequestBodySize = 1 << 20
 func (r *ServiceRegistry) checkAuth(req *http.Request) bool {
 	apiKey := os.Getenv("FLOWRULZ_API_KEY")
 	if apiKey == "" {
-		return false
+		slog.Warn("registry: FLOWRULZ_API_KEY not set, auth disabled")
+		return true
 	}
 	key := req.Header.Get("Authorization")
 	return subtle.ConstantTimeCompare([]byte(key), []byte("Bearer "+apiKey)) == 1

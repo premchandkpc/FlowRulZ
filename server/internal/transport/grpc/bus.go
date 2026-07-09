@@ -183,10 +183,13 @@ func (b *GRPCBus) Request(ctx context.Context, req *RequestRequest) (*RequestRes
 		timeout = 30 * time.Second
 	}
 
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
 	select {
 	case resp := <-replyCh:
 		return &RequestResponse{Msg: resp}, nil
-	case <-time.After(timeout):
+	case <-timer.C:
 		return nil, fmt.Errorf("request timeout")
 	}
 }

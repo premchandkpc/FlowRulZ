@@ -87,6 +87,68 @@ mod tests {
         }
         assert_eq!(&out_buf[..out_len], b"content-type");
     }
+
+    #[test]
+    fn test_intern_lookup_miss_sets_zero_len() {
+        let mut out_buf = [0u8; 64];
+        let mut out_len: usize = 42; // pre-set to non-zero
+        unsafe {
+            flowrulz_intern_lookup(9999, out_buf.as_mut_ptr(), &mut out_len as *mut usize);
+        }
+        assert_eq!(out_len, 0);
+    }
+
+    #[test]
+    fn test_intern_lookup_valid_id() {
+        let s = b"test-value";
+        let id = unsafe { flowrulz_intern(s.as_ptr(), s.len()) };
+        assert!(id > 0);
+
+        let mut out_buf = [0u8; 64];
+        let mut out_len: usize = 0;
+        unsafe {
+            flowrulz_intern_lookup(id, out_buf.as_mut_ptr(), &mut out_len as *mut usize);
+        }
+        assert_eq!(&out_buf[..out_len], b"test-value");
+    }
+
+    #[test]
+    fn test_intern_lookup_does_not_write_on_hit() {
+        let s = b"another-value";
+        let id = unsafe { flowrulz_intern(s.as_ptr(), s.len()) };
+
+        let mut out_buf = [0xFFu8; 64];
+        let mut out_len: usize = 0;
+        unsafe {
+            flowrulz_intern_lookup(id, out_buf.as_mut_ptr(), &mut out_len as *mut usize);
+        }
+        assert_eq!(out_len, s.len());
+        assert_eq!(&out_buf[..out_len], s);
+    }
+
+    #[test]
+    fn test_msg_alloc_and_release_roundtrip() {
+        let sizes = [1, 16, 256, 1024, 65536];
+        for size in sizes {
+            let ptr = unsafe { flowrulz_msg_alloc(size) };
+            assert!(!ptr.is_null(), "alloc({}) returned null", size);
+            unsafe {
+                std::ptr::write_bytes(ptr, 0xAA, size);
+                assert_eq!(*ptr, 0xAA);
+            }
+            unsafe { flowrulz_msg_release(ptr) };
+        }
+    }
+
+    #[test]
+    fn test_msg_release_does_not_panic_on_arbitrary_ptr() {
+        let ptr = unsafe { flowrulz_msg_alloc(8) };
+        assert!(!ptr.is_null());
+        unsafe {
+            std::ptr::write_bytes(ptr, 0xBB, 8);
+        }
+        unsafe { flowrulz_msg_release(ptr) };
+    }
 }
 
 /// # Safety

@@ -191,3 +191,67 @@ func TestGRPCUnsubscribe(t *testing.T) {
 		t.Fatalf("expected 0 after unsubscribe, got %d", n)
 	}
 }
+
+func TestGRPCRequestTimeoutCleansTimer(t *testing.T) {
+	bus := NewGRPCBus(":0")
+	if err := bus.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer bus.Stop()
+
+	addr := bus.lis.Addr().String()
+	client := NewGRPCClient(addr)
+	if err := client.Connect(); err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	_, err := client.Request("empty-topic", &transport.Message{
+		ID:            "req-timeout",
+		Body:          []byte("nobody-listens"),
+		CorrelationID: "corr-timeout",
+	}, 100*time.Millisecond)
+
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+}
+
+func TestGRPCRequestSuccessCleansTimer(t *testing.T) {
+	bus := NewGRPCBus(":0")
+	if err := bus.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer bus.Stop()
+
+	addr := bus.lis.Addr().String()
+	client := NewGRPCClient(addr)
+	if err := client.Connect(); err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	client.Subscribe("echo-topic", func(ctx context.Context, msg *transport.Message) {
+		client.Reply("echo-topic", msg.CorrelationID, &transport.Message{
+			Body: []byte("echo"),
+		})
+	})
+
+	if !waitForSubscriber(bus, "echo-topic", time.Second) {
+		t.Fatal("subscriber not registered")
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	resp, err := client.Request("echo-topic", &transport.Message{
+		ID:            "req-echo",
+		Body:          []byte("hello"),
+		CorrelationID: "corr-echo",
+	}, 2*time.Second)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(resp.Body) != "echo" {
+		t.Fatalf("expected echo, got %s", resp.Body)
+	}
+}

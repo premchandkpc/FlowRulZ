@@ -2,6 +2,8 @@ package reliability
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 )
@@ -111,5 +113,100 @@ func TestDLQToJSON(t *testing.T) {
 	}
 	if len(data) == 0 {
 		t.Fatal("expected non-empty JSON")
+	}
+}
+
+func TestDLQUniqueIDs(t *testing.T) {
+	d := NewDLQ(100)
+
+	ids := make(map[string]bool)
+	for i := 0; i < 20; i++ {
+		body := []byte{byte(i), byte(i + 1), byte(i + 2)}
+		msgID := fmt.Sprintf("rl-%d-%x", i, body)
+		d.Send(&DeadLetterEntry{ID: msgID, Body: body, Error: "rate limited"})
+		ids[msgID] = true
+	}
+
+	entries := d.List()
+	if len(entries) != 20 {
+		t.Fatalf("expected 20 entries, got %d", len(entries))
+	}
+
+	if len(ids) != 20 {
+		t.Fatalf("expected 20 unique IDs, got %d", len(ids))
+	}
+}
+
+func TestDLQReplayFailureReQueues(t *testing.T) {
+	d := NewDLQ(100)
+
+	var callCount int32
+	d.SetReplayFn(func(ctx context.Context, entry *DeadLetterEntry) error {
+		atomic.AddInt32(&callCount, 1)
+		return fmt.Errorf("service unavailable")
+	})
+
+	d.Send(&DeadLetterEntry{ID: "fail-1", Body: []byte("data"), Error: "err"})
+
+	count := d.ReplayAll(context.Background())
+	if count != 0 {
+		t.Fatalf("expected 0 successful replays, got %d", count)
+	}
+
+	if d.Len() != 1 {
+		t.Fatalf("expected 1 entry re-queued after failure, got %d", d.Len())
+	}
+
+	if atomic.LoadInt32(&callCount) != 1 {
+		t.Fatalf("expected 1 call, got %d", atomic.LoadInt32(&callCount))
+	}
+}
+
+func TestDLQConcurrentSendAndList(t *testing.T) {
+	d := NewDLQ(1000)
+	var wg sync.WaitGroup
+
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			d.Send(&DeadLetterEntry{
+				ID:    fmt.Sprintf("concurrent-%d", n),
+				Body:  []byte("data"),
+				Error: "err",
+			})
+		}(i)
+	}
+	wg.Wait()
+
+	entries := d.List()
+	if len(entries) != 50 {
+		t.Fatalf("expected 50 entries, got %d", len(entries))
+	}
+}
+
+func TestDLQReplayAllPartialFailure(t *testing.T) {
+	d := NewDLQ(100)
+
+	var callCount int32
+	d.SetReplayFn(func(ctx context.Context, entry *DeadLetterEntry) error {
+		n := atomic.AddInt32(&callCount, 1)
+		if n == 2 {
+			return fmt.Errorf("fail on second")
+		}
+		return nil
+	})
+
+	for i := 0; i < 3; i++ {
+		d.Send(&DeadLetterEntry{ID: fmt.Sprintf("entry-%d", i), Body: []byte("data"), Error: "err"})
+	}
+
+	count := d.ReplayAll(context.Background())
+	if count != 2 {
+		t.Fatalf("expected 2 successful replays, got %d", count)
+	}
+
+	if d.Len() != 1 {
+		t.Fatalf("expected 1 failed entry re-queued, got %d", d.Len())
 	}
 }

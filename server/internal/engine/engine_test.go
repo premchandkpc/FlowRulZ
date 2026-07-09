@@ -1,7 +1,9 @@
 package engine
 
 import (
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/premchandkpc/FlowRulZ/server/bridge"
 )
@@ -185,5 +187,91 @@ func TestAddVersionThenPromote(t *testing.T) {
 	}
 	if rules[0].ActivePlan().Version != 42 {
 		t.Fatalf("expected version 42, got %d", rules[0].ActivePlan().Version)
+	}
+}
+
+func TestRemoveNonexistentRule(t *testing.T) {
+	e := New("")
+	e.Remove("nonexistent")
+	if len(e.Rules()) != 0 {
+		t.Fatal("expected 0 rules after removing nonexistent")
+	}
+}
+
+func TestRemoveConcurrentWithDeploy(t *testing.T) {
+	e := New("")
+	for i := 0; i < 10; i++ {
+		e.Deploy("rule-a", "n:validate")
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			e.Deploy("rule-b", "n:validate")
+		}()
+		go func() {
+			defer wg.Done()
+			e.Remove("rule-a")
+		}()
+	}
+	wg.Wait()
+
+	rules := e.Rules()
+	for _, r := range rules {
+		if r.ID != "rule-b" {
+			t.Fatalf("expected only rule-b, got %s", r.ID)
+		}
+	}
+}
+
+func TestRemoveWaitsForActiveExecutions(t *testing.T) {
+	e := New("")
+	e.Deploy("wait-rule", "n:validate")
+
+	rules := e.Rules()
+	vp := rules[0].ActivePlan()
+	vp.ActiveExec.Add(1)
+
+	done := make(chan struct{})
+	go func() {
+		e.Remove("wait-rule")
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		t.Fatal("Remove returned before ActiveExec.Wait completed")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	vp.ActiveExec.Done()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Remove did not complete after ActiveExec.Done")
+	}
+
+	if len(e.Rules()) != 0 {
+		t.Fatal("expected 0 rules after remove")
+	}
+}
+
+func TestRemoveMultipleVersions(t *testing.T) {
+	e := New("")
+	e.Deploy("multi", "n:validate")
+	e.Deploy("multi", "n:validate")
+	e.Deploy("multi", "n:validate")
+
+	rules := e.Rules()
+	if len(rules[0].Versions) != 3 {
+		t.Fatalf("expected 3 versions, got %d", len(rules[0].Versions))
+	}
+
+	e.Remove("multi")
+	if len(e.Rules()) != 0 {
+		t.Fatal("expected 0 rules after removing multi-version rule")
 	}
 }

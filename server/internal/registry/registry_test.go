@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"sync"
 	"testing"
 )
 
@@ -225,5 +226,145 @@ func TestLeastLoaded(t *testing.T) {
 	}
 	if ep.NodeID != "b" {
 		t.Fatalf("expected least-loaded node-b, got %s", ep.NodeID)
+	}
+}
+
+func TestRegisterInstanceDedup(t *testing.T) {
+	r := New()
+
+	inst := &ServiceInstance{
+		Name: "payment",
+		ID:   "payment-10.0.0.1-9090",
+		Endpoint: Endpoint{
+			NodeID:   "node-a",
+			Address:  "10.0.0.1",
+			Port:     9090,
+			Protocol: ProtocolHTTP,
+		},
+	}
+
+	if err := r.RegisterInstance(inst); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.RegisterInstance(inst); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.RegisterInstance(inst); err != nil {
+		t.Fatal(err)
+	}
+
+	r.mu.RLock()
+	eps := r.services["payment"]
+	insts := r.instances["payment"]
+	r.mu.RUnlock()
+
+	if len(eps) != 1 {
+		t.Fatalf("expected 1 endpoint after re-registration, got %d", len(eps))
+	}
+	if len(insts) != 1 {
+		t.Fatalf("expected 1 instance after re-registration, got %d", len(insts))
+	}
+}
+
+func TestRegisterInstanceDifferentEndpoints(t *testing.T) {
+	r := New()
+
+	r.RegisterInstance(&ServiceInstance{
+		Name: "payment",
+		ID:   "payment-10.0.0.1-9090",
+		Endpoint: Endpoint{
+			NodeID:   "node-a",
+			Address:  "10.0.0.1",
+			Port:     9090,
+			Protocol: ProtocolHTTP,
+		},
+	})
+	r.RegisterInstance(&ServiceInstance{
+		Name: "payment",
+		ID:   "payment-10.0.0.2-9090",
+		Endpoint: Endpoint{
+			NodeID:   "node-b",
+			Address:  "10.0.0.2",
+			Port:     9090,
+			Protocol: ProtocolHTTP,
+		},
+	})
+
+	r.mu.RLock()
+	eps := r.services["payment"]
+	insts := r.instances["payment"]
+	r.mu.RUnlock()
+
+	if len(eps) != 2 {
+		t.Fatalf("expected 2 endpoints, got %d", len(eps))
+	}
+	if len(insts) != 2 {
+		t.Fatalf("expected 2 instances, got %d", len(insts))
+	}
+}
+
+func TestRegisterInstanceUpdateExisting(t *testing.T) {
+	r := New()
+
+	inst := &ServiceInstance{
+		Name: "payment",
+		ID:   "payment-10.0.0.1-9090",
+		Endpoint: Endpoint{
+			NodeID:   "node-a",
+			Address:  "10.0.0.1",
+			Port:     9090,
+			Protocol: ProtocolHTTP,
+		},
+		Weight: 50,
+	}
+	r.RegisterInstance(inst)
+
+	inst.Weight = 200
+	r.RegisterInstance(inst)
+
+	r.mu.RLock()
+	insts := r.instances["payment"]
+	r.mu.RUnlock()
+
+	if len(insts) != 1 {
+		t.Fatalf("expected 1 instance, got %d", len(insts))
+	}
+	if insts[0].Weight != 200 {
+		t.Fatalf("expected updated weight 200, got %d", insts[0].Weight)
+	}
+}
+
+func TestRegisterInstanceConcurrent(t *testing.T) {
+	r := New()
+	var wg sync.WaitGroup
+
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			r.RegisterInstance(&ServiceInstance{
+				Name: "svc",
+				ID:   "svc-instance",
+				Endpoint: Endpoint{
+					NodeID:   "node-a",
+					Address:  "10.0.0.1",
+					Port:     9090,
+					Protocol: ProtocolHTTP,
+				},
+			})
+		}(i)
+	}
+	wg.Wait()
+
+	r.mu.RLock()
+	eps := r.services["svc"]
+	insts := r.instances["svc"]
+	r.mu.RUnlock()
+
+	if len(eps) != 1 {
+		t.Fatalf("expected 1 endpoint after concurrent re-registration, got %d", len(eps))
+	}
+	if len(insts) != 1 {
+		t.Fatalf("expected 1 instance after concurrent re-registration, got %d", len(insts))
 	}
 }

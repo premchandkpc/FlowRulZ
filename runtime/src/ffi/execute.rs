@@ -181,6 +181,105 @@ mod tests {
 
         assert_eq!(rc, 0);
     }
+
+    #[test]
+    fn test_init_context_null_out_ptr() {
+        let body = b"{\"x\":1}";
+        let mut out_len: usize = 0;
+        let rc = unsafe {
+            flowrulz_init_context(
+                body.as_ptr(),
+                body.len(),
+                std::ptr::null_mut(),
+                0,
+                &mut out_len as *mut usize,
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(rc, -1); // NullPointer
+    }
+
+    #[test]
+    fn test_init_context_null_out_len() {
+        let body = b"{\"x\":1}";
+        let mut out_buf = vec![0u8; 1024];
+        let rc = unsafe {
+            flowrulz_init_context(
+                body.as_ptr(),
+                body.len(),
+                out_buf.as_mut_ptr(),
+                out_buf.len(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(rc, -1); // NullPointer
+    }
+
+    #[test]
+    fn test_init_context_null_body() {
+        let mut out_buf = vec![0u8; 1024];
+        let mut out_len: usize = 0;
+        let rc = unsafe {
+            flowrulz_init_context(
+                std::ptr::null(),
+                0,
+                out_buf.as_mut_ptr(),
+                out_buf.len(),
+                &mut out_len as *mut usize,
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(rc, -1); // NullPointer
+    }
+
+    #[test]
+    fn test_init_context_success() {
+        let body = b"{\"x\":1}";
+        let mut out_buf = vec![0u8; 1024];
+        let mut out_len: usize = 0;
+        let rc = unsafe {
+            flowrulz_init_context(
+                body.as_ptr(),
+                body.len(),
+                out_buf.as_mut_ptr(),
+                out_buf.len(),
+                &mut out_len as *mut usize,
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(rc, 0);
+        assert!(out_len > 0);
+    }
+
+    #[test]
+    fn test_init_context_small_buffer() {
+        let body = b"{\"x\":1}";
+        let mut out_buf = vec![0u8; 2];
+        let mut out_len: usize = 0;
+        let rc = unsafe {
+            flowrulz_init_context(
+                body.as_ptr(),
+                body.len(),
+                out_buf.as_mut_ptr(),
+                out_buf.len(),
+                &mut out_len as *mut usize,
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(rc, 0);
+        assert!(out_len <= 2);
+    }
 }
 
 /// # Safety

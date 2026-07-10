@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync/atomic"
 	"time"
 
@@ -43,9 +44,12 @@ func (pd *PlanDistributor) WaitForAcks(ctx context.Context, ruleID string, versi
 					quorum = n - 1 // all non-leader nodes
 				}
 			} else {
-				quorum = 0 // no followers, skip ack wait
+				// Single node only (leader itself) — no followers to wait for.
+				slog.Info("plandist: no followers for quorum, skipping ack wait", "rule", ruleID, "version", version)
+				return nil
 			}
 		} else {
+			slog.Warn("plandist: no QuorumProvider configured, defaulting to quorum=1", "rule", ruleID, "version", version)
 			quorum = 1 // fallback: wait for at least one ack
 		}
 	}

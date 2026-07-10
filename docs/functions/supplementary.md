@@ -305,7 +305,8 @@ Marshals `AckMessage` → sends via ack producer with key `ruleID:version`.
 3. Block on `select`: done channel or timeout.
 
 **Edge Cases:**
-- No followers → quorum=0 → return nil immediately.
+- Single node (no followers) → logs info, returns nil immediately (nothing to wait for).
+- No `QuorumProvider` configured → logs warning, defaults to quorum=1 (may timeout if nobody sends acks).
 - Timeout → error with received/expected count.
 - Quorum reached → return nil.
 

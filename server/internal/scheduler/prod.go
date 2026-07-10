@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -203,6 +204,15 @@ func (s *Scheduler) execTask(ctx context.Context, task *Task) {
 		execCtx, cancel = context.WithDeadline(ctx, task.Deadline)
 		defer cancel()
 	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("task panicked", "task_id", task.ID, "panic", r)
+			if task.ResultCh != nil {
+				task.ResultCh <- TaskResult{Error: fmt.Errorf("task panicked: %v", r)}
+			}
+		}
+	}()
 
 	out, err := task.Execute(execCtx, task)
 	if task.ResultCh != nil {

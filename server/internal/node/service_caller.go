@@ -7,7 +7,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"net/http"
 	"regexp"
@@ -239,7 +238,7 @@ func (sc *ServiceCaller) callHTTP(
 }
 
 // callGRPC makes a gRPC unary call to the service.
-// Uses a generic proto definition for raw byte transport.
+// Returns an error if gRPC transport is not implemented rather than silently falling back to HTTP.
 func (sc *ServiceCaller) callGRPC(
 	ctx context.Context,
 	inst *registry.ServiceInstance,
@@ -249,22 +248,15 @@ func (sc *ServiceCaller) callGRPC(
 	reg *registry.ServiceRegistry,
 ) ([]byte, error) {
 	addr := fmt.Sprintf("%s:%d", inst.Endpoint.Address, inst.Endpoint.Port)
-	
+
 	_, err := sc.getGRPCConn(addr)
 	if err != nil {
 		cb.Failure()
 		sc.evictGRPCConn(addr)
 		return nil, fmt.Errorf("grpc connect: %w", err)
 	}
-	
-	// For now, fallback to HTTP if gRPC reflection is not available
-	// In production, you would use the service's generated proto client
-	slog.Warn("gRPC service call using HTTP fallback", 
-		"service", inst.Name, 
-		"method", method,
-		"address", addr)
-	
-	return sc.callHTTP(ctx, inst, method, body, cb, reg)
+
+	return nil, fmt.Errorf("grpc transport: not implemented for service %s method %s at %s — configure generated proto client or use HTTP protocol", inst.Name, method, addr)
 }
 
 // callTCP makes a raw TCP call with length-prefixed framing.

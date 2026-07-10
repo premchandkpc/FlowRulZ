@@ -130,6 +130,10 @@ func (m *Membership) AliveNodes() []string {
 	return out
 }
 
+// LeaderID returns the lexicographically smallest alive node ID.
+// WARNING: This is a deterministic heuristic for single-node deployments only.
+// It does NOT provide consensus and MUST NOT be used for leader election
+// in multi-node clusters — use RaftCluster for that.
 func (m *Membership) LeaderID() string {
 	nodes := m.AliveNodes()
 	if len(nodes) == 0 {

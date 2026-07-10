@@ -2,6 +2,7 @@ package common
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -52,16 +53,16 @@ func (r *LifecycleRegistry) StopAll(ctx context.Context) error {
 	copy(svcs, r.services)
 	r.mu.Unlock()
 
-	var lastErr error
+	var errs []error
 	for i := len(svcs) - 1; i >= 0; i-- {
 		name := r.nameForIndex(i)
 		slog.Info("lifecycle: stopping", "service", name)
 		if err := svcs[i].Stop(); err != nil {
 			slog.Error("lifecycle: stop error", "service", name, "error", err)
-			lastErr = err
+			errs = append(errs, fmt.Errorf("stop %s: %w", name, err))
 		}
 	}
-	return lastErr
+	return errors.Join(errs...)
 }
 
 func (r *LifecycleRegistry) nameForIndex(i int) string {

@@ -27,6 +27,11 @@ docs/         Architecture guides + Obsidian vault (26 notes)
 - TimerWheel: Stop() waits for callbacks (sync.WaitGroup)
 - ReplyRouter: channel closes under lock (prevents double-close)
 - SpanRingBuffer: drain_global_buffer() before emitting in tests
+- Leader election: RaftCluster is authoritative when configured; Membership.LeaderID() is single-node heuristic only (lowest-ID, no consensus)
+- execTask: has `defer recover()` — panics write error to ResultCh, callers never hang
+- callGRPC/ConnectWithTLS: fail loudly, no silent HTTP/insecure downgrade
+- ProdNode.Start(): refuses to start if Seeds configured without RaftCluster
+- LifecycleRegistry.StopAll: aggregates all errors (errors.Join), doesn't swallow
 
 ## Docs
 `flow-architecture.md` `vm-architecture.md` `bytecode-format.md` `dsl-syntax.md` `memory-management.md` `ffi-api.md` `cluster-model.md` `flows.md` `file-index.md` `obsidian-vault/`

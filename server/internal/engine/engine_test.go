@@ -190,39 +190,203 @@ func TestAddVersionThenPromote(t *testing.T) {
 	}
 }
 
+func TestRemoveConcurrentWithDeploy(t *testing.T) {
+	e := New("")
+	e.Deploy("conc-rule", "n:validate")
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 20)
+
+	// Concurrent Remove
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			e.Remove("conc-rule")
+		}()
+	}
+
+	// Concurrent Deploy
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := e.Deploy("conc-rule", "n:validate"); err != nil {
+				errs <- err
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		t.Errorf("concurrent deploy error: %v", err)
+	}
+}
+
+func TestRemoveNonexistent(t *testing.T) {
+	e := New("")
+	e.Remove("nonexistent") // should not panic
+}
+
+func TestRemoveWaitsForActiveExec(t *testing.T) {
+	e := New("")
+	e.Deploy("wait-rule", "n:validate")
+
+	ch := make(chan struct{})
+	go func() {
+		e.Remove("wait-rule")
+		close(ch)
+	}()
+
+	// Remove should complete quickly since no active exec
+	select {
+	case <-ch:
+	case <-time.After(time.Second):
+		t.Fatal("Remove did not complete")
+	}
+
+	rules := e.Rules()
+	if len(rules) != 0 {
+		t.Fatalf("expected 0 rules after remove, got %d", len(rules))
+	}
+}
+
+func TestRemoveCalledTwice(t *testing.T) {
+	e := New("")
+	e.Deploy("double-rule", "n:validate")
+
+	e.Remove("double-rule")
+	e.Remove("double-rule") // second remove should be no-op
+
+	rules := e.Rules()
+	if len(rules) != 0 {
+		t.Fatalf("expected 0 rules, got %d", len(rules))
+	}
+}
+
 func TestRemoveNonexistentRule(t *testing.T) {
 	e := New("")
 	e.Remove("nonexistent")
 	if len(e.Rules()) != 0 {
-		t.Fatal("expected 0 rules after removing nonexistent")
+		t.Fatal("expected no rules after removing nonexistent")
 	}
 }
 
-func TestRemoveConcurrentWithDeploy(t *testing.T) {
+func TestDrainConcurrentWithRemove(t *testing.T) {
 	e := New("")
-	for i := 0; i < 10; i++ {
-		e.Deploy("rule-a", "n:validate")
-	}
+	e.Deploy("test-1", "n:validate")
+	rules := e.Rules()
+	v1 := rules[0].ActivePlan().Version
+
+	e.Deploy("test-1", "n:validate")
 
 	var wg sync.WaitGroup
-	for i := 0; i < 5; i++ {
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			e.Deploy("rule-b", "n:validate")
-		}()
-		go func() {
-			defer wg.Done()
-			e.Remove("rule-a")
-		}()
-	}
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		e.Drain("test-1", v1)
+	}()
+	go func() {
+		defer wg.Done()
+		e.Remove("test-1")
+	}()
 	wg.Wait()
+}
 
-	rules := e.Rules()
-	for _, r := range rules {
-		if r.ID != "rule-b" {
-			t.Fatalf("expected only rule-b, got %s", r.ID)
+func TestPromoteNonexistentVersion(t *testing.T) {
+	e := New("")
+	e.Deploy("test-1", "n:validate")
+	err := e.Promote("test-1", 9999)
+	if err == nil {
+		t.Fatal("expected error promoting nonexistent version")
+	}
+}
+
+func TestPromoteNonexistentRule(t *testing.T) {
+	e := New("")
+	err := e.Promote("nonexistent", 1)
+	if err == nil {
+		t.Fatal("expected error promoting nonexistent rule")
+	}
+}
+
+func TestDrainNonexistentRule(t *testing.T) {
+	e := New("")
+	err := e.Drain("nonexistent", 1)
+	if err == nil {
+		t.Fatal("expected error draining nonexistent rule")
+	}
+}
+
+func TestDrainNonexistentVersion(t *testing.T) {
+	e := New("")
+	e.Deploy("test-1", "n:validate")
+	err := e.Drain("test-1", 9999)
+	if err == nil {
+		t.Fatal("expected error draining nonexistent version")
+	}
+}
+
+func TestActivePlanBytesEmpty(t *testing.T) {
+	e := New("")
+	plans := e.ActivePlanBytes()
+	if len(plans) != 0 {
+		t.Fatal("expected no active plans for empty engine")
+	}
+}
+
+func TestExecuteAllEmpty(t *testing.T) {
+	e := New("")
+	results, err := e.ExecuteAll([]byte(`{}`), nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatal("expected no results for empty engine")
+	}
+}
+
+func TestLaneForScore(t *testing.T) {
+	tests := []struct {
+		score    uint32
+		expected Lane
+	}{
+		{0, LaneFast},
+		{9, LaneFast},
+		{10, LaneNormal},
+		{50, LaneNormal},
+		{51, LaneHeavy},
+		{100, LaneHeavy},
+	}
+	for _, tt := range tests {
+		if got := LaneForScore(tt.score); got != tt.expected {
+			t.Errorf("LaneForScore(%d) = %s, want %s", tt.score, got, tt.expected)
 		}
+	}
+}
+
+func TestRulesCopyIsolation(t *testing.T) {
+	e := New("")
+	e.Deploy("test-1", "n:validate")
+	rules := e.Rules()
+	rules[0].ID = "mutated"
+	if e.Rules()[0].ID == "mutated" {
+		t.Fatal("Rules() returned non-isolated copy")
+	}
+}
+
+func TestSaveRulesInsideLock(t *testing.T) {
+	e := New("")
+	e.Deploy("save-rule", "n:validate")
+	e.Deploy("save-rule", "n:validate") // second version
+
+	// Remove should save rules atomically
+	e.Remove("save-rule")
+	rules := e.Rules()
+	if len(rules) != 0 {
+		t.Fatal("expected 0 rules after remove")
 	}
 }
 

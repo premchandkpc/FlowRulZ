@@ -166,6 +166,9 @@ func (n *ProdNode) IsLeader() bool {
 	if n.RaftCluster != nil {
 		return n.RaftCluster.IsLeader()
 	}
+	// Single-node mode: no Raft configured, always leader.
+	// WARNING: In multi-node deployments, RaftCluster MUST be configured.
+	// Membership alone does NOT provide consensus — it uses lowest-ID election.
 	return true
 }
 
@@ -205,9 +208,17 @@ func (n *ProdNode) ValidateLeadershipToken(token pkgcluster.LeadershipToken) boo
 }
 
 func (n *ProdNode) LeaderID() pkgnode.ID {
-	if n.RaftCluster != nil && n.RaftCluster.IsLeader() {
+	if n.RaftCluster != nil {
+		if n.RaftCluster.IsLeader() {
+			return pkgnode.ID(n.nodeID)
+		}
+		// Raft is authoritative — return Raft's leader, not Membership's.
+		if addr := n.RaftCluster.LeaderAddr(); addr != "" {
+			return pkgnode.ID(addr)
+		}
 		return pkgnode.ID(n.nodeID)
 	}
+	// Single-node fallback: Membership's lowest-ID heuristic.
 	return pkgnode.ID(n.Membership.LeaderID())
 }
 
@@ -232,6 +243,10 @@ func (n *ProdNode) Execute(ctx context.Context, req *pkgnode.ExecuteRequest) (*p
 // --- Lifecycle ---
 
 func (n *ProdNode) Start(ctx context.Context) error {
+	if len(n.config.Seeds) > 0 && n.RaftCluster == nil {
+		return fmt.Errorf("node: multi-node deployment requires Raft — set RaftDir and RaftPort, or remove Seeds config")
+	}
+
 	handler := n.handleIncomingMessage
 	kafkaCfg := kafkatransport.Config{
 		Brokers:    n.config.KafkaBrokers,

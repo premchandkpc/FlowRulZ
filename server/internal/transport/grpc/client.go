@@ -62,14 +62,9 @@ func (c *GRPCClient) connectWithCredentials(creds credentials.TransportCredentia
 }
 
 // ConnectWithTLS connects using TLS credentials from the provided certificate files.
+// Returns an error if TLS is not implemented rather than silently downgrading to insecure.
 func (c *GRPCClient) ConnectWithTLS(certFile, keyFile, caFile string) error {
-	// For now, log a warning that TLS is not fully implemented
-	// In production, you would load the certificates and create TLS credentials
-	slog.Warn("gRPC TLS: using insecure credentials (TLS not fully implemented)",
-		"cert_file", certFile,
-		"key_file", keyFile,
-		"ca_file", caFile)
-	return c.Connect()
+	return fmt.Errorf("grpc TLS: not implemented — configure TLS credentials or use Connect() for insecure connection (cert=%s, key=%s, ca=%s)", certFile, keyFile, caFile)
 }
 
 func (c *GRPCClient) Close() {

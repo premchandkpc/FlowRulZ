@@ -44,6 +44,13 @@ docs/         Architecture guides + Obsidian vault (26 notes)
 - Admin extended: RegisterExtended() for scheduler snapshot + recovery trigger (avoids circular deps)
 - DLQ.LoadFromMessages: idempotent rebuild from raw JSON, deduplicates by entry ID
 - Tracing: ContextWithTraceID/TraceIDFromContext for request-scoped trace IDs, propagated via HTTP X-Trace-ID and gRPC metadata
+- DLQ entry IDs: validated against `^[a-zA-Z0-9_\-]+$` to prevent path traversal on disk persistence
+- goServiceCaller (CGo): has `defer recover()` — panics in callback don't crash the process
+- GetSpans/InternLookup: bounds-check FFI return values against buffer capacity before slicing
+- Node handlers: /executions, /partitions, /rebalance wrapped with requireClusterAuth
+- All data persistence files written with 0600 (not 0644)
+- ServiceCaller.grpcConns: uses sync.Map for lock-free reads on connection cache
+- Scheduler.mu: sync.RWMutex — Snapshot() uses RLock to allow concurrent EnqueueTask
 
 ## Docs
 `flow-architecture.md` `vm-architecture.md` `bytecode-format.md` `dsl-syntax.md` `memory-management.md` `ffi-api.md` `cluster-model.md` `flows.md` `file-index.md` `obsidian-vault/`

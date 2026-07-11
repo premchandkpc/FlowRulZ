@@ -271,19 +271,24 @@ func (n *ProdNode) Shutdown(ctx context.Context) error {
 
 	n.Execs.CancelAll()
 
-	for _, c := range n.consumers {
+	n.mu.Lock()
+	consumers := n.consumers
+	n.consumers = nil
+	producers := n.producers
+	n.producers = nil
+	n.mu.Unlock()
+
+	for _, c := range consumers {
 		c.Stop()
 	}
-	n.consumers = nil
 
 	n.PlanDist.Stop()
 	n.Scheduler.Stop()
 	n.ReplyRouter.StopCleanup()
 
-	for _, p := range n.producers {
+	for _, p := range producers {
 		p.Close()
 	}
-	n.producers = nil
 
 	if n.httpServer != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

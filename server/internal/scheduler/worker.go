@@ -22,6 +22,7 @@ type TimerWheel struct {
 	ticker      *time.Ticker
 	done        chan struct{}
 	stopOnce    sync.Once
+	startOnce   sync.Once
 	entries     map[uint64]*list.Element
 	wg          sync.WaitGroup
 }
@@ -48,8 +49,10 @@ func NewTimerWheel(tick time.Duration, slotCount int) *TimerWheel {
 }
 
 func (tw *TimerWheel) Start() {
-	tw.ticker = time.NewTicker(tw.tick)
-	go tw.run()
+	tw.startOnce.Do(func() {
+		tw.ticker = time.NewTicker(tw.tick)
+		go tw.run()
+	})
 }
 
 func (tw *TimerWheel) Stop() {

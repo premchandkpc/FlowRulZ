@@ -33,7 +33,9 @@ func (cb *CircuitBreaker) Execute(ctx context.Context, name string, fn func(cont
 }
 
 func (cb *CircuitBreaker) State(name string) pkgreliability.CircuitState {
-	switch State(cb.state) {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	switch cb.state {
 	case StateHalfOpen:
 		return pkgreliability.CircuitHalfOpen
 	case StateOpen:
@@ -223,27 +225,29 @@ func (a *SagaPkgAdapter) Compensate(ctx context.Context, sagaID string) error {
 	a.mu.Lock()
 	si, ok := a.instances[sagaID]
 	a.mu.Unlock()
-	if ok {
-		si.mu.Lock()
-		steps := si.steps
-		idx := si.stepIdx
-		si.mu.Unlock()
-
-		var errs []error
-		for i := idx - 1; i >= 0; i-- {
-			if steps[i].Compensate != nil {
-				if err := steps[i].Compensate(ctx); err != nil {
-					errs = append(errs, fmt.Errorf("compensate %s: %w", steps[i].Name, err))
-				}
-			}
-		}
-		if len(errs) > 0 {
-			return fmt.Errorf("saga compensation errors: %v", errs)
-		}
-		return nil
+	if !ok {
+		return a.inner.Compensate(sagaID)
 	}
 
-	return a.inner.Compensate(sagaID)
+	si.mu.Lock()
+	steps := make([]pkgreliability.SagaStep, len(si.steps))
+	copy(steps, si.steps)
+	idx := si.stepIdx
+	si.stepIdx = 0
+	si.mu.Unlock()
+
+	var errs []error
+	for i := idx - 1; i >= 0; i-- {
+		if steps[i].Compensate != nil {
+			if err := steps[i].Compensate(ctx); err != nil {
+				errs = append(errs, fmt.Errorf("compensate %s: %w", steps[i].Name, err))
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("saga compensation errors: %v", errs)
+	}
+	return nil
 }
 
 func (a *SagaPkgAdapter) Status(_ context.Context, sagaID string) (*pkgreliability.SagaStatus, error) {

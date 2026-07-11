@@ -171,13 +171,14 @@ func (d *DLQ) Replay(ctx context.Context, id string) error {
 		return nil
 	}
 	d.entries = append(d.entries[:idx], d.entries[idx+1:]...)
+	fn := d.replayFn
 	d.mu.Unlock()
 
 	d.removePersisted(id)
 
-	if d.replayFn != nil {
+	if fn != nil {
 		entry.RetryCount++
-		return d.replayFn(ctx, entry)
+		return fn(ctx, entry)
 	}
 	return nil
 }
@@ -187,11 +188,12 @@ func (d *DLQ) ReplayAll(ctx context.Context) int {
 	entries := make([]*DeadLetterEntry, len(d.entries))
 	copy(entries, d.entries)
 	d.entries = d.entries[:0]
+	fn := d.replayFn
 	d.mu.Unlock()
 
 	count := 0
 	for _, entry := range entries {
-		if d.replayFn != nil {
+		if fn != nil {
 			entry.RetryCount++
 			replayErr := func() (err error) {
 				defer func() {
@@ -199,7 +201,7 @@ func (d *DLQ) ReplayAll(ctx context.Context) int {
 						err = &replayPanicError{value: r}
 					}
 				}()
-				return d.replayFn(ctx, entry)
+				return fn(ctx, entry)
 			}()
 			if replayErr != nil {
 				if pe, ok := replayErr.(*replayPanicError); ok {

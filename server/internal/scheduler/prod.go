@@ -93,15 +93,17 @@ func (s *Scheduler) Start(ctx context.Context) error {
 
 func (s *Scheduler) Stop() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if !s.started {
+		s.mu.Unlock()
 		return nil
 	}
+	s.started = false
 	close(s.stopCh)
+	s.mu.Unlock()
+
 	for _, l := range s.lanes {
 		l.wg.Wait()
 	}
-	s.started = false
 	return nil
 }
 

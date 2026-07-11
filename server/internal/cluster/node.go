@@ -59,7 +59,6 @@ func (cn *ClusterNode) Start() error {
 		cn.mu.Unlock()
 		return nil
 	}
-	cn.started = true
 	cn.mu.Unlock()
 
 	if err := cn.bus.Start(); err != nil {
@@ -69,7 +68,11 @@ func (cn *ClusterNode) Start() error {
 	cn.Subscribe("_flowrulz_gossip", cn.gossiper.HandleGossipMessage)
 
 	gossipCtx, gossipCancel := context.WithCancel(context.Background())
+	cn.mu.Lock()
 	cn.gossipCancel = gossipCancel
+	cn.started = true
+	cn.mu.Unlock()
+
 	go cn.gossiper.Start(gossipCtx)
 
 	slog.Info("cluster node: listening", "node_id", cn.nodeID, "addr", cn.grpcAddr)

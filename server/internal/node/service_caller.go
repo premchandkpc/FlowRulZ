@@ -37,9 +37,11 @@ type ServiceCaller struct {
 }
 
 type tcpConnPool struct {
-	mu    sync.Mutex
-	conns chan net.Conn
-	addr  string
+	mu      sync.Mutex
+	conns   chan net.Conn
+	addr    string
+	closed  bool
+	closeMu sync.Mutex
 }
 
 // NewServiceCaller creates a new ServiceCaller with default HTTP client.
@@ -126,6 +128,13 @@ func (p *tcpConnPool) put(conn net.Conn) {
 	if conn == nil {
 		return
 	}
+	p.closeMu.Lock()
+	closed := p.closed
+	p.closeMu.Unlock()
+	if closed {
+		conn.Close()
+		return
+	}
 	select {
 	case p.conns <- conn:
 	default:
@@ -134,9 +143,20 @@ func (p *tcpConnPool) put(conn net.Conn) {
 }
 
 func (p *tcpConnPool) close() {
-	close(p.conns)
-	for conn := range p.conns {
-		conn.Close()
+	p.closeMu.Lock()
+	p.closed = true
+	p.closeMu.Unlock()
+
+	p.mu.Lock()
+	ch := p.conns
+	p.conns = nil
+	p.mu.Unlock()
+
+	if ch != nil {
+		close(ch)
+		for conn := range ch {
+			conn.Close()
+		}
 	}
 }
 

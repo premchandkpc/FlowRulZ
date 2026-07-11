@@ -11,6 +11,7 @@ func (m *Membership) evictStale() {
 	now := time.Now()
 	leaderBefore := m.leaderIDLocked()
 	var expiredLeader string
+	var cb func(string)
 	for id, n := range m.nodes {
 		if n.IsAlive && now.Sub(n.LastSeen) > m.heartbeatTimeout {
 			n.IsAlive = false
@@ -20,11 +21,12 @@ func (m *Membership) evictStale() {
 			}
 		}
 	}
+	cb = m.leaseCallback
 	m.mu.Unlock()
 
-	if expiredLeader != "" && m.leaseCallback != nil {
+	if expiredLeader != "" && cb != nil {
 		slog.Warn("membership: leader lost due to heartbeat timeout, notifying lease callback", "leader", expiredLeader)
-		m.leaseCallback(expiredLeader)
+		cb(expiredLeader)
 	}
 }
 
@@ -63,14 +65,15 @@ func (m *Membership) StartLeaderLeaseChecker(ctx context.Context, interval time.
 					lastNotified = ""
 					continue
 				}
-				if time.Since(n.LastSeen) > m.leaderLease {
-					n.IsAlive = false
-					slog.Warn("membership: leader lease expired", "leader", leaderID, "last_seen_ago", time.Since(n.LastSeen))
-					m.mu.Unlock()
-					if m.leaseCallback != nil && lastNotified != leaderID {
-						lastNotified = leaderID
-						m.leaseCallback(leaderID)
-					}
+			if time.Since(n.LastSeen) > m.leaderLease {
+				n.IsAlive = false
+				slog.Warn("membership: leader lease expired", "leader", leaderID, "last_seen_ago", time.Since(n.LastSeen))
+				cb := m.leaseCallback
+				m.mu.Unlock()
+				if cb != nil && lastNotified != leaderID {
+					lastNotified = leaderID
+					cb(leaderID)
+				}
 				} else {
 					m.mu.Unlock()
 					lastNotified = ""

@@ -29,6 +29,17 @@ type PendingRequest struct {
 	CorrelationID string
 	ReplyCh       chan<- *transport.Message
 	Deadline      time.Time
+	closed        bool
+	closedMu      sync.Mutex
+}
+
+func (pr *PendingRequest) closeOnce() {
+	pr.closedMu.Lock()
+	defer pr.closedMu.Unlock()
+	if !pr.closed {
+		pr.closed = true
+		close(pr.ReplyCh)
+	}
 }
 
 type ReplyRouter struct {
@@ -37,6 +48,7 @@ type ReplyRouter struct {
 	cleanupStop chan struct{}
 	cleanupTick time.Duration
 	maxPending  int
+	stopOnce    sync.Once
 }
 
 type Option func(*ReplyRouter)
@@ -96,9 +108,12 @@ func (rr *ReplyRouter) Cancel(correlationID string) {
 	pr, ok := rr.pending[correlationID]
 	if ok {
 		delete(rr.pending, correlationID)
-		close(pr.ReplyCh)
 	}
 	rr.mu.Unlock()
+
+	if ok {
+		pr.closeOnce()
+	}
 }
 
 func (rr *ReplyRouter) Deliver(ctx context.Context, correlationID string, msg *transport.Message) bool {
@@ -106,13 +121,16 @@ func (rr *ReplyRouter) Deliver(ctx context.Context, correlationID string, msg *t
 	pr, ok := rr.pending[correlationID]
 	if ok {
 		delete(rr.pending, correlationID)
+	}
+	rr.mu.Unlock()
+
+	if ok {
 		select {
 		case pr.ReplyCh <- msg:
 		default:
 		}
-		close(pr.ReplyCh)
+		pr.closeOnce()
 	}
-	rr.mu.Unlock()
 
 	return ok
 }
@@ -139,22 +157,24 @@ func (rr *ReplyRouter) StartCleanup(ctx context.Context) {
 }
 
 func (rr *ReplyRouter) StopCleanup() {
-	close(rr.cleanupStop)
+	rr.stopOnce.Do(func() {
+		close(rr.cleanupStop)
+	})
 }
 
 func (rr *ReplyRouter) cleanup() {
 	now := time.Now()
 	rr.mu.Lock()
-	var expired []chan<- *transport.Message
+	var expired []*PendingRequest
 	for corrID, pr := range rr.pending {
 		if now.After(pr.Deadline) {
 			delete(rr.pending, corrID)
-			expired = append(expired, pr.ReplyCh)
+			expired = append(expired, pr)
 		}
 	}
 	rr.mu.Unlock()
 
-	for _, ch := range expired {
-		close(ch)
+	for _, pr := range expired {
+		pr.closeOnce()
 	}
 }

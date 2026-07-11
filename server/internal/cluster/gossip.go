@@ -35,7 +35,8 @@ type Gossiper struct {
 	syncInterval time.Duration
 	stopCh       chan struct{}
 
-	onNodeJoin func(nodeID, address string)
+	onNodeJoin   func(nodeID, address string)
+	onJoinMu     sync.RWMutex
 }
 
 func NewGossiper(nodeID, grpcAddr string, node *ClusterNode) *Gossiper {
@@ -53,7 +54,9 @@ func NewGossiper(nodeID, grpcAddr string, node *ClusterNode) *Gossiper {
 }
 
 func (g *Gossiper) OnNodeJoin(fn func(nodeID, address string)) {
+	g.onJoinMu.Lock()
 	g.onNodeJoin = fn
+	g.onJoinMu.Unlock()
 }
 
 func (g *Gossiper) SetState(term uint64) {
@@ -70,8 +73,13 @@ func (g *Gossiper) UpdateState(nodeID string, state GossipState) {
 		g.states[nodeID] = state
 		isNew := !ok
 		g.statesMu.Unlock()
-		if isNew && g.onNodeJoin != nil {
-			g.onNodeJoin(state.NodeID, state.Address)
+		if isNew {
+			g.onJoinMu.RLock()
+			fn := g.onNodeJoin
+			g.onJoinMu.RUnlock()
+			if fn != nil {
+				fn(state.NodeID, state.Address)
+			}
 		}
 		return
 	}

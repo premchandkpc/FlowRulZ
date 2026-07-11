@@ -50,11 +50,12 @@ func (er *ExecRegistry) CancelAll() {
 	for _, entry := range er.exec {
 		entry.cancel()
 	}
+	er.exec = make(map[string]*execEntry)
 }
 
 func (er *ExecRegistry) List() map[string]time.Time {
-	er.mu.Lock()
-	defer er.mu.Unlock()
+	er.mu.RLock()
+	defer er.mu.RUnlock()
 	out := make(map[string]time.Time, len(er.exec))
 	for id, entry := range er.exec {
 		out[id] = entry.started

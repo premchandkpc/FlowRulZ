@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/premchandkpc/FlowRulZ/server/bridge"
 	"github.com/premchandkpc/FlowRulZ/server/internal/execstate"
@@ -65,6 +66,9 @@ func (n *ProdNode) recoverExecution(ctx context.Context, st *execstate.State) {
 		}
 	}
 
+	recoveryCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
 	var startResp []byte
 	if st.Status == execstate.StatusWaitingForService {
 		rawName, ok := names[st.PendingSvc]
@@ -72,30 +76,30 @@ func (n *ProdNode) recoverExecution(ctx context.Context, st *execstate.State) {
 			rawName = fmt.Sprintf("svc-%d", st.PendingSvc)
 		}
 		svcName, method := bridge.ParseServiceMethod(rawName)
-		resp, err := n.callService(ctx, svcName, method, st.PendingBody, 0)
+		resp, err := n.callService(recoveryCtx, svcName, method, st.PendingBody, 0)
 		if err != nil {
 			slog.Warn("recovery: exec retry failed", "exec_id", st.ID, "service", svcName, "error", err)
 			st.Status = execstate.StatusFailed
 			st.Error = fmt.Sprintf("recovery retry: %v", err)
-			n.StateStore.Save(context.Background(), st)
+			n.StateStore.Save(recoveryCtx, st)
 			return
 		}
 		startResp = resp
 		st.Status = execstate.StatusRunning
 		st.PendingSvc = 0
 		st.PendingBody = nil
-		n.StateStore.Save(context.Background(), st)
+		n.StateStore.Save(recoveryCtx, st)
 	}
 
-	out, err := n.runSteps(context.Background(), st.ID, st.PlanBytes, names, st.CtxBytes, startResp, st)
+	out, err := n.runSteps(recoveryCtx, st.ID, st.PlanBytes, names, st.CtxBytes, startResp, st)
 	if err != nil {
 		slog.Error("recovery: exec failed", "exec_id", st.ID, "error", err)
 		st.Status = execstate.StatusFailed
 		st.Error = err.Error()
-		n.StateStore.Save(context.Background(), st)
+		n.StateStore.Save(recoveryCtx, st)
 		return
 	}
 
 	slog.Info("recovery: exec completed", "exec_id", st.ID, "bytes", len(out))
-	n.StateStore.Delete(context.Background(), st.ID)
+	n.StateStore.Delete(recoveryCtx, st.ID)
 }

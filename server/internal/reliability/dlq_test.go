@@ -3,6 +3,7 @@ package reliability
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -373,6 +374,78 @@ func TestDLQLoadFromMessagesPreservesExisting(t *testing.T) {
 		if !ids[id] {
 			t.Fatalf("expected entry with ID %q to be present", id)
 		}
+	}
+}
+
+func TestDLQSendInvalidID(t *testing.T) {
+	d := NewDLQ(100, WithDLQDir(t.TempDir()))
+
+	err := d.Send(&DeadLetterEntry{ID: "../etc/passwd", RuleID: "r", Body: []byte("data"), Error: "err"})
+	if err == nil {
+		t.Fatal("expected error for path-traversal ID")
+	}
+	var idErr *InvalidEntryIDError
+	if !errors.As(err, &idErr) {
+		t.Fatalf("expected InvalidEntryIDError, got %T", err)
+	}
+}
+
+func TestDLQSendEmptyID(t *testing.T) {
+	d := NewDLQ(100, WithDLQDir(t.TempDir()))
+
+	err := d.Send(&DeadLetterEntry{ID: "", RuleID: "r", Body: []byte("data"), Error: "err"})
+	if err == nil {
+		t.Fatal("expected error for empty ID")
+	}
+	var idErr *InvalidEntryIDError
+	if !errors.As(err, &idErr) {
+		t.Fatalf("expected InvalidEntryIDError, got %T", err)
+	}
+}
+
+func TestDLQLoadFromMessagesInvalidID(t *testing.T) {
+	d := NewDLQ(100)
+
+	msgs := [][]byte{
+		mustMarshal(t, &DeadLetterEntry{ID: "good-1", RuleID: "r", Body: []byte("ok"), Error: "err"}),
+		mustMarshal(t, &DeadLetterEntry{ID: "bad/id", RuleID: "r", Body: []byte("bad"), Error: "err"}),
+		mustMarshal(t, &DeadLetterEntry{ID: "good-2", RuleID: "r", Body: []byte("ok"), Error: "err"}),
+	}
+
+	added := d.LoadFromMessages(context.Background(), msgs)
+	if added != 2 {
+		t.Fatalf("expected 2 added (invalid ID skipped), got %d", added)
+	}
+
+	entries := d.List()
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+
+	ids := make(map[string]bool)
+	for _, e := range entries {
+		ids[e.ID] = true
+	}
+	if !ids["good-1"] || !ids["good-2"] {
+		t.Fatalf("expected only valid entries, got IDs: %v", ids)
+	}
+	if ids["bad/id"] {
+		t.Fatal("expected invalid ID entry to be rejected")
+	}
+}
+
+func TestDLQSendValidIDs(t *testing.T) {
+	d := NewDLQ(100, WithDLQDir(t.TempDir()))
+
+	validIDs := []string{"abc-123_def", "node-42", "a", "X_9-z"}
+	for _, id := range validIDs {
+		if err := d.Send(&DeadLetterEntry{ID: id, RuleID: "r", Body: []byte("data"), Error: "err"}); err != nil {
+			t.Fatalf("unexpected error for valid ID %q: %v", id, err)
+		}
+	}
+
+	if d.Len() != len(validIDs) {
+		t.Fatalf("expected %d entries, got %d", len(validIDs), d.Len())
 	}
 }
 

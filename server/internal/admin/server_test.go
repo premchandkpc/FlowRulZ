@@ -368,3 +368,62 @@ func TestNodeInfo(t *testing.T) {
 		t.Error("expected goroutines to be present")
 	}
 }
+
+func TestHealthEndpointMinimal(t *testing.T) {
+	eng := engine.New("")
+	srv := newTestServer(eng)
+
+	req := httptest.NewRequest("GET", "/health", nil)
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp map[string]string
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["status"] != "ok" {
+		t.Errorf("expected status=ok, got %s", resp["status"])
+	}
+
+	if len(resp) != 1 {
+		t.Errorf("expected only status field, got %d fields: %v", len(resp), resp)
+	}
+	if _, exists := resp["goroutines"]; exists {
+		t.Error("health endpoint should not expose goroutines (use /metrics)")
+	}
+	if _, exists := resp["alloc_mb"]; exists {
+		t.Error("health endpoint should not expose alloc_mb (use /metrics)")
+	}
+}
+
+func TestRecoveryTriggerDebounce(t *testing.T) {
+	eng := engine.New("")
+	srv := newTestServer(eng)
+
+	block := make(chan struct{})
+	srv.RegisterExtended("node-1", nil, func(ctx context.Context) {
+		<-block
+	})
+
+	req := httptest.NewRequest("POST", "/recovery/trigger", nil)
+	authReq(req)
+	w1 := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w1, req)
+
+	if w1.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 for first trigger, got %d: %s", w1.Code, w1.Body.String())
+	}
+
+	req2 := httptest.NewRequest("POST", "/recovery/trigger", nil)
+	authReq(req2)
+	w2 := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w2, req2)
+
+	if w2.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for second concurrent trigger, got %d: %s", w2.Code, w2.Body.String())
+	}
+
+	close(block)
+}

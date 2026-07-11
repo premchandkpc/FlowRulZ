@@ -265,3 +265,69 @@ func TestCLI(t *testing.T) {
 		t.Errorf("help command failed: %v", err)
 	}
 }
+
+func TestCodeGenRejectsInvalidFlowName(t *testing.T) {
+	gen := NewCodeGenerator(TargetGo)
+	ir := &IR{Name: "foo bar", Version: 1}
+	_, err := gen.Generate(ir)
+	if err == nil {
+		t.Fatal("expected error for flow name with space")
+	}
+	if !strings.Contains(err.Error(), "invalid flow name") {
+		t.Fatalf("expected 'invalid flow name' in error, got: %v", err)
+	}
+}
+
+func TestCodeGenRejectsInvalidVariableName(t *testing.T) {
+	gen := NewCodeGenerator(TargetGo)
+	ir := &IR{
+		Name:    "ValidFlow",
+		Version: 1,
+		Variables: []IRVariable{
+			{Name: "bad var", Type: "string"},
+		},
+	}
+	_, err := gen.Generate(ir)
+	if err == nil {
+		t.Fatal("expected error for variable name with space")
+	}
+	if !strings.Contains(err.Error(), "invalid variable name") {
+		t.Fatalf("expected 'invalid variable name' in error, got: %v", err)
+	}
+}
+
+func TestCodeGenRejectsInvalidServiceName(t *testing.T) {
+	gen := NewCodeGenerator(TargetGo)
+	ir := &IR{
+		Name:    "ValidFlow",
+		Version: 1,
+		Services: []IRService{
+			{Name: "bad.name!", Type: "grpc"},
+		},
+	}
+	_, err := gen.Generate(ir)
+	if err == nil {
+		t.Fatal("expected error for service name with invalid chars")
+	}
+	if !strings.Contains(err.Error(), "invalid service name") {
+		t.Fatalf("expected 'invalid service name' in error, got: %v", err)
+	}
+}
+
+func TestCodeGenAcceptsValidNames(t *testing.T) {
+	gen := NewCodeGenerator(TargetGo)
+	ir := &IR{
+		Name:    "MyFlow_1",
+		Version: 1,
+		Variables: []IRVariable{
+			{Name: "userId", Type: "string"},
+		},
+		Services: []IRService{
+			{Name: "auth_svc", Type: "grpc"},
+		},
+	}
+	_, err := gen.Generate(ir)
+	if err != nil {
+		t.Fatalf("unexpected error for valid identifiers: %v", err)
+	}
+}

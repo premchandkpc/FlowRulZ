@@ -6,6 +6,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/premchandkpc/FlowRulZ/server/internal/observability"
 )
 
 func TestEnqueueAndExecute(t *testing.T) {
@@ -294,5 +296,256 @@ func TestContextCancellation(t *testing.T) {
 	case <-ch:
 	case <-time.After(time.Second):
 		t.Fatal("timeout waiting for cancellation")
+	}
+}
+
+func TestSchedulerMetricsEnqueue(t *testing.T) {
+	mc := observability.NewMetricsCollector()
+	s := NewWithMetrics(nil, mc)
+	ctx, cancel := context.WithCancel(context.Background())
+	s.Start(ctx)
+	defer cancel()
+	defer s.Stop()
+
+	executed := make(chan struct{})
+	task := &Task{
+		ID:       "metrics-enq-1",
+		Priority: PriorityFast,
+		Body:     []byte("hello"),
+		Execute: func(ctx context.Context, task *Task) ([]byte, error) {
+			close(executed)
+			return []byte("result"), nil
+		},
+	}
+
+	err := s.EnqueueTask(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-executed:
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for execution")
+	}
+
+	if got := mc.Counter("scheduler.enqueue_total").Value(); got != 1 {
+		t.Fatalf("expected enqueue_total=1, got %d", got)
+	}
+}
+
+func TestSchedulerMetricsDequeue(t *testing.T) {
+	mc := observability.NewMetricsCollector()
+	s := NewWithMetrics(nil, mc)
+	ctx, cancel := context.WithCancel(context.Background())
+	s.Start(ctx)
+	defer cancel()
+	defer s.Stop()
+
+	executed := make(chan struct{})
+	task := &Task{
+		ID:       "metrics-deq-1",
+		Priority: PriorityFast,
+		Body:     []byte("hello"),
+		Execute: func(ctx context.Context, task *Task) ([]byte, error) {
+			close(executed)
+			return []byte("result"), nil
+		},
+	}
+
+	err := s.EnqueueTask(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-executed:
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for execution")
+	}
+
+	time.Sleep(20 * time.Millisecond)
+
+	if got := mc.Counter("scheduler.dequeue_total").Value(); got < 1 {
+		t.Fatalf("expected dequeue_total >= 1, got %d", got)
+	}
+}
+
+func TestSchedulerMetricsReject(t *testing.T) {
+	mc := observability.NewMetricsCollector()
+	s := NewWithMetrics([]LaneConfig{
+		{Name: PriorityFast, MaxConcurrent: 1, QueueSize: 1, RejectOnFull: true},
+	}, mc)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s.Start(ctx)
+	defer cancel()
+	defer s.Stop()
+
+	started := make(chan struct{})
+	block := make(chan struct{})
+	s.EnqueueTask(&Task{ID: "blocker", Priority: PriorityFast,
+		Execute: func(ctx context.Context, task *Task) ([]byte, error) {
+			close(started)
+			<-block
+			return nil, nil
+		},
+	})
+	<-started
+
+	s.EnqueueTask(&Task{ID: "fill", Priority: PriorityFast,
+		Execute: func(ctx context.Context, task *Task) ([]byte, error) {
+			return nil, nil
+		},
+	})
+
+	err := s.EnqueueTask(&Task{ID: "reject", Priority: PriorityFast,
+		Execute: func(ctx context.Context, task *Task) ([]byte, error) {
+			return nil, nil
+		},
+	})
+	if err == nil {
+		t.Fatal("expected queue full error")
+	}
+
+	close(block)
+
+	if got := mc.Counter("scheduler.reject_total").Value(); got < 1 {
+		t.Fatalf("expected reject_total >= 1, got %d", got)
+	}
+}
+
+func TestSchedulerMetricsActiveWorkers(t *testing.T) {
+	mc := observability.NewMetricsCollector()
+	s := NewWithMetrics(nil, mc)
+	ctx, cancel := context.WithCancel(context.Background())
+	s.Start(ctx)
+	defer cancel()
+	defer s.Stop()
+
+	started := make(chan struct{})
+	block := make(chan struct{})
+
+	task := &Task{
+		ID:       "metrics-workers-1",
+		Priority: PriorityFast,
+		Body:     []byte("hello"),
+		Execute: func(ctx context.Context, task *Task) ([]byte, error) {
+			close(started)
+			<-block
+			return nil, nil
+		},
+	}
+
+	err := s.EnqueueTask(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	<-started
+	time.Sleep(20 * time.Millisecond)
+
+	if got := mc.Gauge("scheduler.active_workers").Value(); got <= 0 {
+		t.Fatalf("expected active_workers > 0, got %d", got)
+	}
+
+	close(block)
+	time.Sleep(20 * time.Millisecond)
+
+	if got := mc.Gauge("scheduler.active_workers").Value(); got != 0 {
+		t.Fatalf("expected active_workers=0 after completion, got %d", got)
+	}
+}
+
+func TestSchedulerMetricsLatency(t *testing.T) {
+	mc := observability.NewMetricsCollector()
+	s := NewWithMetrics(nil, mc)
+	ctx, cancel := context.WithCancel(context.Background())
+	s.Start(ctx)
+	defer cancel()
+	defer s.Stop()
+
+	executed := make(chan struct{})
+	task := &Task{
+		ID:       "metrics-latency-1",
+		Priority: PriorityFast,
+		Body:     []byte("hello"),
+		Execute: func(ctx context.Context, task *Task) ([]byte, error) {
+			close(executed)
+			return []byte("result"), nil
+		},
+	}
+
+	err := s.EnqueueTask(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-executed:
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for execution")
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	h := mc.Histogram("scheduler.exec_latency_ms", nil)
+	if h.Count() < 1 {
+		t.Fatalf("expected exec_latency_ms observations >= 1, got %d", h.Count())
+	}
+}
+
+func TestStopDoesNotDeadlockWithSnapshot(t *testing.T) {
+	s := New(nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	s.Start(ctx)
+	defer cancel()
+
+	snapshotTaken := make(chan struct{})
+	err := s.EnqueueTask(&Task{
+		ID:       "snap-task",
+		Priority: PriorityFast,
+		Body:     []byte("hello"),
+		Execute: func(ctx context.Context, task *Task) ([]byte, error) {
+			_ = s.Snapshot()
+			close(snapshotTaken)
+			return []byte("done"), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-snapshotTaken:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for snapshot task to execute")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		s.Stop()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop() deadlocked when task called Snapshot()")
+	}
+}
+
+func TestTimerWheelStartIdempotent(t *testing.T) {
+	tw := NewTimerWheel(10*time.Millisecond, 256)
+	tw.Start()
+	tw.Start()
+	defer tw.Stop()
+
+	var count atomic.Int32
+	tw.Add(30*time.Millisecond, func() { count.Add(1) })
+
+	time.Sleep(100 * time.Millisecond)
+	if c := count.Load(); c != 1 {
+		t.Fatalf("expected timer to fire once, fired %d times", c)
 	}
 }

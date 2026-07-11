@@ -224,3 +224,78 @@ func TestMultipleReplies(t *testing.T) {
 		t.Fatal("timeout waiting for close")
 	}
 }
+
+func TestCancelAndDeliverRace(t *testing.T) {
+	rr := New()
+
+	const iterations = 200
+	for i := 0; i < iterations; i++ {
+		corrID := "race-" + string(rune('A'+i%26)) + "-" + string(rune('0'+i/26))
+		ch := make(chan *transport.Message, 1)
+		err := rr.Register(context.Background(), corrID, ch, 5*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			rr.Cancel(corrID)
+		}()
+		go func() {
+			defer wg.Done()
+			rr.Deliver(context.Background(), corrID, &transport.Message{Body: []byte("data")})
+		}()
+		wg.Wait()
+
+		// Drain channel to unblock any pending sender.
+		select {
+		case <-ch:
+		default:
+		}
+	}
+}
+
+func TestCleanupAndCancelRace(t *testing.T) {
+	rr := New(WithCleanupInterval(5*time.Millisecond))
+	rr.StartCleanup(context.Background())
+	defer rr.StopCleanup()
+
+	const iterations = 100
+	for i := 0; i < iterations; i++ {
+		corrID := "cc-" + string(rune('A'+i%26)) + "-" + string(rune('0'+i/26))
+		ch := make(chan *transport.Message, 1)
+		// Use very short timeout so cleanup expires it quickly.
+		err := rr.Register(context.Background(), corrID, ch, 1*time.Millisecond)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Let cleanup fire and possibly expire the request.
+		time.Sleep(15 * time.Millisecond)
+
+		// Cancel in parallel with any in-flight cleanup iteration.
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rr.Cancel(corrID)
+		}()
+		wg.Wait()
+
+		// Drain channel.
+		select {
+		case <-ch:
+		default:
+		}
+	}
+}
+
+func TestStopCleanupIdempotent(t *testing.T) {
+	rr := New()
+	rr.StartCleanup(context.Background())
+	rr.StopCleanup()
+	rr.StopCleanup()
+	rr.StopCleanup()
+}

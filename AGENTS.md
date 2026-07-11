@@ -20,7 +20,7 @@ docs/         Architecture guides + Obsidian vault (26 notes)
 - Compile-time checks: `var _ pkg.Type = (*InternalType)(nil)` in pkgsupport.go for all 5 reliability pkg interfaces
 
 ## Tests
-- `cd server && go test -race ./internal/... ./bridge/...` (286+)
+- `cd server && go test -race ./internal/... ./bridge/...` (305+)
 - `cd runtime && cargo test` (411+)
 - `go test ./simulator/...` (-race)
 
@@ -38,6 +38,12 @@ docs/         Architecture guides + Obsidian vault (26 notes)
 - DLQ: captures replayFn under lock before executing outside lock
 - CircuitBreaker.State(): acquires mutex (was previously racy)
 - ClusterNode.Start(): sets started=true only after bus.Start() succeeds
+- CallServiceWithRetry: exponential backoff (100ms→5s), defaults to 0 retries (backward compatible)
+- Scheduler metrics: opt-in via NewWithMetrics(); New() unchanged
+- Saga compensator: wired post-construction via SetCompensator() (serviceCaller created after SagaTracker)
+- Admin extended: RegisterExtended() for scheduler snapshot + recovery trigger (avoids circular deps)
+- DLQ.LoadFromMessages: idempotent rebuild from raw JSON, deduplicates by entry ID
+- Tracing: ContextWithTraceID/TraceIDFromContext for request-scoped trace IDs, propagated via HTTP X-Trace-ID and gRPC metadata
 
 ## Docs
 `flow-architecture.md` `vm-architecture.md` `bytecode-format.md` `dsl-syntax.md` `memory-management.md` `ffi-api.md` `cluster-model.md` `flows.md` `file-index.md` `obsidian-vault/`

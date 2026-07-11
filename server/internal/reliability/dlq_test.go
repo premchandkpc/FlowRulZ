@@ -2,6 +2,7 @@ package reliability
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -209,4 +210,177 @@ func TestDLQReplayAllPartialFailure(t *testing.T) {
 	if d.Len() != 1 {
 		t.Fatalf("expected 1 failed entry re-queued, got %d", d.Len())
 	}
+}
+
+func TestDLQLoadFromMessages(t *testing.T) {
+	d := NewDLQ(100)
+
+	msgs := [][]byte{
+		mustMarshal(t, &DeadLetterEntry{ID: "load-1", RuleID: "rule-a", Body: []byte("hello"), Error: "err1"}),
+		mustMarshal(t, &DeadLetterEntry{ID: "load-2", RuleID: "rule-b", Body: []byte("world"), Error: "err2"}),
+		mustMarshal(t, &DeadLetterEntry{ID: "load-3", RuleID: "rule-c", Body: []byte("foo"), Error: "err3"}),
+	}
+
+	added := d.LoadFromMessages(context.Background(), msgs)
+	if added != 3 {
+		t.Fatalf("expected 3 added, got %d", added)
+	}
+
+	entries := d.List()
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(entries))
+	}
+
+	ids := make(map[string]bool)
+	for _, e := range entries {
+		ids[e.ID] = true
+	}
+	for _, id := range []string{"load-1", "load-2", "load-3"} {
+		if !ids[id] {
+			t.Fatalf("expected entry with ID %q", id)
+		}
+	}
+}
+
+func TestDLQLoadFromMessagesIdempotent(t *testing.T) {
+	d := NewDLQ(100)
+
+	msgs := [][]byte{
+		mustMarshal(t, &DeadLetterEntry{ID: "idem-1", RuleID: "rule-x", Error: "err"}),
+		mustMarshal(t, &DeadLetterEntry{ID: "idem-2", RuleID: "rule-y", Error: "err"}),
+	}
+
+	added1 := d.LoadFromMessages(context.Background(), msgs)
+	if added1 != 2 {
+		t.Fatalf("expected 2 added on first load, got %d", added1)
+	}
+
+	added2 := d.LoadFromMessages(context.Background(), msgs)
+	if added2 != 0 {
+		t.Fatalf("expected 0 added on second load (idempotent), got %d", added2)
+	}
+
+	if d.Len() != 2 {
+		t.Fatalf("expected 2 entries after idempotent load, got %d", d.Len())
+	}
+}
+
+func TestDLQLoadFromMessagesEmpty(t *testing.T) {
+	d := NewDLQ(100)
+
+	added := d.LoadFromMessages(context.Background(), nil)
+	if added != 0 {
+		t.Fatalf("expected 0 added for nil messages, got %d", added)
+	}
+
+	added = d.LoadFromMessages(context.Background(), [][]byte{})
+	if added != 0 {
+		t.Fatalf("expected 0 added for empty messages, got %d", added)
+	}
+}
+
+func TestDLQLoadFromMessagesMalformed(t *testing.T) {
+	d := NewDLQ(100)
+
+	msgs := [][]byte{
+		[]byte("not valid json"),
+		mustMarshal(t, &DeadLetterEntry{ID: "good-1", RuleID: "rule-a", Error: "err"}),
+		[]byte("{invalid"),
+		mustMarshal(t, &DeadLetterEntry{ID: "good-2", RuleID: "rule-b", Error: "err"}),
+	}
+
+	added := d.LoadFromMessages(context.Background(), msgs)
+	if added != 2 {
+		t.Fatalf("expected 2 added (valid only), got %d", added)
+	}
+
+	entries := d.List()
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+
+	ids := make(map[string]bool)
+	for _, e := range entries {
+		ids[e.ID] = true
+	}
+	if !ids["good-1"] || !ids["good-2"] {
+		t.Fatalf("expected only valid entries, got IDs: %v", ids)
+	}
+}
+
+func TestDLQLoadFromMessagesMaxSize(t *testing.T) {
+	d := NewDLQ(3)
+
+	for i := 0; i < 3; i++ {
+		d.Send(&DeadLetterEntry{ID: fmt.Sprintf("existing-%d", i), Error: "err"})
+	}
+
+	if d.Len() != 3 {
+		t.Fatalf("expected 3 existing entries, got %d", d.Len())
+	}
+
+	msgs := [][]byte{
+		mustMarshal(t, &DeadLetterEntry{ID: "new-1", RuleID: "r", Error: "err"}),
+		mustMarshal(t, &DeadLetterEntry{ID: "new-2", RuleID: "r", Error: "err"}),
+	}
+
+	added := d.LoadFromMessages(context.Background(), msgs)
+	if added != 2 {
+		t.Fatalf("expected 2 added, got %d", added)
+	}
+
+	if d.Len() != 3 {
+		t.Fatalf("expected 3 entries (max size enforced), got %d", d.Len())
+	}
+
+	entries := d.List()
+	for _, e := range entries {
+		if e.ID == "existing-0" {
+			t.Fatalf("oldest entry should have been evicted")
+		}
+	}
+}
+
+func TestDLQLoadFromMessagesPreservesExisting(t *testing.T) {
+	d := NewDLQ(100)
+
+	d.Send(&DeadLetterEntry{ID: "pre-1", RuleID: "rule-p", Body: []byte("existing"), Error: "err"})
+	d.Send(&DeadLetterEntry{ID: "pre-2", RuleID: "rule-q", Body: []byte("existing"), Error: "err"})
+
+	if d.Len() != 2 {
+		t.Fatalf("expected 2 existing entries, got %d", d.Len())
+	}
+
+	msgs := [][]byte{
+		mustMarshal(t, &DeadLetterEntry{ID: "new-1", RuleID: "rule-n", Body: []byte("new"), Error: "err"}),
+	}
+
+	added := d.LoadFromMessages(context.Background(), msgs)
+	if added != 1 {
+		t.Fatalf("expected 1 added, got %d", added)
+	}
+
+	entries := d.List()
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 total entries, got %d", len(entries))
+	}
+
+	ids := make(map[string]bool)
+	for _, e := range entries {
+		ids[e.ID] = true
+	}
+	for _, id := range []string{"pre-1", "pre-2", "new-1"} {
+		if !ids[id] {
+			t.Fatalf("expected entry with ID %q to be present", id)
+		}
+	}
+}
+
+func mustMarshal(t *testing.T, v any) []byte {
+	t.Helper()
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("mustMarshal: %v", err)
+	}
+	return data
 }

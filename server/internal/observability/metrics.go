@@ -105,6 +105,8 @@ func (h *Histogram) Observe(v float64) {
 	h.counts[len(h.buckets)].Add(1)
 }
 
+func (h *Histogram) Count() int64 { return h.total.Load() }
+
 // -- Snapshot --
 
 type MetricSnapshot struct {

@@ -86,3 +86,83 @@ func TestSagaTrackerClear(t *testing.T) {
 		t.Fatal("expected no error after clear")
 	}
 }
+
+func TestSagaSetCompensator(t *testing.T) {
+	tracker := NewSagaTracker(nil)
+
+	var called []string
+	tracker.SetCompensator(func(svc, method string, body []byte) error {
+		called = append(called, svc+"."+method)
+		return nil
+	})
+
+	tracker.RegisterStep("exec-5", SagaStep{
+		ServiceName: "order", Method: "create",
+		CompSvc: "order", CompMethod: "cancel",
+		Body:     []byte(`{"id":1}`),
+	})
+
+	if err := tracker.Compensate("exec-5"); err != nil {
+		t.Fatal(err)
+	}
+	if len(called) != 1 || called[0] != "order.cancel" {
+		t.Fatalf("expected [order.cancel], got %v", called)
+	}
+}
+
+func TestSagaSetCompensatorNil(t *testing.T) {
+	var calls int
+	tracker := NewSagaTracker(func(svc, method string, body []byte) error {
+		calls++
+		return nil
+	})
+
+	tracker.SetCompensator(nil)
+
+	tracker.RegisterStep("exec-6", SagaStep{
+		ServiceName: "svc", Method: "do",
+		CompSvc: "svc", CompMethod: "undo",
+	})
+
+	if err := tracker.Compensate("exec-6"); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("expected original compensator to still be used (called once), got %d", calls)
+	}
+}
+
+func TestSagaSetCompensatorReplaces(t *testing.T) {
+	var firstCalled, secondCalled bool
+	tracker := NewSagaTracker(func(svc, method string, body []byte) error {
+		firstCalled = true
+		return nil
+	})
+
+	tracker.RegisterStep("exec-7", SagaStep{
+		ServiceName: "svc", Method: "do",
+		CompSvc: "svc", CompMethod: "undo",
+	})
+	tracker.Compensate("exec-7")
+	if !firstCalled {
+		t.Fatal("expected first compensator to be called")
+	}
+
+	tracker.SetCompensator(func(svc, method string, body []byte) error {
+		secondCalled = true
+		return nil
+	})
+
+	tracker.RegisterStep("exec-8", SagaStep{
+		ServiceName: "svc", Method: "do",
+		CompSvc: "svc", CompMethod: "undo",
+	})
+	tracker.Compensate("exec-8")
+	if !secondCalled {
+		t.Fatal("expected second compensator to be called")
+	}
+	if firstCalled && secondCalled {
+		// firstCalled is true from the first saga, which is expected
+		// secondCalled should be true from the second saga only
+	}
+}

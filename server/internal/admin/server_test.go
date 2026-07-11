@@ -1,6 +1,8 @@
 package admin
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/premchandkpc/FlowRulZ/server/internal/engine"
+	"github.com/premchandkpc/FlowRulZ/server/internal/reliability"
 )
 
 func newTestServer(eng *engine.Engine) *Server {
@@ -184,5 +187,184 @@ func TestListVersions(t *testing.T) {
 	json.NewDecoder(w.Body).Decode(&versions)
 	if len(versions) != 2 {
 		t.Fatalf("expected 2 versions, got %d", len(versions))
+	}
+}
+
+func TestDLQLoad(t *testing.T) {
+	eng := engine.New("")
+	srv := newTestServer(eng)
+	dlq := reliability.NewDLQ(100)
+	srv.RegisterDLQ(dlq)
+
+	body := map[string]interface{}{
+		"messages": [][]byte{
+			[]byte(`{"id":"dlq-1","rule_id":"r1","error":"timeout"}`),
+			[]byte(`{"id":"dlq-2","rule_id":"r2","error":"connection refused"}`),
+		},
+	}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/dlq/load", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	authReq(req)
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["status"] != "loaded" {
+		t.Errorf("expected status=loaded, got %v", resp["status"])
+	}
+	if added, ok := resp["added"].(float64); !ok || int(added) != 2 {
+		t.Errorf("expected added=2, got %v", resp["added"])
+	}
+	if inputSize, ok := resp["input_size"].(float64); !ok || int(inputSize) != 2 {
+		t.Errorf("expected input_size=2, got %v", resp["input_size"])
+	}
+}
+
+func TestDLQLoadEmpty(t *testing.T) {
+	eng := engine.New("")
+	srv := newTestServer(eng)
+	dlq := reliability.NewDLQ(100)
+	srv.RegisterDLQ(dlq)
+
+	body := map[string]interface{}{
+		"messages": [][]byte{},
+	}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/dlq/load", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	authReq(req)
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if added, ok := resp["added"].(float64); !ok || int(added) != 0 {
+		t.Errorf("expected added=0, got %v", resp["added"])
+	}
+	if total, ok := resp["total"].(float64); !ok || int(total) != 0 {
+		t.Errorf("expected total=0, got %v", resp["total"])
+	}
+}
+
+func TestDLQLoadNoDLQ(t *testing.T) {
+	eng := engine.New("")
+	srv := newTestServer(eng)
+
+	body := map[string]interface{}{
+		"messages": [][]byte{
+			[]byte(`{"key":"a","value":1}`),
+		},
+	}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/dlq/load", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	authReq(req)
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSchedulerSnapshot(t *testing.T) {
+	eng := engine.New("")
+	srv := newTestServer(eng)
+	srv.RegisterExtended("node-1", func() interface{} {
+		return map[string]interface{}{"queue_depth": 5, "workers": 4}
+	}, nil)
+
+	req := httptest.NewRequest("GET", "/scheduler/snapshot", nil)
+	authReq(req)
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["queue_depth"] != float64(5) {
+		t.Errorf("expected queue_depth=5, got %v", resp["queue_depth"])
+	}
+	if resp["workers"] != float64(4) {
+		t.Errorf("expected workers=4, got %v", resp["workers"])
+	}
+}
+
+func TestTriggerRecovery(t *testing.T) {
+	eng := engine.New("")
+	srv := newTestServer(eng)
+	triggered := make(chan struct{}, 1)
+	srv.RegisterExtended("node-1", nil, func(ctx context.Context) {
+		triggered <- struct{}{}
+	})
+
+	req := httptest.NewRequest("POST", "/recovery/trigger", nil)
+	authReq(req)
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]string
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["status"] != "recovery triggered" {
+		t.Errorf("expected status='recovery triggered', got %s", resp["status"])
+	}
+
+	select {
+	case <-triggered:
+	case <-make(chan struct{}, 1):
+		_ = context.Background()
+		// give the goroutine a moment
+		select {
+		case <-triggered:
+			// ok
+		default:
+			// trigger may run async; accept that
+		}
+	}
+}
+
+func TestNodeInfo(t *testing.T) {
+	eng := engine.New("")
+	srv := newTestServer(eng)
+	dlq := reliability.NewDLQ(100)
+	srv.RegisterDLQ(dlq)
+	srv.RegisterExtended("node-42", nil, nil)
+
+	req := httptest.NewRequest("GET", "/node/info", nil)
+	authReq(req)
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["node_id"] != "node-42" {
+		t.Errorf("expected node_id='node-42', got %v", resp["node_id"])
+	}
+	if resp["go_version"] == nil || resp["go_version"] == "" {
+		t.Error("expected go_version to be set")
+	}
+	if _, ok := resp["goroutines"]; !ok {
+		t.Error("expected goroutines to be present")
 	}
 }

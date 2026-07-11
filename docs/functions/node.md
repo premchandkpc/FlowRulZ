@@ -299,10 +299,11 @@ Calls `Saga.Compensate(execID)` if saga tracker exists. Logs error on failure.
 ## HTTP Handlers
 
 ### `(n *ProdNode) handleHealth(w, r)`
-Returns `{"status":"ok","node_id":"..."}`.
+Returns node health status with subsystem checks. 200 if healthy, 503 if `Scheduler == nil`.
+Response includes: `status`, `node_id`, `is_leader`, `term`, `alive_nodes`, `inflight`, `dlq_size`.
 
 ### `(n *ProdNode) handleReadyz(w, r)`
-Checks `RaftCluster.IsLeader()` (or true if no cluster) + `PlanDist != nil`.
+Returns 200 if ready, 503 if leader with `CurrentTerm == 0` (not initialized).
 
 ### `(n *ProdNode) handleMetrics(w, r)`
 Returns `MetricsCollector.Snapshot()` as JSON.
@@ -433,7 +434,12 @@ Returns Kafka producer if brokers configured, else ClusterProducer (gossip-based
 
 ---
 
-## Types
+### `(sc *ServiceCaller) Close()`
+Closes all cached gRPC connections and TCP pools.
+
+---
+
+## internal/node/lifecycle.go
 
 ### `NodeDiscoveryMessage`
 ```go

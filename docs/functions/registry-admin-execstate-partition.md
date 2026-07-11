@@ -422,3 +422,44 @@ type HeartbeatRequest struct {
 ## internal/partition/manager.go
 
 ### `(m *Manager) SetProducer(p)` — Sets the partition message producer for rebalance notifications.
+
+---
+
+## internal/execstate/exec_registry.go
+
+### `ExecRegistry` interface — Tracks in-flight executions for cancellation and observability.
+```go
+type ExecRegistry interface {
+    Register(id string, cancel context.CancelFunc, name string)
+    Unregister(id string)
+    Cancel(id string) bool
+    CancelAll()
+    List() map[string]time.Time
+    Len() int
+}
+```
+
+### `NewExecRegistry() ExecRegistry`
+
+---
+
+## internal/execstate/execstate.go — Store Interface
+
+### `Store` interface
+```go
+type Store interface {
+    Create(ctx context.Context, s *State) error
+    Save(ctx context.Context, s *State) error
+    Load(ctx context.Context, id string) (*State, error)
+    ListByStatus(ctx context.Context, statuses ...Status) ([]*State, error)
+    Delete(ctx context.Context, id string) error
+    Close() error
+}
+```
+
+---
+
+## internal/replyrouter/router.go — Sentinel Errors
+
+### `ErrPendingLimit` — `errors.New("replyrouter: max pending requests reached")`
+### `ErrDuplicateCorrID` — `errors.New("replyrouter: duplicate correlation ID")`

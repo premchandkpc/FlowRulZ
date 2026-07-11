@@ -23,6 +23,18 @@ Creates engine with default local compiler. If `persistPath != ""`, loads rules 
 
 Same but with custom compiler implementation.
 
+### `Rule` struct
+```go
+type Rule struct {
+    ID            string
+    Versions      []*VersionedPlan
+    ActiveVersion int
+}
+```
+
+#### `(r *Rule) ActivePlan() *VersionedPlan`
+Returns the active versioned plan, or nil if `ActiveVersion` is out of bounds.
+
 ---
 
 ### `(e *Engine) Deploy(id, dsl string) error`
@@ -343,8 +355,12 @@ Appends step to in-memory map, persists to `{dir}/{execID}.json` if dir set.
 
 ## internal/reliability/dlq.go
 
+### `DLQOption` — `func(*DLQ)` functional option.
+### `WithDLQProducer(p)` — Sets Kafka producer for topic publishing.
+### `WithDLQDir(dir)` — Sets disk persistence directory.
+
 ### `NewDLQ(maxSize int, opts ...DLQOption) *DLQ`
-Default `maxSize=10000`. Options: `WithDLQProducer`, `WithDLQDir`. If dir set, loads existing entries.
+Default `maxSize=10000`. Options: `WithDLQProducer`, `WithDLQDir`. If dir set, loads existing entries from disk on creation.
 
 ### `(d *DLQ) Send(entry *DeadLetterEntry) error`
 
@@ -359,20 +375,18 @@ Default `maxSize=10000`. Options: `WithDLQProducer`, `WithDLQDir`. If dir set, l
 - Disk persistence failure → logged but not fatal.
 - Evicts oldest entry when at capacity.
 
-### `(d *DLQ) ReplayOne(ctx) error`
-Pops oldest entry → calls `replayFn` → removes on success.
+### `(d *DLQ) Replay(ctx, id) error`
+Removes entry by ID → calls `replayFn` with incremented `RetryCount`. Returns nil if entry not found.
 
-### `(d *DLQ) ReplayAll(ctx) error`
-Replays all entries sequentially. Removes each on success.
+### `(d *DLQ) ReplayAll(ctx) int`
+Copies all entries, clears list, replays each sequentially. Returns count of successfully replayed entries. Failed entries are re-queued via `Send`.
 
 ### `(d *DLQ) Clear()` — Empties entries, removes disk files.
-### `(d *DLQ) Entries() []*DeadLetterEntry` — Snapshot under read-lock.
-### `(d *DLQ) SetReplayFn(fn)` — Sets replay callback.
-### `(d *DLQ) LoadFromTopic(ctx)` — **Stub** — logs "not implemented", no-op. planned for Kafka topic rebuild.
-### `(d *DLQ) Replay(ctx, id)` — Replays specific entry by ID. Removes on success.
-### `(d *DLQ) List() []*DeadLetterEntry` — Returns snapshot of all entries (alias for Entries).
+### `(d *DLQ) List() []*DeadLetterEntry` — Snapshot under read-lock.
 ### `(d *DLQ) Len() int` — Returns current entry count.
 ### `(d *DLQ) ToJSON() ([]byte, error)` — Marshals all entries to JSON.
+### `(d *DLQ) SetReplayFn(fn)` — Sets replay callback.
+### `(d *DLQ) LoadFromTopic(ctx)` — **Stub** — logs "not implemented", no-op. Planned for Kafka topic rebuild.
 
 ---
 
@@ -413,6 +427,32 @@ Context-aware wrapper around `Compensate`.
 
 ### `(st *SagaTracker) StatusInfo(ctx, sagaID) (*SagaStatus, error)`
 Returns current saga status (pending compensations, etc.).
+
+---
+
+## internal/scheduler/prod.go — Types
+
+### `Priority` — `int`. Constants: `PriorityFast` (0), `PriorityNormal` (1), `PriorityHeavy` (2).
+
+### `Task` — Unit of work submitted to the scheduler.
+```go
+type Task struct {
+    ID       string
+    Priority Priority
+    Body     []byte
+    Deadline time.Time
+    Execute  func(ctx context.Context, task *Task) ([]byte, error)
+    ResultCh chan TaskResult
+}
+```
+
+### `TaskResult` — `struct{ Output []byte; Error error }`. Sent on `ResultCh` after execution.
+
+### `LaneConfig` — `struct{ Name Priority; MaxConcurrent, QueueSize int; RejectOnFull bool }`.
+
+### `ErrQueueFull` — `errors.New("scheduler: queue full")`.
+
+### `DefaultLanes` — `[]LaneConfig{Fast(50), Normal(20), Heavy(5)}`.
 
 ---
 

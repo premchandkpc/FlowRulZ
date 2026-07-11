@@ -95,11 +95,29 @@ func (n *ProdNode) handleClusterJoin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (n *ProdNode) handleHealth(w http.ResponseWriter, r *http.Request) {
+	status := "ok"
+	code := http.StatusOK
+
+	if !n.IsLeader() && n.Membership.AliveCount() > 1 {
+		// Follower node — healthy but not leader.
+		status = "ok"
+	}
+
+	// Check if key subsystems are responsive.
+	if n.Scheduler == nil {
+		status = "degraded"
+		code = http.StatusServiceUnavailable
+	}
+
+	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":    "ok",
-		"node_id":   n.nodeID,
-		"is_leader": n.IsLeader(),
-		"term":      n.CurrentTerm(),
+		"status":       status,
+		"node_id":      n.nodeID,
+		"is_leader":    n.IsLeader(),
+		"term":         n.CurrentTerm(),
+		"alive_nodes":  n.Membership.AliveCount(),
+		"inflight":     n.Execs.Len(),
+		"dlq_size":     n.DLQ.Len(),
 	})
 }
 

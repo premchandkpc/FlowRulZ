@@ -139,7 +139,7 @@ func (st *SagaTracker) persistLocked(execID string) {
 		return
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
 		slog.Error("saga: write error", "exec_id", execID, "error", err)
 		return
 	}

@@ -79,7 +79,7 @@ func (e *Engine) saveRules() {
 		return
 	}
 	tmpPath := e.persistPath + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
 		slog.Error("saveRules: write tmp failed", "error", err)
 		return
 	}

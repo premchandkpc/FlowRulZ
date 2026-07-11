@@ -65,6 +65,7 @@ caller_cb_t getCallerBridgePtr(void);
 import "C"
 
 import (
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -96,6 +97,12 @@ var (
 
 //export goServiceCaller
 func goServiceCaller(ctxID C.uint64_t, svcID C.uint16_t, bodyPtr *C.uchar, bodyLen C.size_t, respPtr *C.uchar, respLen *C.size_t) C.int {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("goServiceCaller panic", "recover", r)
+		}
+	}()
+
 	v, ok := callerMap.Load(uint64(ctxID))
 	if !ok {
 		return -1
@@ -126,6 +133,9 @@ func SpanSize() int {
 func GetSpans() []byte {
 	buf := make([]byte, 4096)
 	n := C.flowrulz_get_spans((*C.uchar)(unsafe.Pointer(&buf[0])), C.size_t(cap(buf)))
+	if int(n) > cap(buf) {
+		n = C.size_t(cap(buf))
+	}
 	return buf[:n]
 }
 

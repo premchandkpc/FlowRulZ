@@ -6,11 +6,14 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 	"time"
 
 	"github.com/premchandkpc/FlowRulZ/server/internal/transport"
 )
+
+var safeIDRegex = regexp.MustCompile(`^[a-zA-Z0-9_\-]+$`)
 
 const DefaultDLQTopic = "_flowrulz_dlq"
 
@@ -71,6 +74,10 @@ func (d *DLQ) SetReplayFn(fn func(ctx context.Context, entry *DeadLetterEntry) e
 }
 
 func (d *DLQ) Send(entry *DeadLetterEntry) error {
+	if entry.ID == "" || !safeIDRegex.MatchString(entry.ID) {
+		return &InvalidEntryIDError{ID: entry.ID}
+	}
+
 	d.mu.Lock()
 	if len(d.entries) >= d.maxSize {
 		oldest := d.entries[0]
@@ -135,7 +142,7 @@ func (d *DLQ) persistEntry(entry *DeadLetterEntry) {
 		return
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
 		slog.Error("dlq: write error", "error", err)
 		return
 	}
@@ -170,6 +177,10 @@ func (d *DLQ) LoadFromMessages(ctx context.Context, messages [][]byte) int {
 		var entry DeadLetterEntry
 		if err := json.Unmarshal(raw, &entry); err != nil {
 			slog.Warn("dlq: unmarshal error during rebuild", "error", err)
+			continue
+		}
+		if entry.ID == "" || !safeIDRegex.MatchString(entry.ID) {
+			slog.Warn("dlq: rejected entry with invalid ID", "id", entry.ID)
 			continue
 		}
 
@@ -295,4 +306,13 @@ func (d *DLQ) ToJSON() ([]byte, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return json.Marshal(d.entries)
+}
+
+// InvalidEntryIDError is returned when a DLQ entry ID contains unsafe characters.
+type InvalidEntryIDError struct {
+	ID string
+}
+
+func (e *InvalidEntryIDError) Error() string {
+	return "invalid DLQ entry ID: must contain only alphanumeric, dash, or underscore characters"
 }

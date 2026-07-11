@@ -2,8 +2,11 @@ package flow
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
+
+var validIdentRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 // CodeGenTarget is the target language for code generation.
 type CodeGenTarget string
@@ -27,6 +30,20 @@ func NewCodeGenerator(target CodeGenTarget) *CodeGenerator {
 
 // Generate generates code from IR.
 func (g *CodeGenerator) Generate(ir *IR) (string, error) {
+	if !validIdentRegex.MatchString(ir.Name) {
+		return "", fmt.Errorf("codegen: invalid flow name %q (must be valid identifier)", ir.Name)
+	}
+	for _, v := range ir.Variables {
+		if !validIdentRegex.MatchString(v.Name) {
+			return "", fmt.Errorf("codegen: invalid variable name %q (must be valid identifier)", v.Name)
+		}
+	}
+	for _, svc := range ir.Services {
+		if !validIdentRegex.MatchString(svc.Name) {
+			return "", fmt.Errorf("codegen: invalid service name %q (must be valid identifier)", svc.Name)
+		}
+	}
+
 	switch g.target {
 	case TargetGo:
 		return g.generateGo(ir)

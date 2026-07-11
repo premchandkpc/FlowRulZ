@@ -65,6 +65,9 @@ func InternLookup(id uint16) string {
 	buf := make([]byte, 256)
 	var outLen C.size_t
 	C.flowrulz_intern_lookup(C.uint16_t(id), (*C.uchar)(unsafe.Pointer(&buf[0])), &outLen)
+	if int(outLen) > cap(buf) {
+		outLen = C.size_t(cap(buf))
+	}
 	return string(buf[:outLen])
 }
 

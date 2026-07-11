@@ -315,6 +315,7 @@ func (s *Server) loadDLQFromTopic(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "dlq not configured", http.StatusNotFound)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 	var req struct {
 		Messages [][]byte `json:"messages"`
 	}
@@ -344,7 +345,7 @@ func (s *Server) triggerRecovery(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "recovery not configured", http.StatusNotFound)
 		return
 	}
-	go s.recoveryTrigger(r.Context())
+	go s.recoveryTrigger(context.Background())
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "recovery triggered"})
 }
 

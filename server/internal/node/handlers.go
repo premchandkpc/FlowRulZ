@@ -19,10 +19,10 @@ func (n *ProdNode) registerHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/health", n.handleHealth)
 	mux.HandleFunc("/readyz", n.handleReadyz)
 	mux.HandleFunc("/metrics", n.handleMetrics)
-	mux.HandleFunc("DELETE /executions/{id}", n.handleDeleteExecution)
-	mux.HandleFunc("GET /executions", n.handleListExecutions)
-	mux.HandleFunc("GET /partitions", n.handleListPartitions)
-	mux.HandleFunc("POST /partitions/rebalance", n.handleRebalance)
+	mux.HandleFunc("DELETE /executions/{id}", n.requireClusterAuth(n.handleDeleteExecution))
+	mux.HandleFunc("GET /executions", n.requireClusterAuth(n.handleListExecutions))
+	mux.HandleFunc("GET /partitions", n.requireClusterAuth(n.handleListPartitions))
+	mux.HandleFunc("POST /partitions/rebalance", n.requireClusterAuth(n.handleRebalance))
 }
 
 func (n *ProdNode) requireClusterAuth(next http.HandlerFunc) http.HandlerFunc {

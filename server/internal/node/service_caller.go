@@ -368,13 +368,13 @@ func (sc *ServiceCaller) callHTTP(
 	defer resp.Body.Close()
 	
 	if resp.StatusCode >= 500 {
-		_, _ = io.ReadAll(resp.Body)
+		_, _ = io.ReadAll(io.LimitReader(resp.Body, 1024))
 		cb.Failure()
 		reg.MarkUnhealthy(inst.Name, inst.Endpoint.NodeID)
 		return nil, fmt.Errorf("http status %d", resp.StatusCode)
 	}
 	
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
 		cb.Failure()
 		return nil, fmt.Errorf("http read: %w", err)

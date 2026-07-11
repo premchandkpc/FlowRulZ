@@ -171,6 +171,10 @@ type StepOutput struct {
 }
 
 func ExecuteStep(plan, ctxBytes, respBytes []byte, caller ServiceCaller) (*StepOutput, error) {
+	if len(plan) == 0 {
+		return nil, fmt.Errorf("execute step: empty plan")
+	}
+
 	ctxID := nextExecID.Add(1)
 	if caller != nil {
 		callerMap.Store(ctxID, caller)

@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/premchandkpc/FlowRulZ/server/internal/observability"
 )
 
 var ErrQueueFull = errors.New("scheduler: queue full")
@@ -49,6 +51,14 @@ type Scheduler struct {
 	totalEnq atomic.Int64
 	totalDeq atomic.Int64
 	totalRej atomic.Int64
+
+	// Metrics
+	metrics          *observability.MetricsCollector
+	enqueueCount     *observability.Counter
+	dequeueCount     *observability.Counter
+	rejectCount      *observability.Counter
+	activeWorkers    *observability.Gauge
+	latencyHistogram *observability.Histogram
 }
 
 var DefaultLanes = []LaneConfig{
@@ -67,6 +77,20 @@ func New(lanes []LaneConfig) *Scheduler {
 	}
 	for _, lc := range lanes {
 		s.lanes[lc.Name] = newLane(lc, s.stopCh)
+	}
+	return s
+}
+
+// NewWithMetrics creates a scheduler with observability metrics.
+func NewWithMetrics(lanes []LaneConfig, mc *observability.MetricsCollector) *Scheduler {
+	s := New(lanes)
+	if mc != nil {
+		s.metrics = mc
+		s.enqueueCount = mc.Counter("scheduler.enqueue_total")
+		s.dequeueCount = mc.Counter("scheduler.dequeue_total")
+		s.rejectCount = mc.Counter("scheduler.reject_total")
+		s.activeWorkers = mc.Gauge("scheduler.active_workers")
+		s.latencyHistogram = mc.Histogram("scheduler.exec_latency_ms", []float64{1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000})
 	}
 	return s
 }
@@ -122,9 +146,15 @@ func (s *Scheduler) EnqueueTask(task *Task) error {
 
 	if !l.enqueue(task) {
 		s.totalRej.Add(1)
+		if s.rejectCount != nil {
+			s.rejectCount.Inc()
+		}
 		return ErrQueueFull
 	}
 	s.totalEnq.Add(1)
+	if s.enqueueCount != nil {
+		s.enqueueCount.Inc()
+	}
 	return nil
 }
 
@@ -200,6 +230,16 @@ func (s *Scheduler) dequeueOrSteal(ctx context.Context, myLane *lane) *Task {
 }
 
 func (s *Scheduler) execTask(ctx context.Context, task *Task) {
+	s.totalDeq.Add(1)
+	if s.dequeueCount != nil {
+		s.dequeueCount.Inc()
+	}
+	if s.activeWorkers != nil {
+		s.activeWorkers.Add(1)
+		defer s.activeWorkers.Add(-1)
+	}
+
+	start := time.Now()
 	execCtx := ctx
 	if !task.Deadline.IsZero() {
 		var cancel context.CancelFunc
@@ -213,6 +253,9 @@ func (s *Scheduler) execTask(ctx context.Context, task *Task) {
 			if task.ResultCh != nil {
 				task.ResultCh <- TaskResult{Error: fmt.Errorf("task panicked: %v", r)}
 			}
+		}
+		if s.latencyHistogram != nil {
+			s.latencyHistogram.Observe(float64(time.Since(start).Milliseconds()))
 		}
 	}()
 

@@ -57,6 +57,14 @@ func (st *SagaTracker) SetDir(dir string) {
 	st.load()
 }
 
+func (st *SagaTracker) SetCompensator(fn CompensatorFunc) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if fn != nil {
+		st.call = fn
+	}
+}
+
 func (st *SagaTracker) RegisterStep(execID string, step SagaStep) {
 	st.mu.Lock()
 	defer st.mu.Unlock()

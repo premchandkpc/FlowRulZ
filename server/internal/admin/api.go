@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
@@ -25,6 +26,11 @@ type Server struct {
 	compiler    compiler.Compiler
 	rules       *ruleService
 	rateLimiter *reliability.RateLimiter
+
+	// Extended dependencies for admin operations
+	schedulerSnapshot func() interface{}
+	recoveryTrigger   func(ctx context.Context)
+	nodeID            string
 }
 
 func New(eng *engine.Engine) *Server {
@@ -70,6 +76,17 @@ func (s *Server) RegisterDLQ(dlq *reliability.DLQ) {
 	s.mux.HandleFunc("POST /dlq/replay/{id}", s.auth(s.rateLimit(s.replayDLQ)))
 	s.mux.HandleFunc("POST /dlq/replay", s.auth(s.rateLimit(s.replayAllDLQ)))
 	s.mux.HandleFunc("DELETE /dlq", s.auth(s.rateLimit(s.clearDLQ)))
+	s.mux.HandleFunc("POST /dlq/load", s.auth(s.rateLimit(s.loadDLQFromTopic)))
+}
+
+// RegisterExtended registers admin endpoints that require node-level dependencies.
+func (s *Server) RegisterExtended(nodeID string, schedulerSnapshot func() interface{}, recoveryTrigger func(ctx context.Context)) {
+	s.nodeID = nodeID
+	s.schedulerSnapshot = schedulerSnapshot
+	s.recoveryTrigger = recoveryTrigger
+	s.mux.HandleFunc("GET /scheduler/snapshot", s.auth(s.rateLimit(s.getSchedulerSnapshot)))
+	s.mux.HandleFunc("POST /recovery/trigger", s.auth(s.rateLimit(s.triggerRecovery)))
+	s.mux.HandleFunc("GET /node/info", s.auth(s.rateLimit(s.getNodeInfo)))
 }
 
 func (s *Server) Handler() http.Handler {
@@ -291,4 +308,52 @@ func (s *Server) clearDLQ(w http.ResponseWriter, r *http.Request) {
 	}
 	s.dlq.Clear()
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) loadDLQFromTopic(w http.ResponseWriter, r *http.Request) {
+	if s.dlq == nil {
+		http.Error(w, "dlq not configured", http.StatusNotFound)
+		return
+	}
+	var req struct {
+		Messages [][]byte `json:"messages"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	count := s.dlq.LoadFromMessages(r.Context(), req.Messages)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":     "loaded",
+		"added":      count,
+		"total":      s.dlq.Len(),
+		"input_size": len(req.Messages),
+	})
+}
+
+func (s *Server) getSchedulerSnapshot(w http.ResponseWriter, r *http.Request) {
+	if s.schedulerSnapshot == nil {
+		http.Error(w, "scheduler not configured", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.schedulerSnapshot())
+}
+
+func (s *Server) triggerRecovery(w http.ResponseWriter, r *http.Request) {
+	if s.recoveryTrigger == nil {
+		http.Error(w, "recovery not configured", http.StatusNotFound)
+		return
+	}
+	go s.recoveryTrigger(r.Context())
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "recovery triggered"})
+}
+
+func (s *Server) getNodeInfo(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"node_id":    s.nodeID,
+		"dlq_size":   s.dlq.Len(),
+		"num_rules":  len(s.engine.Rules()),
+		"go_version": runtime.Version(),
+		"goroutines": runtime.NumGoroutine(),
+	})
 }

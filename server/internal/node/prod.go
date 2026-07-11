@@ -138,6 +138,7 @@ func NewNode(cfg Config, deps Dependencies) *ProdNode {
 	n.Registry.SetHeartbeatTimeout(cfg.RegistryHeartbeatTimeout())
 
 	n.configureEngineHooks()
+	n.configureSagaCompensator()
 
 	// Plugins
 	if cfg.PluginDir != "" {

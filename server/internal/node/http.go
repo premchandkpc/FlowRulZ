@@ -15,6 +15,13 @@ func (n *ProdNode) serveHTTP(ctx context.Context) {
 	mux.HandleFunc("/services", n.Registry.ListServicesHTTPHandler)
 	n.registerHandlers(mux)
 
+	// Wire extended admin endpoints
+	n.AdminSrv.RegisterExtended(n.nodeID, func() interface{} {
+		return n.Scheduler.Snapshot()
+	}, func(ctx context.Context) {
+		n.recoverInFlight(ctx)
+	})
+
 	n.httpServer = &http.Server{Addr: n.httpAddr, Handler: mux}
 
 	go func() {

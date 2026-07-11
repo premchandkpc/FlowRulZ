@@ -152,7 +152,47 @@ func (d *DLQ) removePersisted(id string) {
 }
 
 func (d *DLQ) LoadFromTopic(ctx context.Context) {
-	slog.Warn("dlq: rebuild from topic not implemented")
+	slog.Warn("dlq: LoadFromTopic is a no-op; use LoadFromMessages to rebuild from any source")
+}
+
+// LoadFromMessages idempotently loads dead letter entries from raw JSON messages.
+// Deduplicates against existing entries by ID. Returns the number of new entries added.
+func (d *DLQ) LoadFromMessages(ctx context.Context, messages [][]byte) int {
+	d.mu.Lock()
+	existing := make(map[string]bool, len(d.entries))
+	for _, e := range d.entries {
+		existing[e.ID] = true
+	}
+	d.mu.Unlock()
+
+	added := 0
+	for _, raw := range messages {
+		var entry DeadLetterEntry
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			slog.Warn("dlq: unmarshal error during rebuild", "error", err)
+			continue
+		}
+
+		d.mu.Lock()
+		if existing[entry.ID] {
+			d.mu.Unlock()
+			continue
+		}
+		if len(d.entries) >= d.maxSize {
+			oldest := d.entries[0]
+			d.entries = d.entries[1:]
+			d.removePersisted(oldest.ID)
+		}
+		d.entries = append(d.entries, &entry)
+		existing[entry.ID] = true
+		d.mu.Unlock()
+
+		d.persistEntry(&entry)
+		added++
+	}
+
+	slog.Info("dlq: rebuild from messages completed", "added", added, "total", d.Len())
+	return added
 }
 
 func (d *DLQ) Replay(ctx context.Context, id string) error {

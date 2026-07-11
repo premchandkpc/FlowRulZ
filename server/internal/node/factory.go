@@ -37,7 +37,7 @@ func DefaultDependencies(cfg Config) Dependencies {
 	metrics := observability.NewMetricsCollector()
 
 	// Scheduler
-	sched := scheduler.New(nil)
+	sched := scheduler.NewWithMetrics(nil, metrics)
 
 	// ReplyRouter
 	replyRouter := replyrouter.New(

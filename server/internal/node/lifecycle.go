@@ -2,12 +2,14 @@ package node
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/premchandkpc/FlowRulZ/server/internal/membership"
 	"github.com/premchandkpc/FlowRulZ/server/internal/partition"
 	"github.com/premchandkpc/FlowRulZ/server/internal/plandist"
+	"github.com/premchandkpc/FlowRulZ/server/internal/reliability"
 	"github.com/premchandkpc/FlowRulZ/server/internal/transport"
 	kafkatransport "github.com/premchandkpc/FlowRulZ/server/internal/transport/kafka"
 )
@@ -117,6 +119,22 @@ func (n *ProdNode) startOTel(ctx context.Context) {
 func (n *ProdNode) configureEngineHooks() {
 	n.Engine.AfterDeploy = n.handleEngineDeploy
 	n.Engine.AfterPromote = n.handleEnginePromote
+}
+
+func (n *ProdNode) configureSagaCompensator() {
+	if n.Saga == nil || n.serviceCaller == nil || n.Registry == nil {
+		return
+	}
+	n.Saga.SetCompensator(func(svcName, method string, body []byte) error {
+		inst, err := n.Registry.LookupInstance(svcName, method)
+		if err != nil {
+			return fmt.Errorf("saga compensator: lookup %s/%s: %w", svcName, method, err)
+		}
+		cbI, _ := n.circuitBreakers.LoadOrStore(svcName, reliability.NewCircuitBreaker(5, 30*time.Second))
+		cb := cbI.(*reliability.CircuitBreaker)
+		_, err = n.serviceCaller.CallService(context.Background(), inst, method, body, cb, n.Registry)
+		return err
+	})
 }
 
 func (n *ProdNode) handleEngineDeploy(id, dsl string, plan []byte, version uint64) {

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"regexp"
+	"strconv"
 	"sync"
 	"time"
 
@@ -49,13 +50,12 @@ func TraceIDFromContext(ctx context.Context) string {
 
 // ServiceCaller handles protocol-aware service calls.
 type ServiceCaller struct {
-	httpClient    *http.Client
-	grpcConns     map[string]*grpc.ClientConn
-	grpcConnsMu   sync.Mutex
-	tcpConns      map[string]*tcpConnPool
-	tcpConnsMu    sync.Mutex
-	tlsCertFile   string
-	tlsKeyFile    string
+	httpClient  *http.Client
+	grpcConns   sync.Map // map[string]*grpc.ClientConn
+	tcpConns    map[string]*tcpConnPool
+	tcpConnsMu  sync.Mutex
+	tlsCertFile string
+	tlsKeyFile  string
 }
 
 type tcpConnPool struct {
@@ -77,8 +77,7 @@ func NewServiceCaller() *ServiceCaller {
 				IdleConnTimeout:     90 * time.Second,
 			},
 		},
-		grpcConns: make(map[string]*grpc.ClientConn),
-		tcpConns:  make(map[string]*tcpConnPool),
+		tcpConns: make(map[string]*tcpConnPool),
 	}
 }
 
@@ -93,7 +92,6 @@ func NewServiceCallerWithTLS(certFile, keyFile string) *ServiceCaller {
 				IdleConnTimeout:     90 * time.Second,
 			},
 		},
-		grpcConns:   make(map[string]*grpc.ClientConn),
 		tcpConns:    make(map[string]*tcpConnPool),
 		tlsCertFile: certFile,
 		tlsKeyFile:  keyFile,
@@ -345,7 +343,7 @@ func (sc *ServiceCaller) callHTTP(
 	cb *reliability.CircuitBreaker,
 	reg *registry.ServiceRegistry,
 ) ([]byte, error) {
-	endpoint := fmt.Sprintf("http://%s:%d/%s", inst.Endpoint.Address, inst.Endpoint.Port, method)
+	endpoint := "http://" + inst.Endpoint.Address + ":" + strconv.Itoa(inst.Endpoint.Port) + "/" + method
 	
 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(body))
 	if err != nil {
@@ -489,11 +487,8 @@ func (sc *ServiceCaller) callTCP(
 
 // getGRPCConn returns a cached gRPC connection or creates a new one.
 func (sc *ServiceCaller) getGRPCConn(addr string) (*grpc.ClientConn, error) {
-	sc.grpcConnsMu.Lock()
-	defer sc.grpcConnsMu.Unlock()
-
-	if conn, ok := sc.grpcConns[addr]; ok {
-		return conn, nil
+	if conn, ok := sc.grpcConns.Load(addr); ok {
+		return conn.(*grpc.ClientConn), nil
 	}
 
 	var opts []grpc.DialOption
@@ -516,28 +511,27 @@ func (sc *ServiceCaller) getGRPCConn(addr string) (*grpc.ClientConn, error) {
 		return nil, err
 	}
 
-	sc.grpcConns[addr] = conn
-	return conn, nil
+	actual, _ := sc.grpcConns.LoadOrStore(addr, conn)
+	if actual.(*grpc.ClientConn) != conn {
+		conn.Close()
+	}
+	return actual.(*grpc.ClientConn), nil
 }
 
 // evictGRPCConn removes a cached gRPC connection so the next call creates a fresh one.
 func (sc *ServiceCaller) evictGRPCConn(addr string) {
-	sc.grpcConnsMu.Lock()
-	if conn, ok := sc.grpcConns[addr]; ok {
-		conn.Close()
-		delete(sc.grpcConns, addr)
+	if conn, ok := sc.grpcConns.LoadAndDelete(addr); ok {
+		conn.(*grpc.ClientConn).Close()
 	}
-	sc.grpcConnsMu.Unlock()
 }
 
 // Close closes all gRPC connections and TCP pools.
 func (sc *ServiceCaller) Close() {
-	sc.grpcConnsMu.Lock()
-	for addr, conn := range sc.grpcConns {
-		conn.Close()
-		delete(sc.grpcConns, addr)
-	}
-	sc.grpcConnsMu.Unlock()
+	sc.grpcConns.Range(func(key, value any) bool {
+		value.(*grpc.ClientConn).Close()
+		sc.grpcConns.Delete(key)
+		return true
+	})
 
 	sc.tcpConnsMu.Lock()
 	for addr, pool := range sc.tcpConns {

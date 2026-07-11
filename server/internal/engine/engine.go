@@ -248,7 +248,7 @@ func (e *Engine) Rules() []Rule {
 func (e *Engine) ActivePlanBytes() [][]byte {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	var plans [][]byte
+	plans := make([][]byte, 0, len(e.rules))
 	for _, r := range e.rules {
 		vp := r.ActivePlan()
 		if vp != nil && len(vp.Plan) > 0 {

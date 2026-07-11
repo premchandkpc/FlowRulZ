@@ -44,7 +44,7 @@ type LaneConfig struct {
 }
 
 type Scheduler struct {
-	mu       sync.Mutex
+	mu       sync.RWMutex
 	lanes    map[Priority]*lane
 	started  bool
 	stopCh   chan struct{}
@@ -191,7 +191,6 @@ func (s *Scheduler) slotWorker(ctx context.Context, l *lane) {
 		if task == nil {
 			return
 		}
-		s.totalDeq.Add(1)
 		s.execTask(ctx, task)
 	}
 }

@@ -19,10 +19,10 @@ func (s *Scheduler) Enqueue(ctx *pkgscheduler.ExecutionContext) error {
 }
 
 func (s *Scheduler) Snapshot() pkgscheduler.SchedulerSnapshot {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-	laneCounts := make(map[pkgscheduler.Lane]int)
+	laneCounts := make(map[pkgscheduler.Lane]int, len(s.lanes))
 	readyTotal := 0
 	activeTotal := 0
 	for p, l := range s.lanes {

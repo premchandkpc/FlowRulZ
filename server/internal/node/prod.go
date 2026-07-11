@@ -93,6 +93,7 @@ type ProdNode struct {
 	circuitBreakers sync.Map
 	execSem         chan struct{} // Node-wide concurrency limiter for executeAll
 	mu              sync.Mutex
+	distributeWg    sync.WaitGroup
 }
 
 func NewNode(cfg Config, deps Dependencies) *ProdNode {
@@ -283,6 +284,7 @@ func (n *ProdNode) Shutdown(ctx context.Context) error {
 	}
 
 	n.PlanDist.Stop()
+	n.distributeWg.Wait()
 	n.Scheduler.Stop()
 	n.ReplyRouter.StopCleanup()
 

@@ -82,6 +82,8 @@ func (a *RateLimiterPkgAdapter) Allow(_ context.Context, key string) bool {
 }
 
 func (a *RateLimiterPkgAdapter) Wait(ctx context.Context, key string) error {
+	timer := time.NewTimer(10 * time.Millisecond)
+	defer timer.Stop()
 	for {
 		if a.inner.Allow(key) {
 			return nil
@@ -89,7 +91,8 @@ func (a *RateLimiterPkgAdapter) Wait(ctx context.Context, key string) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(10 * time.Millisecond):
+		case <-timer.C:
+			timer.Reset(10 * time.Millisecond)
 		}
 	}
 }

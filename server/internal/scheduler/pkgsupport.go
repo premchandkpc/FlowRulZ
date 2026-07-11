@@ -23,14 +23,12 @@ func (s *Scheduler) Snapshot() pkgscheduler.SchedulerSnapshot {
 	defer s.mu.Unlock()
 
 	laneCounts := make(map[pkgscheduler.Lane]int)
-	for p, l := range s.lanes {
-		laneCounts[pkgscheduler.Lane(p)] = len(l.queue)
-	}
-
 	readyTotal := 0
 	activeTotal := 0
-	for _, l := range s.lanes {
-		readyTotal += len(l.queue)
+	for p, l := range s.lanes {
+		n := len(l.queue)
+		laneCounts[pkgscheduler.Lane(p)] = n
+		readyTotal += n
 		activeTotal += l.cfg.MaxConcurrent
 	}
 

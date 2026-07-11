@@ -41,10 +41,9 @@ func NewClusterConsumer(topic string, handler transport.MessageHandler, node *Cl
 func (c *ClusterConsumer) Topic() string { return c.topic }
 
 func (c *ClusterConsumer) Start(ctx context.Context) {
-	if c.started.Load() {
+	if !c.started.CompareAndSwap(false, true) {
 		return
 	}
-	c.started.Store(true)
 
 	c.node.Subscribe(c.topic, func(ctx context.Context, topic string, body []byte) {
 		_, err := c.handler(ctx, body)

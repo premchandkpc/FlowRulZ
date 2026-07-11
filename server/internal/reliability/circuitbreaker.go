@@ -45,7 +45,7 @@ func (cb *CircuitBreaker) Allow() bool {
 	case StateOpen:
 		if time.Since(cb.lastFailureTime) > cb.recoveryTimeout {
 			cb.state = StateHalfOpen
-			cb.halfOpenReqs = 0
+			cb.halfOpenReqs = 1
 			return true
 		}
 		return false

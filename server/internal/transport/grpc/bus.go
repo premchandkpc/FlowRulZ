@@ -202,21 +202,22 @@ func (b *GRPCBus) Reply(ctx context.Context, req *ReplyRequest) (*ReplyResponse,
 
 func (b *GRPCBus) Broadcast(ctx context.Context, req *BroadcastRequest) (*BroadcastResponse, error) {
 	b.mu.RLock()
-	defer b.mu.RUnlock()
+	subs := b.subscribers[req.Topic]
+	handler := b.handlers[req.Topic]
+	b.mu.RUnlock()
 
-	for topic, subs := range b.subscribers {
-		if topic == req.Topic {
-			if h, ok := b.handlers[topic]; ok {
-				h(ctx, req.Msg)
-			}
-			for _, ch := range subs {
-				select {
-				case ch <- req.Msg:
-				default:
-				}
+	if handler != nil {
+		handler(ctx, req.Msg)
+	}
+	if subs != nil {
+		for _, ch := range subs {
+			select {
+			case ch <- req.Msg:
+			default:
 			}
 		}
 	}
+
 	return &BroadcastResponse{}, nil
 }
 

@@ -131,7 +131,11 @@ func (n *ProdNode) handleEngineDeploy(id, dsl string, plan []byte, version uint6
 		slog.Warn("plandist: leadership lost during deploy, discarding plan", "id", id)
 		return
 	}
-	go n.distributePlan(id, dsl, plan, version)
+	n.distributeWg.Add(1)
+	go func() {
+		defer n.distributeWg.Done()
+		n.distributePlan(id, dsl, plan, version)
+	}()
 }
 
 func (n *ProdNode) handleEnginePromote(id string, version uint64) {
@@ -145,7 +149,11 @@ func (n *ProdNode) handleEnginePromote(id string, version uint64) {
 		slog.Warn("plandist: leadership lost during promote, discarding activation", "id", id)
 		return
 	}
-	go n.distributeActivate(id, version)
+	n.distributeWg.Add(1)
+	go func() {
+		defer n.distributeWg.Done()
+		n.distributeActivate(id, version)
+	}()
 }
 
 func (n *ProdNode) distributePlan(id, dsl string, plan []byte, version uint64) {

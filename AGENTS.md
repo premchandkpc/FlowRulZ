@@ -15,7 +15,9 @@ docs/         Architecture guides + Obsidian vault (26 notes)
 - Raft for leader election; priority lanes: Fast(50) > Normal(20) > Heavy(5); work stealing
 - Execution: Go scheduler → CGo bridge → Rust VM → HTTP service calls
 - DI: manual via NodeBuilder.WithDefaults(); 13 pkg/ interfaces for testability
-- Hexagonal gaps: mixed DI types, orphaned interfaces, pkg/reliability API mismatch
+- Hexagonal gaps: mixed DI types by design (pkg interfaces for external consumers, concrete types for internal use)
+- pkg/reliability adapters: wrapper types in `pkgsupport.go` bridge internal→pkg interfaces (RateLimiterPkgAdapter, DLQPkgAdapter, SagaPkgAdapter)
+- Compile-time checks: `var _ pkg.Type = (*InternalType)(nil)` in pkgsupport.go for all 5 reliability pkg interfaces
 
 ## Tests
 - `cd server && go test -race ./internal/... ./bridge/...` (286+)

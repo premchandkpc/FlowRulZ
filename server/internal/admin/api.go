@@ -10,6 +10,7 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"sync/atomic"
 
 	"github.com/premchandkpc/FlowRulZ/server/internal/compiler"
 	"github.com/premchandkpc/FlowRulZ/server/internal/engine"
@@ -30,6 +31,7 @@ type Server struct {
 	// Extended dependencies for admin operations
 	schedulerSnapshot func() interface{}
 	recoveryTrigger   func(ctx context.Context)
+	recoveryInFlight  atomic.Bool
 	nodeID            string
 }
 
@@ -237,7 +239,7 @@ func (s *Server) listLanes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.rules.HealthSnapshot())
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
@@ -345,7 +347,14 @@ func (s *Server) triggerRecovery(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "recovery not configured", http.StatusNotFound)
 		return
 	}
-	go s.recoveryTrigger(context.Background())
+	if !s.recoveryInFlight.CompareAndSwap(false, true) {
+		http.Error(w, "recovery already in progress", http.StatusConflict)
+		return
+	}
+	go func() {
+		defer s.recoveryInFlight.Store(false)
+		s.recoveryTrigger(context.Background())
+	}()
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "recovery triggered"})
 }
 

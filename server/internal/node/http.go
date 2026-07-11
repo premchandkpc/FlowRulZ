@@ -7,6 +7,13 @@ import (
 	"net/http"
 )
 
+var tlsCipherSuites = []uint16{
+	tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+	tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+	tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+	tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+}
+
 func (n *ProdNode) serveHTTP(ctx context.Context) {
 	mux := http.NewServeMux()
 	mux.Handle("/admin/", http.StripPrefix("/admin", n.AdminSrv.Handler()))
@@ -33,6 +40,7 @@ func (n *ProdNode) serveHTTP(ctx context.Context) {
 			} else {
 				n.httpServer.TLSConfig = &tls.Config{
 					Certificates: []tls.Certificate{tlsCert},
+					CipherSuites: tlsCipherSuites,
 					MinVersion:   tls.VersionTLS12,
 				}
 				slog.Info("HTTP server started with TLS", "addr", n.httpAddr)

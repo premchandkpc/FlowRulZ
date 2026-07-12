@@ -98,13 +98,13 @@ type ProdNode struct {
 
 func NewNode(cfg Config, deps Dependencies) *ProdNode {
 	n := &ProdNode{
-		nodeID:       cfg.NodeID,
-		httpAddr:     cfg.HTTPListenAddr(),
-		config:       cfg,
-		httpClient:   &http.Client{Timeout: 10 * time.Second},
-		consumers:    make([]transport.MessageConsumer, 0),
-		producers:    make([]transport.MessageProducer, 0),
-		execSem:      make(chan struct{}, executeAllSemaphore),
+		nodeID:     cfg.NodeID,
+		httpAddr:   cfg.HTTPListenAddr(),
+		config:     cfg,
+		httpClient: &http.Client{Timeout: 10 * time.Second},
+		consumers:  make([]transport.MessageConsumer, 0),
+		producers:  make([]transport.MessageProducer, 0),
+		execSem:    make(chan struct{}, executeAllSemaphore),
 
 		Engine:       deps.Engine,
 		Scheduler:    deps.Scheduler,
@@ -325,20 +325,6 @@ func (n *ProdNode) Shutdown(ctx context.Context) error {
 }
 
 // --- Internal methods ---
-
-func (n *ProdNode) makeProducer(topic string, kc kafkatransport.Config) transport.MessageProducer {
-	if len(kc.Brokers) > 0 {
-		p := kafkatransport.NewProducer(topic, kc)
-		n.mu.Lock()
-		n.producers = append(n.producers, p)
-		n.mu.Unlock()
-		return p
-	}
-	if n.ClusterNode != nil {
-		return cluster.NewClusterProducer(topic, n.ClusterNode)
-	}
-	return transport.NewProducer(topic)
-}
 
 func (n *ProdNode) makeConsumer(topic string, handler transport.MessageHandler, kc kafkatransport.Config) transport.MessageConsumer {
 	if len(kc.Brokers) > 0 {

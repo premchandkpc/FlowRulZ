@@ -3,6 +3,7 @@ package bridge
 import (
 	"testing"
 )
+
 func TestCompileValidDSL(t *testing.T) {
 	plan, err := Compile("n:validate", "test-1")
 	if err != nil {
@@ -41,9 +42,7 @@ func TestExecuteValidPlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
-	if len(result) == 0 {
-		// OK — result may be empty depending on rule pipeline
-	}
+	_ = result // result may be empty depending on rule pipeline
 }
 
 func TestExecuteEmptyBody(t *testing.T) {
@@ -78,9 +77,7 @@ func TestExecuteNilCaller(t *testing.T) {
 	}
 	// nil caller should cause callback to return error
 	_, err = Execute(plan, []byte(`{}`), nil, nil)
-	if err == nil {
-		// Some DSL may not trigger callback; this is valid
-	}
+	_ = err // nil caller may cause error or not depending on DSL; both valid
 }
 
 func TestInternRoundtrip(t *testing.T) {
@@ -227,9 +224,7 @@ func TestExecuteStepEmptyBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExecuteStep with nil body failed: %v", err)
 	}
-	if out.Result == StepDone {
-		// Valid for simple pipeline
-	}
+	_ = out.Result // StepDone is valid for simple pipeline
 }
 
 func TestParseServiceMethodNoMethod(t *testing.T) {

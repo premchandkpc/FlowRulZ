@@ -19,7 +19,7 @@ func (e SemanticError) Error() string {
 
 // Analyzer performs semantic analysis on a parsed flow.
 type Analyzer struct {
-	errors []SemanticError
+	errors   []SemanticError
 	services map[string]Service
 	events   map[string]Event
 	vars     map[string]Variable

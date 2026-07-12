@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"log/slog"
 	"net/http"
+	"time"
 )
 
 var tlsCipherSuites = []uint16{
@@ -29,7 +30,11 @@ func (n *ProdNode) serveHTTP(ctx context.Context) {
 		n.recoverInFlight(ctx)
 	})
 
-	n.httpServer = &http.Server{Addr: n.httpAddr, Handler: mux}
+	n.httpServer = &http.Server{
+		Addr:              n.httpAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 
 	go func() {
 		if n.config.HasTLS() {

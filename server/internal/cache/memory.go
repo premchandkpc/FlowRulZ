@@ -38,7 +38,7 @@ func (c *MemoryCache) Get(_ context.Context, key string) ([]byte, error) {
 	}
 
 	if !e.expiresAt.IsZero() && time.Now().After(e.expiresAt) {
-		c.Delete(context.Background(), key)
+		_ = c.Delete(context.Background(), key)
 		return nil, nil
 	}
 

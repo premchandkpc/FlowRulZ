@@ -37,9 +37,9 @@ func (b *BridgeVM) Compile(ctx context.Context, dsl string, ruleID string) (*vm.
 	complexity := int(PlanComplexity(planBytes))
 
 	return &vm.CompileResult{
-		PlanBytes:    planBytes,
-		Complexity:   complexity,
-		Services:     services,
+		PlanBytes:  planBytes,
+		Complexity: complexity,
+		Services:   services,
 	}, nil
 }
 

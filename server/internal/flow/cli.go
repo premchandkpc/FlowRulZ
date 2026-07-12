@@ -9,12 +9,12 @@ import (
 
 // CLI is the command-line interface for .flow files.
 type CLI struct {
-	parser   *Parser
+	parser    *Parser
 	formatter *Formatter
-	analyzer *Analyzer
-	compiler *Compiler
-	codegen  *CodeGenerator
-	graph    *GraphGenerator
+	analyzer  *Analyzer
+	compiler  *Compiler
+	codegen   *CodeGenerator
+	graph     *GraphGenerator
 }
 
 // NewCLI creates a new CLI.
@@ -99,7 +99,7 @@ func (c *CLI) fmt(files []string) error {
 
 		output := c.formatter.Format(flow)
 
-		if err := os.WriteFile(file, []byte(output), 0644); err != nil {
+		if err := os.WriteFile(file, []byte(output), 0644); err != nil { //nolint:gosec // CLI formatter writes user-generated code, not sensitive data
 			return fmt.Errorf("write %s: %w", file, err)
 		}
 

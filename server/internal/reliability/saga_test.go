@@ -99,7 +99,7 @@ func TestSagaSetCompensator(t *testing.T) {
 	tracker.RegisterStep("exec-5", SagaStep{
 		ServiceName: "order", Method: "create",
 		CompSvc: "order", CompMethod: "cancel",
-		Body:     []byte(`{"id":1}`),
+		Body: []byte(`{"id":1}`),
 	})
 
 	if err := tracker.Compensate("exec-5"); err != nil {
@@ -161,8 +161,7 @@ func TestSagaSetCompensatorReplaces(t *testing.T) {
 	if !secondCalled {
 		t.Fatal("expected second compensator to be called")
 	}
-	if firstCalled && secondCalled {
-		// firstCalled is true from the first saga, which is expected
-		// secondCalled should be true from the second saga only
+	if !firstCalled || !secondCalled {
+		t.Fatal("expected both compensators to be called")
 	}
 }

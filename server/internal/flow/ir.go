@@ -7,29 +7,29 @@ import (
 
 // IR is the intermediate representation of a flow.
 type IR struct {
-	Name       string        `json:"name"`
-	Version    int           `json:"version"`
-	Nodes      []IRNode      `json:"nodes"`
-	Edges      []IREdge      `json:"edges"`
-	Services   []IRService   `json:"services"`
-	Events     []IREvent     `json:"events"`
-	Variables  []IRVariable  `json:"variables"`
-	Constants  []IRConstant  `json:"constants"`
-	Outputs    []string      `json:"outputs"`
-	Retry      *IRRetry      `json:"retry,omitempty"`
-	Breaker    *IRBreaker    `json:"breaker,omitempty"`
-	Timeout    string        `json:"timeout,omitempty"`
-	Errors     *IRErrorBlock `json:"errors,omitempty"`
+	Name      string        `json:"name"`
+	Version   int           `json:"version"`
+	Nodes     []IRNode      `json:"nodes"`
+	Edges     []IREdge      `json:"edges"`
+	Services  []IRService   `json:"services"`
+	Events    []IREvent     `json:"events"`
+	Variables []IRVariable  `json:"variables"`
+	Constants []IRConstant  `json:"constants"`
+	Outputs   []string      `json:"outputs"`
+	Retry     *IRRetry      `json:"retry,omitempty"`
+	Breaker   *IRBreaker    `json:"breaker,omitempty"`
+	Timeout   string        `json:"timeout,omitempty"`
+	Errors    *IRErrorBlock `json:"errors,omitempty"`
 }
 
 // IRNode is a node in the execution graph.
 type IRNode struct {
-	ID       string `json:"id"`
-	Type     string `json:"type"` // step, if, parallel, switch, wait, foreach, while, emit, return
-	Name     string `json:"name,omitempty"`
-	Target   string `json:"target,omitempty"` // service call target
-	Timeout  string `json:"timeout,omitempty"`
-	Async    bool   `json:"async,omitempty"`
+	ID        string `json:"id"`
+	Type      string `json:"type"` // step, if, parallel, switch, wait, foreach, while, emit, return
+	Name      string `json:"name,omitempty"`
+	Target    string `json:"target,omitempty"` // service call target
+	Timeout   string `json:"timeout,omitempty"`
+	Async     bool   `json:"async,omitempty"`
 	Condition string `json:"condition,omitempty"`
 }
 
@@ -42,10 +42,10 @@ type IREdge struct {
 
 // IRService is a service declaration.
 type IRService struct {
-	Name    string            `json:"name"`
-	Type    string            `json:"type"`
-	Address string            `json:"address,omitempty"`
-	URL     string            `json:"url,omitempty"`
+	Name    string                 `json:"name"`
+	Type    string                 `json:"type"`
+	Address string                 `json:"address,omitempty"`
+	URL     string                 `json:"url,omitempty"`
 	Options map[string]interface{} `json:"options,omitempty"`
 }
 
@@ -96,9 +96,9 @@ type IRErrorCase struct {
 
 // Compiler converts AST to IR.
 type Compiler struct {
-	nodes   []IRNode
-	edges   []IREdge
-	nextID  int
+	nodes  []IRNode
+	edges  []IREdge
+	nextID int
 }
 
 // NewCompiler creates a new IR compiler.

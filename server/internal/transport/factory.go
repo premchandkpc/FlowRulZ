@@ -23,7 +23,7 @@ type ConsumerFactory func(topic string, handler MessageHandler) MessageConsumer
 
 // TransportFactory creates transport producers and consumers based on config.
 type TransportFactory struct {
-	mu              sync.RWMutex
+	mu                sync.RWMutex
 	producerFactories map[TransportKind]ProducerFactory
 	consumerFactories map[TransportKind]ConsumerFactory
 	kind              TransportKind
@@ -98,7 +98,7 @@ type noopProducer struct {
 }
 
 func (p *noopProducer) Send(_ context.Context, _ []byte, _ []byte) error { return nil }
-func (p *noopProducer) Close()                                          {}
+func (p *noopProducer) Close()                                           {}
 
 // noopConsumer is a no-op consumer that does nothing.
 type noopConsumer struct {

@@ -15,24 +15,24 @@ import (
 
 // FlowState represents a flow with its runtime state.
 type FlowState struct {
-	Name     string   `json:"name"`
-	Hash     string   `json:"hash"`
-	AST      *Flow    `json:"-"`
-	IR       *IR      `json:"ir,omitempty"`
-	Status   string   `json:"status"`
-	Error    string   `json:"error,omitempty"`
+	Name   string `json:"name"`
+	Hash   string `json:"hash"`
+	AST    *Flow  `json:"-"`
+	IR     *IR    `json:"ir,omitempty"`
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
 }
 
 // Registry manages flow definitions with caching.
 type Registry struct {
-	mu      sync.RWMutex
-	flows   map[string]*FlowState
-	cache   cache.Cache
-	parser  *Parser
+	mu       sync.RWMutex
+	flows    map[string]*FlowState
+	cache    cache.Cache
+	parser   *Parser
 	analyzer *Analyzer
 	compiler *Compiler
-	ttl     time.Duration
-	stop    chan struct{}
+	ttl      time.Duration
+	stop     chan struct{}
 }
 
 // NewRegistry creates a new flow registry.

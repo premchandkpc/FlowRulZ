@@ -3,7 +3,7 @@ package scheduler
 type Lane int
 
 const (
-	LaneFast   Lane = iota
+	LaneFast Lane = iota
 	LaneNormal
 	LaneHeavy
 )

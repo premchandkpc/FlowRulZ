@@ -5,7 +5,7 @@ type MemberID string
 type ClusterState int
 
 const (
-	Follower  ClusterState = iota
+	Follower ClusterState = iota
 	Candidate
 	Leader
 )

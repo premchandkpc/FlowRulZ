@@ -258,7 +258,7 @@ func TestCancelAndDeliverRace(t *testing.T) {
 }
 
 func TestCleanupAndCancelRace(t *testing.T) {
-	rr := New(WithCleanupInterval(5*time.Millisecond))
+	rr := New(WithCleanupInterval(5 * time.Millisecond))
 	rr.StartCleanup(context.Background())
 	defer rr.StopCleanup()
 

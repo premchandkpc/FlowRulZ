@@ -111,13 +111,13 @@ func (n *ProdNode) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":       status,
-		"node_id":      n.nodeID,
-		"is_leader":    n.IsLeader(),
-		"term":         n.CurrentTerm(),
-		"alive_nodes":  n.Membership.AliveCount(),
-		"inflight":     n.Execs.Len(),
-		"dlq_size":     n.DLQ.Len(),
+		"status":      status,
+		"node_id":     n.nodeID,
+		"is_leader":   n.IsLeader(),
+		"term":        n.CurrentTerm(),
+		"alive_nodes": n.Membership.AliveCount(),
+		"inflight":    n.Execs.Len(),
+		"dlq_size":    n.DLQ.Len(),
 	})
 }
 

@@ -8,7 +8,7 @@ import (
 type MessageType int32
 
 const (
-	TypePublish   MessageType = iota
+	TypePublish MessageType = iota
 	TypeRequest
 	TypeReply
 	TypeBroadcast

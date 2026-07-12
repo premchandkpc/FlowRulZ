@@ -21,7 +21,7 @@ type PlanDistributor interface {
 }
 
 var (
-	ErrNoPlanProducer  = errors.New("no plan producer configured")
-	ErrAckTimeout      = errors.New("ack wait timed out")
+	ErrNoPlanProducer   = errors.New("no plan producer configured")
+	ErrAckTimeout       = errors.New("ack wait timed out")
 	ErrInsufficientAcks = errors.New("insufficient acks")
 )

@@ -114,8 +114,8 @@ type StepRef struct {
 	Line int
 }
 
-func (s *StepRef) nodeType() string  { return "StepRef" }
-func (s *StepRef) workflowStep()     {}
+func (s *StepRef) nodeType() string { return "StepRef" }
+func (s *StepRef) workflowStep()    {}
 
 // IfBlock is a conditional branch.
 type IfBlock struct {
@@ -125,8 +125,8 @@ type IfBlock struct {
 	Line      int
 }
 
-func (i *IfBlock) nodeType() string  { return "IfBlock" }
-func (i *IfBlock) workflowStep()     {}
+func (i *IfBlock) nodeType() string { return "IfBlock" }
+func (i *IfBlock) workflowStep()    {}
 
 // SwitchBlock is a multi-way branch.
 type SwitchBlock struct {
@@ -136,8 +136,8 @@ type SwitchBlock struct {
 	Line     int
 }
 
-func (s *SwitchBlock) nodeType() string  { return "SwitchBlock" }
-func (s *SwitchBlock) workflowStep()     {}
+func (s *SwitchBlock) nodeType() string { return "SwitchBlock" }
+func (s *SwitchBlock) workflowStep()    {}
 
 // CaseBlock is a case in a switch.
 type CaseBlock struct {
@@ -152,8 +152,8 @@ type ParallelBlock struct {
 	Line  int
 }
 
-func (p *ParallelBlock) nodeType() string  { return "ParallelBlock" }
-func (p *ParallelBlock) workflowStep()     {}
+func (p *ParallelBlock) nodeType() string { return "ParallelBlock" }
+func (p *ParallelBlock) workflowStep()    {}
 
 // WaitBlock waits for an event.
 type WaitBlock struct {
@@ -162,8 +162,8 @@ type WaitBlock struct {
 	Line    int
 }
 
-func (w *WaitBlock) nodeType() string  { return "WaitBlock" }
-func (w *WaitBlock) workflowStep()     {}
+func (w *WaitBlock) nodeType() string { return "WaitBlock" }
+func (w *WaitBlock) workflowStep()    {}
 
 // ForeachLoop iterates over a collection.
 type ForeachLoop struct {
@@ -172,8 +172,8 @@ type ForeachLoop struct {
 	Line     int
 }
 
-func (f *ForeachLoop) nodeType() string  { return "ForeachLoop" }
-func (f *ForeachLoop) workflowStep()     {}
+func (f *ForeachLoop) nodeType() string { return "ForeachLoop" }
+func (f *ForeachLoop) workflowStep()    {}
 
 // WhileLoop loops while a condition is true.
 type WhileLoop struct {
@@ -182,8 +182,8 @@ type WhileLoop struct {
 	Line      int
 }
 
-func (w *WhileLoop) nodeType() string  { return "WhileLoop" }
-func (w *WhileLoop) workflowStep()     {}
+func (w *WhileLoop) nodeType() string { return "WhileLoop" }
+func (w *WhileLoop) workflowStep()    {}
 
 // EmitEvent emits an event.
 type EmitEvent struct {
@@ -191,8 +191,8 @@ type EmitEvent struct {
 	Line  int
 }
 
-func (e *EmitEvent) nodeType() string  { return "EmitEvent" }
-func (e *EmitEvent) workflowStep()     {}
+func (e *EmitEvent) nodeType() string { return "EmitEvent" }
+func (e *EmitEvent) workflowStep()    {}
 
 // ReturnStep returns a value from the workflow.
 type ReturnStep struct {
@@ -200,8 +200,8 @@ type ReturnStep struct {
 	Line  int
 }
 
-func (r *ReturnStep) nodeType() string  { return "ReturnStep" }
-func (r *ReturnStep) workflowStep()     {}
+func (r *ReturnStep) nodeType() string { return "ReturnStep" }
+func (r *ReturnStep) workflowStep()    {}
 
 // Output declares a flow output.
 type Output struct {

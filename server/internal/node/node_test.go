@@ -202,29 +202,31 @@ func TestExecRegistryConcurrentAccess(t *testing.T) {
 //
 
 type mockRaftCluster struct {
-	leader    bool
-	term      uint64
-	leaderID  pkgcluster.MemberID
-	leaderFn  func(bool)
+	leader   bool
+	term     uint64
+	leaderID pkgcluster.MemberID
+	leaderFn func(bool)
 }
 
-func (m *mockRaftCluster) ID() pkgcluster.MemberID                   { return "mock" }
-func (m *mockRaftCluster) Addr() string                              { return ":9090" }
-func (m *mockRaftCluster) Start(ctx context.Context) error            { return nil }
-func (m *mockRaftCluster) Stop(ctx context.Context) error             { return nil }
-func (m *mockRaftCluster) State() pkgcluster.ClusterState             { return pkgcluster.Leader }
-func (m *mockRaftCluster) IsLeader() bool                            { return m.leader }
-func (m *mockRaftCluster) CurrentTerm() uint64                       { return m.term }
-func (m *mockRaftCluster) LeaderID() pkgcluster.MemberID             { return m.leaderID }
-func (m *mockRaftCluster) LeaderAddr() string                        { return string(m.leaderID) }
+func (m *mockRaftCluster) ID() pkgcluster.MemberID         { return "mock" }
+func (m *mockRaftCluster) Addr() string                    { return ":9090" }
+func (m *mockRaftCluster) Start(ctx context.Context) error { return nil }
+func (m *mockRaftCluster) Stop(ctx context.Context) error  { return nil }
+func (m *mockRaftCluster) State() pkgcluster.ClusterState  { return pkgcluster.Leader }
+func (m *mockRaftCluster) IsLeader() bool                  { return m.leader }
+func (m *mockRaftCluster) CurrentTerm() uint64             { return m.term }
+func (m *mockRaftCluster) LeaderID() pkgcluster.MemberID   { return m.leaderID }
+func (m *mockRaftCluster) LeaderAddr() string              { return string(m.leaderID) }
 func (m *mockRaftCluster) SubscribeLeaderChanges(fn func(bool)) pkgcluster.CancelFunc {
 	m.leaderFn = fn
 	return func() {}
 }
-func (m *mockRaftCluster) SubscribeTermChanges(fn func(uint64)) pkgcluster.CancelFunc { return func() {} }
-func (m *mockRaftCluster) Join(memberID pkgcluster.MemberID, addr string) error       { return nil }
-func (m *mockRaftCluster) Remove(memberID pkgcluster.MemberID) error                  { return nil }
-func (m *mockRaftCluster) BootstrapCluster() error                                     { return nil }
+func (m *mockRaftCluster) SubscribeTermChanges(fn func(uint64)) pkgcluster.CancelFunc {
+	return func() {}
+}
+func (m *mockRaftCluster) Join(memberID pkgcluster.MemberID, addr string) error { return nil }
+func (m *mockRaftCluster) Remove(memberID pkgcluster.MemberID) error            { return nil }
+func (m *mockRaftCluster) BootstrapCluster() error                              { return nil }
 func (m *mockRaftCluster) CaptureLeadershipToken() pkgcluster.LeadershipToken {
 	return pkgcluster.LeadershipToken{Leader: m.leader, Term: m.term}
 }
@@ -236,20 +238,22 @@ type mockMembership struct {
 	leaderID string
 }
 
-func (m *mockMembership) Add(id, address string)           {}
-func (m *mockMembership) Remove(id string)                 {}
-func (m *mockMembership) Heartbeat(id, address string)     {}
-func (m *mockMembership) MarkDead(id string)               {}
-func (m *mockMembership) MarkAlive(id string)              {}
-func (m *mockMembership) AliveCount() int                  { return 0 }
-func (m *mockMembership) AliveNodes() []string             { return nil }
-func (m *mockMembership) LeaderID() string                 { return m.leaderID }
-func (m *mockMembership) Snapshot() []pkgmembership.NodeInfo { return nil }
+func (m *mockMembership) Add(id, address string)                   {}
+func (m *mockMembership) Remove(id string)                         {}
+func (m *mockMembership) Heartbeat(id, address string)             {}
+func (m *mockMembership) MarkDead(id string)                       {}
+func (m *mockMembership) MarkAlive(id string)                      {}
+func (m *mockMembership) AliveCount() int                          { return 0 }
+func (m *mockMembership) AliveNodes() []string                     { return nil }
+func (m *mockMembership) LeaderID() string                         { return m.leaderID }
+func (m *mockMembership) Snapshot() []pkgmembership.NodeInfo       { return nil }
 func (m *mockMembership) Lookup(id string) *pkgmembership.NodeInfo { return nil }
-func (m *mockMembership) LeaderLastSeen() time.Time        { return time.Time{} }
-func (m *mockMembership) SetLeaderLease(d time.Duration)   {}
-func (m *mockMembership) OnLeaseExpiry(cb func(leaderID string)) pkgmembership.CancelFunc { return func() {} }
-func (m *mockMembership) StartEviction(ctx context.Context, interval time.Duration) {}
+func (m *mockMembership) LeaderLastSeen() time.Time                { return time.Time{} }
+func (m *mockMembership) SetLeaderLease(d time.Duration)           {}
+func (m *mockMembership) OnLeaseExpiry(cb func(leaderID string)) pkgmembership.CancelFunc {
+	return func() {}
+}
+func (m *mockMembership) StartEviction(ctx context.Context, interval time.Duration)           {}
 func (m *mockMembership) StartLeaderLeaseChecker(ctx context.Context, interval time.Duration) {}
 
 func minimalProdNode() *ProdNode {

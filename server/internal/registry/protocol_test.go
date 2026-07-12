@@ -108,8 +108,8 @@ func TestRegisterKafkaEndpoint(t *testing.T) {
 	r := New()
 
 	err := r.Register("payment-kafka", &Endpoint{
-		Protocol: ProtocolKafka,
-		Topic:    "payment-requests",
+		Protocol:   ProtocolKafka,
+		Topic:      "payment-requests",
 		ReplyTopic: "payment-replies",
 	})
 	if err != nil {

@@ -215,12 +215,10 @@ func (b *GRPCBus) Broadcast(ctx context.Context, req *BroadcastRequest) (*Broadc
 	if handler != nil {
 		handler(ctx, req.Msg)
 	}
-	if subs != nil {
-		for _, ch := range subs {
-			select {
-			case ch <- req.Msg:
-			default:
-			}
+	for _, ch := range subs {
+		select {
+		case ch <- req.Msg:
+		default:
 		}
 	}
 

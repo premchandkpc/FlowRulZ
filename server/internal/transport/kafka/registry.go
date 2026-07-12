@@ -37,5 +37,3 @@ func RegisterKafka(factory *transport.TransportFactory, cfg RegistrationConfig) 
 
 	slog.Info("transport: registered kafka backend", "brokers", cfg.Brokers)
 }
-
-

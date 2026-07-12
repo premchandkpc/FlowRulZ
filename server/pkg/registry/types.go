@@ -7,7 +7,7 @@ type ServiceID string
 type LBStrategy int
 
 const (
-	RoundRobin       LBStrategy = iota
+	RoundRobin LBStrategy = iota
 	LeastConnections
 	Random
 )
@@ -39,7 +39,7 @@ type ServiceInstance struct {
 type EventType int
 
 const (
-	EventRegistered     EventType = iota
+	EventRegistered EventType = iota
 	EventUnregistered
 	EventHealthChanged
 )

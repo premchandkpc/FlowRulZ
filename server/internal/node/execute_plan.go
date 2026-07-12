@@ -189,14 +189,14 @@ func (n *ProdNode) executeAll(ctx context.Context, body []byte) ([][]byte, error
 
 	for i, plan := range plans {
 		idx, p := i, plan
-		
+
 		// Acquire node-wide semaphore to limit total concurrency
 		select {
 		case n.execSem <- struct{}{}:
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
-		
+
 		go func() {
 			defer func() { <-n.execSem }()
 			task := &scheduler.Task{
@@ -287,14 +287,14 @@ func (n *ProdNode) callService(ctx context.Context, svcName, method string, body
 
 	inst, err := n.Registry.LookupInstance(svcName, method)
 	if err != nil {
-		slog.Warn("registry lookup failed", 
-			"service", svcName, 
-			"method", method, 
+		slog.Warn("registry lookup failed",
+			"service", svcName,
+			"method", method,
 			"error", err)
 		cb.Failure()
 		return nil, fmt.Errorf("registry lookup %s: %w", svcName, err)
 	}
-	
+
 	if inst == nil {
 		slog.Info("service call (passthrough)", "service", svcName, "method", method, "body_bytes", len(body))
 		return body, nil
@@ -305,6 +305,6 @@ func (n *ProdNode) callService(ctx context.Context, svcName, method string, body
 	if err != nil {
 		return nil, fmt.Errorf("service %s: %w", svcName, err)
 	}
-	
+
 	return resp, nil
 }

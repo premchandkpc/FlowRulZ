@@ -49,7 +49,7 @@ func (n *ProdNode) startSubsystems(ctx context.Context) {
 	// but require Raft term + leader confirmation before ANY rebalance
 	// decision is actually acted on. This gives us:
 	//   1. Fast detection: gossip detects failures in <1s (vs Raft's 1-2s)
-		//   2. Consistent decisions: only the Raft-confirmed leader acts
+	//   2. Consistent decisions: only the Raft-confirmed leader acts
 	//   3. Split-brain prevention: fencing tokens prevent stale leaders
 	//
 	// Alternative (a) — drive rebalancing off Raft's config view only —

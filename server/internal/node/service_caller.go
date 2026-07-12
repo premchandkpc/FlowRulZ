@@ -98,33 +98,6 @@ func NewServiceCallerWithTLS(certFile, keyFile string) *ServiceCaller {
 	}
 }
 
-// newHTTPClientWithTLS creates an HTTP client configured for TLS.
-func newHTTPClientWithTLS(certFile, keyFile string) *http.Client {
-	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
-	if err != nil {
-		slog.Warn("service caller: failed to load TLS cert, using default HTTP client", "error", err)
-		return &http.Client{Timeout: 30 * time.Second}
-	}
-	return &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			MaxIdleConns:        100,
-			MaxIdleConnsPerHost: 10,
-			IdleConnTimeout:     90 * time.Second,
-			TLSClientConfig: &tls.Config{
-				Certificates: []tls.Certificate{cert},
-				MinVersion:   tls.VersionTLS12,
-				CipherSuites: []uint16{
-					tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-					tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-					tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-					tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-				},
-			},
-		},
-	}
-}
-
 const tcpPoolSize = 5
 
 func (sc *ServiceCaller) getTCPPool(addr string) *tcpConnPool {
@@ -165,10 +138,7 @@ func isConnAlive(conn net.Conn) bool {
 	one := make([]byte, 1)
 	_, err := conn.Read(one)
 	_ = conn.SetReadDeadline(time.Time{})
-	if err != nil {
-		return false
-	}
-	return true
+	return err == nil
 }
 
 func (p *tcpConnPool) put(conn net.Conn) {
@@ -374,7 +344,7 @@ func (sc *ServiceCaller) callHTTP(
 	if sc.tlsCertFile != "" && sc.tlsKeyFile != "" {
 		endpoint = "https://" + inst.Endpoint.Address + ":" + strconv.Itoa(inst.Endpoint.Port) + "/" + method
 	}
-	
+
 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(body))
 	if err != nil {
 		cb.Failure()
@@ -386,7 +356,7 @@ func (sc *ServiceCaller) callHTTP(
 	if traceID := TraceIDFromContext(ctx); traceID != "" {
 		req.Header.Set("X-Trace-ID", traceID)
 	}
-	
+
 	resp, err := sc.httpClient.Do(req)
 	if err != nil {
 		cb.Failure()
@@ -394,20 +364,20 @@ func (sc *ServiceCaller) callHTTP(
 		return nil, fmt.Errorf("http call: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode >= 500 {
 		_, _ = io.ReadAll(io.LimitReader(resp.Body, 1024))
 		cb.Failure()
 		reg.MarkUnhealthy(inst.Name, inst.Endpoint.NodeID)
 		return nil, fmt.Errorf("http status %d", resp.StatusCode)
 	}
-	
+
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
 		cb.Failure()
 		return nil, fmt.Errorf("http read: %w", err)
 	}
-	
+
 	cb.Success()
 	return respBody, nil
 }

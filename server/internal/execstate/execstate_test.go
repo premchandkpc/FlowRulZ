@@ -135,11 +135,11 @@ func TestFileStoreAtomicity(t *testing.T) {
 	}
 
 	s := &State{
-		ID:        "exec-004",
-		PlanBytes: make([]byte, 1024),
-		CtxBytes:  make([]byte, 512),
-		Status:    StatusWaitingForService,
-		PendingSvc: 42,
+		ID:          "exec-004",
+		PlanBytes:   make([]byte, 1024),
+		CtxBytes:    make([]byte, 512),
+		Status:      StatusWaitingForService,
+		PendingSvc:  42,
 		PendingBody: []byte(`{"hello":"world"}`),
 	}
 

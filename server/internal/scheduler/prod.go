@@ -177,7 +177,7 @@ func (s *Scheduler) EnqueueAndWait(ctx context.Context, task *Task) ([]byte, err
 	}
 }
 
-func (s *Scheduler) laneWorker(ctx context.Context, p Priority, l *lane) {
+func (s *Scheduler) laneWorker(ctx context.Context, _ Priority, l *lane) {
 	for i := 0; i < l.cfg.MaxConcurrent; i++ {
 		go s.slotWorker(ctx, l)
 	}

@@ -103,7 +103,6 @@ func (pd *PlanDistributor) RecordAck(msg AckMessage) {
 }
 
 type pendingAck struct {
-	serial   uint64
 	done     chan int
 	received *atomic.Int32
 	quorum   int32

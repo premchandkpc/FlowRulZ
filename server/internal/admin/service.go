@@ -1,7 +1,6 @@
 package admin
 
 import (
-	"encoding/json"
 	"fmt"
 	"runtime"
 	"time"
@@ -183,9 +182,4 @@ func (rs *ruleService) DebugSnapshot() map[string]interface{} {
 		"num_rules":  count,
 		"go_version": runtime.Version(),
 	}
-}
-
-func encodeJSON(w interface{}) []byte {
-	data, _ := json.Marshal(w)
-	return data
 }

@@ -25,7 +25,7 @@ type StepResult struct {
 type StepCode int
 
 const (
-	StepDone     StepCode = iota
+	StepDone StepCode = iota
 	StepPending
 	StepContinue
 	StepFailed

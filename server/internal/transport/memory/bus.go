@@ -142,7 +142,7 @@ func (b *Bus) Request(ctx context.Context, topic string, msg *transport.Message,
 	if err != nil {
 		return nil, err
 	}
-	defer b.Unsubscribe(ctx, sub)
+	defer func() { _ = b.Unsubscribe(ctx, sub) }()
 
 	if err := b.Publish(ctx, topic, msg); err != nil {
 		return nil, err

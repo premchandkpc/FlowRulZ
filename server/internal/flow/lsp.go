@@ -26,10 +26,10 @@ type Document struct {
 
 // Diagnostic represents a LSP diagnostic.
 type Diagnostic struct {
-	Range    Range    `json:"range"`
-	Severity int      `json:"severity"`
-	Source   string   `json:"source"`
-	Message  string   `json:"message"`
+	Range    Range  `json:"range"`
+	Severity int    `json:"severity"`
+	Source   string `json:"source"`
+	Message  string `json:"message"`
 }
 
 // Range represents a text range.
@@ -281,7 +281,7 @@ func (s *LSPServer) handleInitialize(params json.RawMessage) ([]byte, error) {
 			"completionProvider": map[string]interface{}{
 				"triggerCharacters": []string{".", ":"},
 			},
-			"hoverProvider": true,
+			"hoverProvider":              true,
 			"documentFormattingProvider": true,
 		},
 	}
@@ -291,8 +291,8 @@ func (s *LSPServer) handleInitialize(params json.RawMessage) ([]byte, error) {
 func (s *LSPServer) handleDidOpen(params json.RawMessage) ([]byte, error) {
 	var p struct {
 		TextDocument struct {
-			URI     string `json:"uri"`
-			Text    string `json:"text"`
+			URI  string `json:"uri"`
+			Text string `json:"text"`
 		} `json:"textDocument"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {

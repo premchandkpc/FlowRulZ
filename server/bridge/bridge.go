@@ -90,8 +90,8 @@ type ExecContext struct {
 }
 
 var (
-	callerMap sync.Map
-	nextExecID atomic.Uint64
+	callerMap         sync.Map
+	nextExecID        atomic.Uint64
 	emptyRespSentinel [1]byte
 )
 

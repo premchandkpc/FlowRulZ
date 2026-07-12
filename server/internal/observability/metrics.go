@@ -20,7 +20,6 @@ type Histogram struct {
 	buckets []float64
 	counts  []atomic.Int64
 	total   atomic.Int64
-	mu      sync.Mutex
 }
 
 type MetricsCollector struct {

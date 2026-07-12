@@ -23,9 +23,9 @@ func BenchmarkFileStore_Save(b *testing.B) {
 	ctx := context.Background()
 
 	// Create a state with realistic PlanBytes and CtxBytes sizes
-	planBytes := make([]byte, 4096)   // 4KB plan
+	planBytes := make([]byte, 4096) // 4KB plan
 	rand.Read(planBytes)
-	ctxBytes := make([]byte, 1024)    // 1KB context
+	ctxBytes := make([]byte, 1024) // 1KB context
 	rand.Read(ctxBytes)
 
 	st := &State{

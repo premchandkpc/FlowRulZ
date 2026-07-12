@@ -175,5 +175,3 @@ func MakeProducerFromCluster(topic string, clusterNode *cluster.ClusterNode, kc 
 	}
 	return transport.NewProducer(topic)
 }
-
-

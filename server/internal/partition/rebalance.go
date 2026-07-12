@@ -4,7 +4,6 @@ import (
 	"log/slog"
 	"sort"
 	"sync"
-	"sync/atomic"
 
 	pkgpartition "github.com/premchandkpc/FlowRulZ/server/pkg/partition"
 )
@@ -67,10 +66,3 @@ func (rn *RebalanceNotifier) CheckAndRebalance() bool {
 	}
 	return true
 }
-
-type atomicCounter struct {
-	v atomic.Uint64
-}
-
-func (a *atomicCounter) inc() uint64 { return a.v.Add(1) }
-func (a *atomicCounter) get() uint64 { return a.v.Load() }

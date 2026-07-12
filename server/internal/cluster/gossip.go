@@ -35,8 +35,8 @@ type Gossiper struct {
 	syncInterval time.Duration
 	stopCh       chan struct{}
 
-	onNodeJoin   func(nodeID, address string)
-	onJoinMu     sync.RWMutex
+	onNodeJoin func(nodeID, address string)
+	onJoinMu   sync.RWMutex
 }
 
 func NewGossiper(nodeID, grpcAddr string, node *ClusterNode) *Gossiper {

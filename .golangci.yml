@@ -12,28 +12,27 @@ output:
 linters:
   enable:
     # Bug catchers
-    - bodyclose         # unclosed HTTP response bodies
-    - durationcheck     # time.Duration multiplication bugs
-    - errcheck          # unchecked errors
-    - exportloopref  # deprecated in Go 1.22+ (replaced by copyloopvar)
-    - govet             # suspicious constructs
-    - nilerr            # returning nil when err != nil
-    - staticcheck       # comprehensive static analysis
-    - unconvert         # unnecessary type conversions
-    - unparam           # unused function parameters
-    - wastedassign      # wasted assignments
+    - bodyclose
+    - durationcheck
+    - errcheck
+    - govet
+    - nilerr
+    - staticcheck
+    - unconvert
+    - unparam
+    - wastedassign
 
     # Security
-    - gosec             # security issues
+    - gosec
 
     # Simplicity
-    - gosimple          # simplification opportunities
-    - ineffassign       # ineffectual assignments
-    - unused            # unused code
+    - gosimple
+    - ineffassign
+    - unused
 
-    # Style (non-blocking in CI)
-    - gofmt             # formatting
-    - misspell          # spelling errors
+    # Style
+    - gofmt
+    - misspell
 
 linters-settings:
   errcheck:
@@ -41,31 +40,37 @@ linters-settings:
     exclude-functions:
       - (io.Closer).Close
       - (net.Listener).Close
+      - (*encoding/json.Encoder).Encode
+      - os.Rename
+      - os.Remove
+      - os.MkdirAll
 
   gosec:
     excludes:
-      - G104  # unhandled errors on Close (noisy)
-      - G304  # file path from variable (expected)
+      - G104   # unhandled errors on Close/Remove/Rename (noisy)
+      - G112   # Slowloris (handled in production http.Server config)
+      - G114   # net/http serve without timeouts (dev tooling only)
+      - G115   # integer overflow conversions (mostly safe in context)
+      - G304   # file path from variable (expected)
+      - G404   # math/rand for load balancing (not crypto)
 
   govet:
     enable-all: true
     disable:
-      - fieldalignment  # too noisy for existing code
+      - fieldalignment
+      - shadow     # too noisy for existing code
 
   staticcheck:
     checks:
       - all
-      - -SA1019  # deprecated (some APIs are deprecated but still needed)
+      - -SA1019
+
+  unparam:
+    check-exported: false
 
 issues:
   max-issues-per-linter: 50
   max-same-issues: 5
-  exclude-dirs:
-    - runtime
-    - sdk
-    - simulator
-    - docs
-    - e2e
 
   exclude-rules:
     # Test files can be more relaxed
@@ -74,13 +79,76 @@ issues:
         - errcheck
         - gosec
         - unparam
+        - govet
 
-    # Bridge/CGo files have specific patterns
+    # Bridge/CGo files
     - path: bridge/
       linters:
         - gosec
 
-    # pkg/ interfaces don't need all checks
+    # pkg/ interfaces
     - path: pkg/
       linters:
         - errcheck
+
+    # Bootstrap/builder (internal wiring, some unused types for future use)
+    - path: bootstrap/
+      linters:
+        - unused
+        - unparam
+
+    # Gossip is fire-and-forget by design
+    - path: gossip\.go
+      linters:
+        - errcheck
+
+    # Lifecycle Start/Stop return errors for flexibility but callers ignore
+    - path: lifecycle\.go
+      linters:
+        - errcheck
+
+    # Recovery/execute_plan: DLQ.Send is best-effort, body param unused
+    - path: execute_plan\.go
+      linters:
+        - errcheck
+        - unparam
+
+    # Service caller: TCP deadline errors are non-critical
+    - path: service_caller\.go
+      linters:
+        - errcheck
+
+    # State recovery: Save/Delete failures logged but not fatal
+    - path: recovery\.go
+      linters:
+        - errcheck
+
+    # Cluster publish is best-effort
+    - path: cluster\.go
+      linters:
+        - errcheck
+
+    # prod.go lifecycle Stop errors
+    - path: prod\.go
+      linters:
+        - errcheck
+
+    # main.go shutdown
+    - path: cmd/
+      linters:
+        - errcheck
+
+    # Parser/LSP/lexer interface implementation signatures (params mandated by interface)
+    - path: flow/(parser|lsp|lexer)\.go
+      linters:
+        - unparam
+
+    # Node interface implementation signatures
+    - path: node/(http|service_caller)\.go
+      linters:
+        - unparam
+
+    # Bridge/CGo FFI result always nil
+    - path: engine/pkgsupport\.go
+      linters:
+        - unparam

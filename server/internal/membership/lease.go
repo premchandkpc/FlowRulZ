@@ -65,15 +65,15 @@ func (m *Membership) StartLeaderLeaseChecker(ctx context.Context, interval time.
 					lastNotified = ""
 					continue
 				}
-			if time.Since(n.LastSeen) > m.leaderLease {
-				n.IsAlive = false
-				slog.Warn("membership: leader lease expired", "leader", leaderID, "last_seen_ago", time.Since(n.LastSeen))
-				cb := m.leaseCallback
-				m.mu.Unlock()
-				if cb != nil && lastNotified != leaderID {
-					lastNotified = leaderID
-					cb(leaderID)
-				}
+				if time.Since(n.LastSeen) > m.leaderLease {
+					n.IsAlive = false
+					slog.Warn("membership: leader lease expired", "leader", leaderID, "last_seen_ago", time.Since(n.LastSeen))
+					cb := m.leaseCallback
+					m.mu.Unlock()
+					if cb != nil && lastNotified != leaderID {
+						lastNotified = leaderID
+						cb(leaderID)
+					}
 				} else {
 					m.mu.Unlock()
 					lastNotified = ""

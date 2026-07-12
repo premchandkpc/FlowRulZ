@@ -28,28 +28,12 @@ func (ct *callTracker) record(svcID uint16, body []byte) {
 	ct.calls = append(ct.calls, callRecord{svcID: svcID, body: cp})
 }
 
-func (ct *callTracker) count() int {
-	ct.mu.Lock()
-	defer ct.mu.Unlock()
-	return len(ct.calls)
-}
-
 func (ct *callTracker) ids() []uint16 {
 	ct.mu.Lock()
 	defer ct.mu.Unlock()
 	out := make([]uint16, len(ct.calls))
 	for i, c := range ct.calls {
 		out[i] = c.svcID
-	}
-	return out
-}
-
-func (ct *callTracker) bodies() [][]byte {
-	ct.mu.Lock()
-	defer ct.mu.Unlock()
-	out := make([][]byte, len(ct.calls))
-	for i, c := range ct.calls {
-		out[i] = c.body
 	}
 	return out
 }

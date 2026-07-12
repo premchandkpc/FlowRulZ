@@ -10,15 +10,15 @@ import (
 
 func newMockGossiper(nodeID, grpcAddr string) *Gossiper {
 	return &Gossiper{
-		nodeID:    nodeID,
-		grpcAddr:  grpcAddr,
-		node:      &ClusterNode{peers: make(map[string]*Peer)},
-		states:    make(map[string]GossipState),
-		myState:   GossipState{NodeID: nodeID, Address: grpcAddr},
-		fanout:    2,
+		nodeID:       nodeID,
+		grpcAddr:     grpcAddr,
+		node:         &ClusterNode{peers: make(map[string]*Peer)},
+		states:       make(map[string]GossipState),
+		myState:      GossipState{NodeID: nodeID, Address: grpcAddr},
+		fanout:       2,
 		pushInterval: 50 * time.Millisecond,
 		syncInterval: 100 * time.Millisecond,
-		stopCh:    make(chan struct{}),
+		stopCh:       make(chan struct{}),
 	}
 }
 

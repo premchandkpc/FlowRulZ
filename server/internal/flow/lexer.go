@@ -88,51 +88,51 @@ const (
 )
 
 var keywords = map[string]TokenType{
-	"flow":        TokenFlow,
-	"service":     TokenService,
-	"event":       TokenEvent,
-	"workflow":    TokenWorkflow,
-	"if":          TokenIf,
-	"else":        TokenElse,
-	"switch":      TokenSwitch,
-	"case":        TokenCase,
-	"default":     TokenDefault,
-	"parallel":    TokenParallel,
-	"join":        TokenJoin,
-	"retry":       TokenRetry,
-	"breaker":     TokenBreaker,
-	"timeout":     TokenTimeout,
-	"wait":        TokenWait,
-	"foreach":     TokenForeach,
-	"while":       TokenWhile,
-	"output":      TokenOutput,
-	"import":      TokenImport,
-	"include":     TokenInclude,
-	"compensate":  TokenCompensate,
-	"onError":     TokenOnError,
-	"emit":        TokenEmit,
-	"Start":       TokenStart,
-	"End":         TokenEnd,
-	"Return":      TokenReturn,
-	"success":     TokenSuccess,
-	"failure":     TokenFailure,
-	"grpc":        TokenGRPC,
-	"http":        TokenHTTP,
-	"kafka":       TokenKafka,
-	"redis":       TokenRedis,
-	"postgres":    TokenPostgres,
-	"tcp":         TokenTCP,
-	"version":     TokenVersion,
-	"true":        TokenBool,
-	"false":       TokenBool,
+	"flow":       TokenFlow,
+	"service":    TokenService,
+	"event":      TokenEvent,
+	"workflow":   TokenWorkflow,
+	"if":         TokenIf,
+	"else":       TokenElse,
+	"switch":     TokenSwitch,
+	"case":       TokenCase,
+	"default":    TokenDefault,
+	"parallel":   TokenParallel,
+	"join":       TokenJoin,
+	"retry":      TokenRetry,
+	"breaker":    TokenBreaker,
+	"timeout":    TokenTimeout,
+	"wait":       TokenWait,
+	"foreach":    TokenForeach,
+	"while":      TokenWhile,
+	"output":     TokenOutput,
+	"import":     TokenImport,
+	"include":    TokenInclude,
+	"compensate": TokenCompensate,
+	"onError":    TokenOnError,
+	"emit":       TokenEmit,
+	"Start":      TokenStart,
+	"End":        TokenEnd,
+	"Return":     TokenReturn,
+	"success":    TokenSuccess,
+	"failure":    TokenFailure,
+	"grpc":       TokenGRPC,
+	"http":       TokenHTTP,
+	"kafka":      TokenKafka,
+	"redis":      TokenRedis,
+	"postgres":   TokenPostgres,
+	"tcp":        TokenTCP,
+	"version":    TokenVersion,
+	"true":       TokenBool,
+	"false":      TokenBool,
 }
 
 // Token represents a lexical token.
 type Token struct {
-	Type    TokenType
-	Value   string
-	Line    int
-	Column  int
+	Type   TokenType
+	Value  string
+	Line   int
+	Column int
 }
 
 func (t Token) String() string {

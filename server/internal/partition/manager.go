@@ -129,7 +129,7 @@ func (m *Manager) Rebalance(aliveNodes []string, term uint64) []Assignment {
 	for i, nodeID := range m.assignments {
 		assignments[i] = Assignment{
 			NodeID:    nodeID,
-			Partition: pkgpartition.PartitionID(i),
+			Partition: pkgpartition.PartitionID(i % (1 << 32)),
 			Term:      term,
 		}
 	}

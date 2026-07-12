@@ -92,7 +92,7 @@ func (e *Engine) InvalidateCompilation(ruleID string) {
 func (e *Engine) executePlanOutputs(plans [][]byte, body []byte) [][]byte {
 	results := make([][]byte, len(plans))
 	for i, plan := range plans {
-		vp := &VersionedPlan{Plan: plan}
+		vp := &VersionedPlan{}
 		vp.ActiveExec.Add(1)
 
 		out, err := bridgeExecutePlan(plan, body)
@@ -107,7 +107,7 @@ func (e *Engine) executePlanOutputs(plans [][]byte, body []byte) [][]byte {
 	return results
 }
 
-func bridgeExecutePlan(plan []byte, body []byte) ([]byte, error) {
+func bridgeExecutePlan(plan []byte, _ []byte) ([]byte, error) {
 	if len(plan) == 0 {
 		return nil, nil
 	}

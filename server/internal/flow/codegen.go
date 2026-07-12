@@ -78,8 +78,8 @@ func (g *CodeGenerator) generateGo(ir *IR) (string, error) {
 	for _, svc := range ir.Services {
 		b.WriteString(fmt.Sprintf("// %sService is the %s service interface.\n", strings.Title(svc.Name), svc.Name))
 		b.WriteString(fmt.Sprintf("type %sService interface {\n", strings.Title(svc.Name)))
-		b.WriteString(fmt.Sprintf("\t// Call executes a method on the service.\n"))
-		b.WriteString(fmt.Sprintf("\tCall(ctx context.Context, method string, req interface{}) (interface{}, error)\n"))
+		b.WriteString("\t// Call executes a method on the service.\n")
+		b.WriteString("\tCall(ctx context.Context, method string, req interface{}) (interface{}, error)\n")
 		b.WriteString("}\n\n")
 	}
 
@@ -103,7 +103,7 @@ func (g *CodeGenerator) generateGo(ir *IR) (string, error) {
 		}
 		if node.Condition != "" {
 			b.WriteString(fmt.Sprintf("\tif %s {\n", node.Condition))
-			b.WriteString(fmt.Sprintf("\t\t// then branch\n"))
+			b.WriteString("\t\t// then branch\n")
 			b.WriteString("\t}\n")
 		}
 	}
@@ -131,7 +131,7 @@ func (g *CodeGenerator) generateRust(ir *IR) (string, error) {
 	for _, svc := range ir.Services {
 		b.WriteString(fmt.Sprintf("/// %sService is the %s service trait.\n", strings.Title(svc.Name), svc.Name))
 		b.WriteString(fmt.Sprintf("pub trait %sService {\n", strings.Title(svc.Name)))
-		b.WriteString(fmt.Sprintf("\tfn call(&self, method: &str, req: serde_json::Value) -> impl Future<Output = Result<serde_json::Value, Box<dyn std::error::Error>>>;\n"))
+		b.WriteString("\tfn call(&self, method: &str, req: serde_json::Value) -> impl Future<Output = Result<serde_json::Value, Box<dyn std::error::Error>>>;\n")
 		b.WriteString("}\n\n")
 	}
 
@@ -176,7 +176,7 @@ func (g *CodeGenerator) generateJava(ir *IR) (string, error) {
 	for _, svc := range ir.Services {
 		b.WriteString(fmt.Sprintf("\t/** %sService is the %s service interface. */\n", strings.Title(svc.Name), svc.Name))
 		b.WriteString(fmt.Sprintf("\tpublic interface %sService {\n", strings.Title(svc.Name)))
-		b.WriteString(fmt.Sprintf("\t\tCompletableFuture<Object> call(String method, Object req);\n"))
+		b.WriteString("\t\tCompletableFuture<Object> call(String method, Object req);\n")
 		b.WriteString("\t}\n\n")
 	}
 
@@ -210,7 +210,7 @@ func (g *CodeGenerator) generatePython(ir *IR) (string, error) {
 	for _, svc := range ir.Services {
 		b.WriteString(fmt.Sprintf("\tclass %sProtocol:\n", strings.Title(svc.Name)))
 		b.WriteString(fmt.Sprintf("\t\t\"\"\"Protocol for %s service.\"\"\"\n\n", svc.Name))
-		b.WriteString(fmt.Sprintf("\t\tasync def call(self, method: str, req: Dict[str, Any]) -> Any:\n"))
+		b.WriteString("\t\tasync def call(self, method: str, req: Dict[str, Any]) -> Any:\n")
 		b.WriteString("\t\t\traise NotImplementedError\n\n")
 	}
 

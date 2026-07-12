@@ -260,7 +260,7 @@ func (d *DLQ) ReplayAll(ctx context.Context) int {
 				if pe, ok := replayErr.(*replayPanicError); ok {
 					slog.Error("dlq: replay panic, re-queuing", "id", entry.ID, "panic", pe.value)
 				}
-				d.Send(entry)
+				_ = d.Send(entry)
 				continue
 			}
 			count++

@@ -22,13 +22,13 @@ var _ transport.EventBus = (*GRPCClient)(nil)
 type GRPCConfig struct {
 	// Addr is the gRPC server address.
 	Addr string
-	
+
 	// TLSCertFile is the path to the TLS certificate file. If empty, insecure credentials are used.
 	TLSCertFile string
-	
+
 	// TLSKeyFile is the path to the TLS key file. If empty, insecure credentials are used.
 	TLSKeyFile string
-	
+
 	// TLSCAFile is the path to the CA certificate file for verifying the server's certificate.
 	TLSCAFile string
 }

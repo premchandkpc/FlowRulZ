@@ -73,7 +73,7 @@ func (dt *DedupTracker) markLocked(key string) {
 func (dt *DedupTracker) CheckAndMark(key string) bool {
 	dt.mu.Lock()
 	defer dt.mu.Unlock()
-	
+
 	if _, ok := dt.entries[key]; ok {
 		// Already seen - update timestamp and move to front
 		if existing, ok := dt.entries[key]; ok {
@@ -83,7 +83,7 @@ func (dt *DedupTracker) CheckAndMark(key string) bool {
 		}
 		return true
 	}
-	
+
 	// Not seen - mark it
 	dt.markLocked(key)
 	return false

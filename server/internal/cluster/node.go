@@ -18,9 +18,12 @@ type Peer struct {
 }
 
 type ClusterNode struct {
-	nodeID   string
-	grpcAddr string
-	bus      *grpctransport.GRPCBus
+	nodeID      string
+	grpcAddr    string
+	bus         *grpctransport.GRPCBus
+	tlsCertFile string
+	tlsKeyFile  string
+	tlsCAFile   string
 
 	peersMu sync.RWMutex
 	peers   map[string]*Peer
@@ -46,6 +49,15 @@ func NewClusterNode(nodeID, grpcAddr string) *ClusterNode {
 		handlers: make(map[string]SubscribeHandler),
 	}
 	cn.gossiper = NewGossiper(nodeID, grpcAddr, cn)
+	return cn
+}
+
+// NewClusterNodeWithTLS creates a ClusterNode with TLS for peer connections.
+func NewClusterNodeWithTLS(nodeID, grpcAddr, certFile, keyFile, caFile string) *ClusterNode {
+	cn := NewClusterNode(nodeID, grpcAddr)
+	cn.tlsCertFile = certFile
+	cn.tlsKeyFile = keyFile
+	cn.tlsCAFile = caFile
 	return cn
 }
 
@@ -88,12 +100,18 @@ func (cn *ClusterNode) AddPeer(id, addr string) error {
 	}
 
 	client := grpctransport.NewGRPCClient(addr)
-	if err := client.Connect(); err != nil {
-		return fmt.Errorf("cluster node: connect to peer %s at %s: %w", id, addr, err)
+	if cn.tlsCertFile != "" && cn.tlsKeyFile != "" {
+		if err := client.ConnectWithTLS(cn.tlsCertFile, cn.tlsKeyFile, cn.tlsCAFile); err != nil {
+			return fmt.Errorf("cluster node: connect to peer %s at %s (TLS): %w", id, addr, err)
+		}
+	} else {
+		if err := client.Connect(); err != nil {
+			return fmt.Errorf("cluster node: connect to peer %s at %s: %w", id, addr, err)
+		}
 	}
 
 	cn.peers[id] = &Peer{ID: id, Addr: addr, client: client}
-	slog.Info("cluster node: connected to peer", "node_id", cn.nodeID, "peer_id", id, "addr", addr)
+	slog.Info("cluster node: connected to peer", "node_id", cn.nodeID, "peer_id", id, "addr", addr, "tls", cn.tlsCertFile != "")
 	return nil
 }
 

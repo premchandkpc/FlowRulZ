@@ -2,8 +2,11 @@ package grpctransport
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
@@ -62,9 +65,38 @@ func (c *GRPCClient) connectWithCredentials(creds credentials.TransportCredentia
 }
 
 // ConnectWithTLS connects using TLS credentials from the provided certificate files.
-// Returns an error if TLS is not implemented rather than silently downgrading to insecure.
+// Returns an error if TLS configuration fails rather than silently downgrading to insecure.
 func (c *GRPCClient) ConnectWithTLS(certFile, keyFile, caFile string) error {
-	return fmt.Errorf("grpc TLS: not implemented — configure TLS credentials or use Connect() for insecure connection (cert=%s, key=%s, ca=%s)", certFile, keyFile, caFile)
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return fmt.Errorf("grpc TLS: load keypair: %w", err)
+	}
+
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+		CipherSuites: []uint16{
+			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+		},
+	}
+
+	if caFile != "" {
+		ca, err := os.ReadFile(caFile)
+		if err != nil {
+			return fmt.Errorf("grpc TLS: read CA file: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(ca) {
+			return fmt.Errorf("grpc TLS: no valid certs in CA file")
+		}
+		tlsConfig.RootCAs = pool
+	}
+
+	creds := credentials.NewTLS(tlsConfig)
+	return c.connectWithCredentials(creds)
 }
 
 func (c *GRPCClient) Close() {

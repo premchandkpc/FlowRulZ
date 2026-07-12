@@ -98,6 +98,33 @@ func NewServiceCallerWithTLS(certFile, keyFile string) *ServiceCaller {
 	}
 }
 
+// newHTTPClientWithTLS creates an HTTP client configured for TLS.
+func newHTTPClientWithTLS(certFile, keyFile string) *http.Client {
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		slog.Warn("service caller: failed to load TLS cert, using default HTTP client", "error", err)
+		return &http.Client{Timeout: 30 * time.Second}
+	}
+	return &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     90 * time.Second,
+			TLSClientConfig: &tls.Config{
+				Certificates: []tls.Certificate{cert},
+				MinVersion:   tls.VersionTLS12,
+				CipherSuites: []uint16{
+					tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+					tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+					tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+					tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+				},
+			},
+		},
+	}
+}
+
 const tcpPoolSize = 5
 
 func (sc *ServiceCaller) getTCPPool(addr string) *tcpConnPool {
@@ -344,6 +371,9 @@ func (sc *ServiceCaller) callHTTP(
 	reg *registry.ServiceRegistry,
 ) ([]byte, error) {
 	endpoint := "http://" + inst.Endpoint.Address + ":" + strconv.Itoa(inst.Endpoint.Port) + "/" + method
+	if sc.tlsCertFile != "" && sc.tlsKeyFile != "" {
+		endpoint = "https://" + inst.Endpoint.Address + ":" + strconv.Itoa(inst.Endpoint.Port) + "/" + method
+	}
 	
 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(body))
 	if err != nil {

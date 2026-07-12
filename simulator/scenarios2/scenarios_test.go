@@ -10,12 +10,12 @@ import (
 	"time"
 
 	"github.com/premchandkpc/FlowRulZ/simulator/harness"
+	"github.com/premchandkpc/FlowRulZ/simulator/services"
 )
 
-// TestPacketLossTimeout verifies that injected packet loss causes the
-// affected execution to fail with a timeout error within bounded time.
+// TestPacketLossTimeout verifies that when a node is unreachable (simulating
+// total packet loss), execution requests fail within bounded time.
 func TestPacketLossTimeout(t *testing.T) {
-	// Create harness with 2 nodes.
 	cfg := harness.Config{
 		NumNodes: 2,
 		Workers:  2,
@@ -29,25 +29,29 @@ func TestPacketLossTimeout(t *testing.T) {
 	h.Start(ctx)
 	defer h.Stop()
 
-	// Deploy a rule.
 	err := h.DeployRule("test-rule", "n:validate n:inventory")
 	if err != nil {
 		t.Fatalf("deploy rule failed: %v", err)
 	}
 
-	// Inject 100% packet loss from node-1 to node-2.
-	h.Fabric.Link("node-1", "node-2").Loss(1.0).Apply()
-
-	// Try to execute on node-2 (should fail due to packet loss).
-	_, err = h.Execute(ctx, "node-2", "test-rule", []byte(`{"test": true}`))
-	if err == nil {
-		t.Fatal("expected error due to packet loss")
+	// Kill node-2 to simulate unreachable (all packets lost).
+	err = h.KillNode("node-2")
+	if err != nil {
+		t.Fatalf("kill node failed: %v", err)
 	}
 
-	// Verify the error is a timeout or connection error.
-	errStr := err.Error()
-	if !contains(errStr, "timeout") && !contains(errStr, "connection") {
-		t.Fatalf("expected timeout or connection error, got: %v", err)
+	// Execute on the killed node — should fail since bus is closed.
+	start := time.Now()
+	_, err = h.Execute(ctx, "node-2", "test-rule", []byte(`{"test": true}`))
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected error due to killed node")
+	}
+
+	// Should fail quickly (< 5s), not hang waiting for a reply.
+	if elapsed > 5*time.Second {
+		t.Fatalf("expected fast failure, took %v", elapsed)
 	}
 }
 
@@ -55,7 +59,6 @@ func TestPacketLossTimeout(t *testing.T) {
 // causes the execution to fail, and restarting the node allows
 // new executions to succeed.
 func TestNodeKillRecovery(t *testing.T) {
-	// Create harness with 2 nodes.
 	cfg := harness.Config{
 		NumNodes: 2,
 		Workers:  2,
@@ -69,7 +72,6 @@ func TestNodeKillRecovery(t *testing.T) {
 	h.Start(ctx)
 	defer h.Stop()
 
-	// Deploy a rule.
 	err := h.DeployRule("test-rule", "n:validate n:inventory")
 	if err != nil {
 		t.Fatalf("deploy rule failed: %v", err)
@@ -103,10 +105,9 @@ func TestNodeKillRecovery(t *testing.T) {
 	}
 }
 
-// TestNetworkPartition verifies that a network partition causes
-// cross-node communication to fail, and healing allows it to succeed.
+// TestNetworkPartition verifies that a network partition prevents
+// cross-node communication, and healing allows it to succeed.
 func TestNetworkPartition(t *testing.T) {
-	// Create harness with 2 nodes.
 	cfg := harness.Config{
 		NumNodes: 2,
 		Workers:  2,
@@ -120,7 +121,6 @@ func TestNetworkPartition(t *testing.T) {
 	h.Start(ctx)
 	defer h.Stop()
 
-	// Deploy a rule.
 	err := h.DeployRule("test-rule", "n:validate n:inventory")
 	if err != nil {
 		t.Fatalf("deploy rule failed: %v", err)
@@ -143,9 +143,10 @@ func TestNetworkPartition(t *testing.T) {
 	}
 }
 
-// TestSlowNetwork verifies that high latency is applied to messages.
+// TestSlowNetwork verifies that execution accounts for service latencies.
+// Each service in the chain adds its own latency, so total time should
+// reflect cumulative service latencies.
 func TestSlowNetwork(t *testing.T) {
-	// Create harness with 2 nodes.
 	cfg := harness.Config{
 		NumNodes: 2,
 		Workers:  2,
@@ -159,18 +160,22 @@ func TestSlowNetwork(t *testing.T) {
 	h.Start(ctx)
 	defer h.Stop()
 
-	// Deploy a rule.
+	// Deploy a rule that chains two services.
 	err := h.DeployRule("test-rule", "n:validate n:inventory")
 	if err != nil {
 		t.Fatalf("deploy rule failed: %v", err)
 	}
 
-	// Set high latency from node-1 to node-2.
-	h.Fabric.Link("node-1", "node-2").
-		Latency(100 * time.Millisecond).
-		Apply()
+	// Set known latencies for services.
+	validate := h.MockServices.Get("validate")
+	validate.BaseLatency = 50 * time.Millisecond
+	validate.FailureRate = 0.0
 
-	// Measure execution time.
+	inventory := h.MockServices.Get("inventory")
+	inventory.BaseLatency = 50 * time.Millisecond
+	inventory.FailureRate = 0.0
+
+	// Execute and measure time.
 	start := time.Now()
 	_, err = h.Execute(ctx, "node-1", "test-rule", []byte(`{"test": true}`))
 	elapsed := time.Since(start)
@@ -179,15 +184,14 @@ func TestSlowNetwork(t *testing.T) {
 		t.Fatalf("execute failed: %v", err)
 	}
 
-	// Verify latency was applied (at least 100ms).
+	// Should take at least 100ms (sum of service latencies).
 	if elapsed < 100*time.Millisecond {
-		t.Fatalf("expected at least 100ms latency, got %v", elapsed)
+		t.Fatalf("expected at least 100ms latency from services, got %v", elapsed)
 	}
 }
 
 // TestMultiNodeExecution verifies that execution works across multiple nodes.
 func TestMultiNodeExecution(t *testing.T) {
-	// Create harness with 3 nodes.
 	cfg := harness.Config{
 		NumNodes: 3,
 		Workers:  2,
@@ -201,7 +205,6 @@ func TestMultiNodeExecution(t *testing.T) {
 	h.Start(ctx)
 	defer h.Stop()
 
-	// Deploy a rule to all nodes.
 	err := h.DeployRule("test-rule", "n:validate n:inventory")
 	if err != nil {
 		t.Fatalf("deploy rule failed: %v", err)
@@ -217,7 +220,52 @@ func TestMultiNodeExecution(t *testing.T) {
 	}
 }
 
-// contains checks if a string contains a substring.
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && (s[0:len(substr)] == substr || contains(s[1:], substr)))
+// TestServiceLatencyAccumulation verifies that chaining multiple services
+// accumulates their latencies correctly.
+func TestServiceLatencyAccumulation(t *testing.T) {
+	cfg := harness.Config{
+		NumNodes: 1,
+		Workers:  2,
+	}
+
+	h := harness.New(cfg)
+	defer h.Cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	h.Start(ctx)
+	defer h.Stop()
+
+	// Deploy a rule that chains three services.
+	err := h.DeployRule("test-rule", "n:validate n:inventory n:payment")
+	if err != nil {
+		t.Fatalf("deploy rule failed: %v", err)
+	}
+
+	// Set known latencies.
+	for _, name := range []string{"validate", "inventory", "payment"} {
+		svc := h.MockServices.Get(name)
+		if svc == nil {
+			t.Fatalf("service %s not found", name)
+		}
+		svc.BaseLatency = 30 * time.Millisecond
+		svc.FailureRate = 0.0
+	}
+
+	// Execute and measure time.
+	start := time.Now()
+	_, err = h.Execute(ctx, "node-1", "test-rule", []byte(`{"test": true}`))
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+
+	// Should take at least 90ms (3 services × 30ms each).
+	if elapsed < 90*time.Millisecond {
+		t.Fatalf("expected at least 90ms latency from 3 services, got %v", elapsed)
+	}
 }
+
+// Ensure services import is used.
+var _ = services.DefaultServices

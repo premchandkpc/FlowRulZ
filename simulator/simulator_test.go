@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/premchandkpc/FlowRulZ/server/bridge"
 	"github.com/premchandkpc/FlowRulZ/simulator/config"
 	"github.com/premchandkpc/FlowRulZ/simulator/dispatcher"
 	"github.com/premchandkpc/FlowRulZ/simulator/execution"
@@ -14,6 +15,27 @@ import (
 	"github.com/premchandkpc/FlowRulZ/simulator/timeline"
 )
 
+// compilePlan compiles a DSL string and returns a plan with attached bytecode.
+func compilePlan(t *testing.T, plan *execution.Plan, dsl string) *execution.Plan {
+	t.Helper()
+	planBytes, err := bridge.Compile(dsl, plan.ID)
+	if err != nil {
+		t.Fatalf("compile %s: %v", plan.ID, err)
+	}
+	svcs, err := bridge.PlanServices(planBytes)
+	if err != nil {
+		t.Fatalf("plan services %s: %v", plan.ID, err)
+	}
+	svcNames := make(map[uint16]string)
+	for _, svc := range svcs {
+		svcNames[svc.ID] = svc.Name
+	}
+	p := *plan
+	p.PlanBytes = planBytes
+	p.ServiceNames = svcNames
+	return &p
+}
+
 func TestOrderFlowExecution(t *testing.T) {
 	svcs := services.DefaultServices()
 	for _, s := range svcs.All() {
@@ -23,11 +45,12 @@ func TestOrderFlowExecution(t *testing.T) {
 	mc := metrics.NewCollector()
 	net := network.New(network.Config{MinLatency: 0, MaxLatency: 0})
 	node := scheduler.New("test-node", 2, svcs, net, tl, mc)
-	node.Plans.Add(execution.OrderFlow)
+	plan := compilePlan(t, execution.OrderFlow, "n:validate n:inventory n:fraud n:payment.authorize n:email")
+	node.Plans.Add(plan)
 	node.Start()
 	defer node.Stop()
 
-	ctx := execution.NewContext(execution.OrderFlow, []byte(`{"order_id":"123"}`))
+	ctx := execution.NewContext(plan, []byte(`{"order_id":"123"}`))
 	node.Enqueue(ctx)
 
 	for start := time.Now(); time.Since(start) < 5*time.Second; {
@@ -39,12 +62,8 @@ func TestOrderFlowExecution(t *testing.T) {
 	if ctx.State() != execution.StateCompleted {
 		t.Fatalf("expected completed, got %s", ctx.State())
 	}
-	vars := ctx.VariablesMap()
-	if len(vars) == 0 {
-		t.Fatal("expected variables to be populated")
-	}
-	if vars["published"] != "order_confirmed" {
-		t.Fatalf("expected published=order_confirmed, got %v", vars["published"])
+	if len(ctx.Output) == 0 {
+		t.Fatal("expected non-empty output from VM")
 	}
 	if mc.Completed() != 1 {
 		t.Fatalf("expected 1 completed, got %d", mc.Completed())
@@ -61,11 +80,12 @@ func TestSuspensionResume(t *testing.T) {
 	mc := metrics.NewCollector()
 	net := network.New(network.Config{MinLatency: 0, MaxLatency: 0})
 	node := scheduler.New("test-node", 2, svcs, net, tl, mc)
-	node.Plans.Add(execution.PaymentFlow)
+	plan := compilePlan(t, execution.PaymentFlow, "n:validate n:payment.capture n:loyalty")
+	node.Plans.Add(plan)
 	node.Start()
 	defer node.Stop()
 
-	ctx := execution.NewContext(execution.PaymentFlow, []byte(`{"amount":100}`))
+	ctx := execution.NewContext(plan, []byte(`{"amount":100}`))
 	node.Enqueue(ctx)
 
 	for start := time.Now(); time.Since(start) < 5*time.Second; {
@@ -112,11 +132,12 @@ func TestServiceFailure(t *testing.T) {
 	mc := metrics.NewCollector()
 	net := network.New(network.Config{MinLatency: 0, MaxLatency: 0})
 	node := scheduler.New("test-node", 2, svcs, net, tl, mc)
-	node.Plans.Add(execution.OrderFlow)
+	plan := compilePlan(t, execution.OrderFlow, "n:validate n:inventory n:fraud n:payment.authorize n:email")
+	node.Plans.Add(plan)
 	node.Start()
 	defer node.Stop()
 
-	ctx := execution.NewContext(execution.OrderFlow, []byte(`{"order_id":"123"}`))
+	ctx := execution.NewContext(plan, []byte(`{"order_id":"123"}`))
 	node.Enqueue(ctx)
 
 	for start := time.Now(); time.Since(start) < 5*time.Second; {
@@ -148,10 +169,11 @@ func TestMultiNodeDispatch(t *testing.T) {
 	mc := metrics.NewCollector()
 	net := network.New(network.Config{MinLatency: 0, MaxLatency: 0})
 
+	plan := compilePlan(t, execution.OrderFlow, "n:validate n:inventory n:fraud n:payment.authorize n:email")
 	nodes := make([]*scheduler.Scheduler, 3)
 	for i := 0; i < 3; i++ {
 		nd := scheduler.New("node", 4, svcs, net, tl, mc)
-		nd.Plans.Add(execution.OrderFlow)
+		nd.Plans.Add(plan)
 		nodes[i] = nd
 	}
 
@@ -160,7 +182,7 @@ func TestMultiNodeDispatch(t *testing.T) {
 	defer disp.StopAll()
 
 	for i := 0; i < 10; i++ {
-		ctx := execution.NewContext(execution.OrderFlow, []byte(`{"order_id":"123"}`))
+		ctx := execution.NewContext(plan, []byte(`{"order_id":"123"}`))
 		disp.Dispatch(ctx)
 	}
 

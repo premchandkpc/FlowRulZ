@@ -20,7 +20,7 @@ docs/         Architecture guides + Obsidian vault (26 notes)
 - Compile-time checks: `var _ pkg.Type = (*InternalType)(nil)` in pkgsupport.go for all 5 reliability pkg interfaces
 
 ## Tests
-- `cd server && go test -race ./internal/... ./bridge/...` (315+)
+- `cd server && go test -race ./internal/... ./bridge/...` (362+)
 - `cd runtime && cargo test` (411+)
 - `go test ./simulator/...` (-race)
 

@@ -1,95 +1,86 @@
-# More permissive linting configuration for FlowRulZ
-# Focuses on catching major issues while allowing flexibility
+# FlowRulZ golangci-lint configuration
+# Focus on catching real bugs, not style nits
 
-# All the quick checks - runs first and makes developers stop and fix
 run:
-  # Check if overriding options need explicit enable
-  force-exit-1: true
+  timeout: 5m
 
-issues:
-  # Maximum issues count to print - helps debugging
-  max-issues: 50
-
-  # Ensure all issues are fixed, don't just report
-  exclude-rules:
-    # Don't fail on non-fatal linter violations
-    - path: ./server/pkg
-      linters:
-        - errcheck
-
-  # Only show errors that are unfixable or critical
-  # This is the primary output for developers
+output:
+  formats:
+    - format: colored-line-number
   print-linter-name: true
 
-  # Make the output machine-readable for CI/CD
-  format: colored-by-category
+linters:
+  enable:
+    # Bug catchers
+    - bodyclose         # unclosed HTTP response bodies
+    - durationcheck     # time.Duration multiplication bugs
+    - errcheck          # unchecked errors
+    - exportloopref  # deprecated in Go 1.22+ (replaced by copyloopvar)
+    - govet             # suspicious constructs
+    - nilerr            # returning nil when err != nil
+    - staticcheck       # comprehensive static analysis
+    - unconvert         # unnecessary type conversions
+    - unparam           # unused function parameters
+    - wastedassign      # wasted assignments
 
-  # Stop after 50 issues to avoid report spam
-  # Still useful for development
-  # then switch to stricter settings before merge
-  include:
-    - text
+    # Security
+    - gosec             # security issues
 
-# Configuration for each linter - be minimal and efficient
-copyloop: enable
+    # Simplicity
+    - gosimple          # simplification opportunities
+    - ineffassign       # ineffectual assignments
+    - unused            # unused code
 
-errcheck:
-  # Only check for unassignable return values
-  # Which means "may be almost assigned, check!", not "is definitely wrong"
-  # But catch the obvious unassignable cases in internal code
-  checks: [assign,return]
+    # Style (non-blocking in CI)
+    - gofmt             # formatting
+    - misspell          # spelling errors
 
-linter-settings:
-  importas:
-    # Allow different aliases for same package for readability
-    alias:
-      "github.com/premchandkpc/FlowRulZ/server/pkg/transport": "transport"
-      "github.com/premchandkpc/FlowRulZ/server/pkg/cluster": "cluster"
-      "github.com/premchandkpc/FlowRulZ/server/pkg/reliability": "reliability"
-      "github.com/premchandkpc/FlowRulZ/server/pkg/engine": "engine"
+linters-settings:
+  errcheck:
+    check-blank: false
+    exclude-functions:
+      - (io.Closer).Close
+      - (net.Listener).Close
 
-# Best practices and style
-style:
-  # Allow reasonable deviations - this is not a code style guide repo
-  # Focus on working product over perfect style
-  indent-width: 2
-  tab-width: 4
-  print-separated-function-length: 50
-  print-functions-long: 10
+  gosec:
+    excludes:
+      - G104  # unhandled errors on Close (noisy)
+      - G304  # file path from variable (expected)
 
-# Minimize noise in code - be practical
-mnd:
-  # Don't go crazy checking numbers
-  checks: [argument,case,condition,operation,return,range]
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment  # too noisy for existing code
 
-# Error handling checks - focus on production reliability
-nolintlint:
-  # Allow ignoring errors for one file if needed
-  # Trust the expert judgment of the maintainer
-  allow-no-explanation: true
+  staticcheck:
+    checks:
+      - all
+      - -SA1019  # deprecated (some APIs are deprecated but still needed)
 
-# Performance optimization insights
-perf:
-  # Focus on slice operations and loops that could be optimized
-  ignore-checks: "^SA4009|SA4010|SA4011|SA4012"
+issues:
+  max-issues-per-linter: 50
+  max-same-issues: 5
+  exclude-dirs:
+    - runtime
+    - sdk
+    - simulator
+    - docs
+    - e2e
 
-# Security checks - but don't over-engineer
-all:
-  enable: [
-    gosimple,
-    nolint,
-    sqlclosecheck,
-    errcheck,
-    whitespace,
-    gosec,
-    unused,
-    ineffassign,
-    gosimple,
-    govet,
-    gofmt,
-    goimports,
-    misspell,
-    bodyclose,
-    varnamelen,
-    structtag,
-  ]
+  exclude-rules:
+    # Test files can be more relaxed
+    - path: _test\.go
+      linters:
+        - errcheck
+        - gosec
+        - unparam
+
+    # Bridge/CGo files have specific patterns
+    - path: bridge/
+      linters:
+        - gosec
+
+    # pkg/ interfaces don't need all checks
+    - path: pkg/
+      linters:
+        - errcheck

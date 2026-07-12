@@ -69,7 +69,9 @@ func DefaultDependencies(cfg Config) Dependencies {
 
 	// DLQ
 	dlqDir := cfg.DLQDir()
-	os.MkdirAll(dlqDir, 0755)
+	if err := os.MkdirAll(dlqDir, 0755); err != nil {
+		slog.Warn("failed to create DLQ directory", "dir", dlqDir, "error", err)
+	}
 	dlqProducer := MakeProducerFromCluster(reliability.DefaultDLQTopic, clusterNode, kafkaCfg)
 	dlq := reliability.NewDLQ(cfg.DLQMaxEntries(),
 		reliability.WithDLQProducer(dlqProducer),

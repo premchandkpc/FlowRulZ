@@ -143,7 +143,9 @@ func (st *SagaTracker) persistLocked(execID string) {
 		slog.Error("saga: write error", "exec_id", execID, "error", err)
 		return
 	}
-	os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		slog.Error("saga: rename error", "exec_id", execID, "error", err)
+	}
 }
 
 func (st *SagaTracker) load() {

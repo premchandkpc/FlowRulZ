@@ -25,16 +25,17 @@ CGO := CGO_ENABLED=1
 ###############################################################################
 
 .PHONY: \
-all build rust go sim \
-run-flowrulz run-sim \
-test test-rust test-go test-local bench vet clean \
-docker docker-sim \
-kind-up kind-down kind-load \
-k8s-deploy k8s-delete \
-helm-install helm-uninstall \
-e2e-up e2e-test e2e-down e2e \
-logs pods svc describe shell port-forward restart status \
-up down rebuild reset deploy full
+	all build rust go sim \
+	run-flowrulz run-sim \
+	test test-rust test-go test-local bench vet clean \
+	docker docker-sim \
+	kind-up kind-load kind-down \
+	k8s-deploy k8s-delete \
+	helm-install helm-uninstall \
+	e2e-up e2e-test e2e-down e2e \
+	logs pods svc describe shell port-forward restart status \
+	up down rebuild reset deploy full \
+	golangci-lint gosec security coverage
 
 ###############################################################################
 # Build
@@ -119,6 +120,19 @@ imports:
 lint: fmt vet imports
 
 lint-fast: fmt imports
+
+golangci-lint:
+	$(CGO) golangci-lint run ./server/...
+
+gosec:
+	$(CGO) gosec ./server/...
+
+security: gosec
+
+coverage:
+	$(CGO) go test ./server/... -count=1 -race -coverprofile=coverage.out -covermode=atomic
+	@echo "Coverage report: coverage.out"
+	@go tool cover -func=coverage.out | tail -1
 
 ###############################################################################
 # Docker

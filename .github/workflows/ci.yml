@@ -24,10 +24,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: runtime -> target
+      - run: cargo clippy --release -- -D warnings
       - run: cargo test --release
+      - run: cargo fmt --check
 
-  go:
-    name: Go (vet + test)
+  go-vet:
+    name: Go vet
     runs-on: ubuntu-latest
     needs: rust
     steps:
@@ -44,6 +46,69 @@ jobs:
       - run: go vet ./server/... ./simulator/...
         env:
           CGO_ENABLED: "1"
-      - run: go test ./server/... ./simulator/... -count=1 -race
+
+  go-lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    needs: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: runtime -> target
+      - run: cargo build --release
+        working-directory: runtime
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: server
+        env:
+          CGO_ENABLED: "1"
+
+  go-test:
+    name: Go test (race + coverage)
+    runs-on: ubuntu-latest
+    needs: [go-vet, go-lint]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: runtime -> target
+      - run: cargo build --release
+        working-directory: runtime
+      - run: go test ./server/... ./simulator/... -count=1 -race -coverprofile=coverage.out -covermode=atomic
+        env:
+          CGO_ENABLED: "1"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+
+  security:
+    name: Security scan
+    runs-on: ubuntu-latest
+    needs: go-vet
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: runtime -> target
+      - run: cargo build --release
+        working-directory: runtime
+      - uses: securego/gosec@master
+        with:
+          args: ./server/...
         env:
           CGO_ENABLED: "1"

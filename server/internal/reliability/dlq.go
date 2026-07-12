@@ -146,7 +146,9 @@ func (d *DLQ) persistEntry(entry *DeadLetterEntry) {
 		slog.Error("dlq: write error", "error", err)
 		return
 	}
-	os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		slog.Error("dlq: rename error", "error", err)
+	}
 }
 
 func (d *DLQ) removePersisted(id string) {

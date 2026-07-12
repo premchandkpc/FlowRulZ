@@ -10,6 +10,7 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync/atomic"
 
 	"github.com/premchandkpc/FlowRulZ/server/internal/compiler"
@@ -57,12 +58,12 @@ func NewWithCompiler(eng *engine.Engine, comp compiler.Compiler) *Server {
 		rules:       newRuleService(eng, comp),
 		rateLimiter: rl,
 	}
-	s.mux.HandleFunc("POST /rules", s.auth(s.rateLimit(s.deployRule)))
+	s.mux.HandleFunc("POST /rules", s.auth(s.rateLimit(requireContentType(s.deployRule))))
 	s.mux.HandleFunc("DELETE /rules/{id}", s.auth(s.rateLimit(s.removeRule)))
 	s.mux.HandleFunc("GET /rules", s.auth(s.rateLimit(s.listRules)))
 	s.mux.HandleFunc("GET /rules/{id}", s.auth(s.rateLimit(s.getRule)))
 	s.mux.HandleFunc("GET /rules/{id}/versions", s.auth(s.rateLimit(s.listVersions)))
-	s.mux.HandleFunc("POST /rules/{id}/validate", s.auth(s.rateLimit(s.validateRule)))
+	s.mux.HandleFunc("POST /rules/{id}/validate", s.auth(s.rateLimit(requireContentType(s.validateRule))))
 	s.mux.HandleFunc("POST /rules/{id}/promote", s.auth(s.rateLimit(s.promoteVersion)))
 	s.mux.HandleFunc("POST /rules/{id}/rollback", s.auth(s.rateLimit(s.rollbackVersion)))
 	s.mux.HandleFunc("GET /lanes", s.auth(s.rateLimit(s.listLanes)))
@@ -78,7 +79,7 @@ func (s *Server) RegisterDLQ(dlq *reliability.DLQ) {
 	s.mux.HandleFunc("POST /dlq/replay/{id}", s.auth(s.rateLimit(s.replayDLQ)))
 	s.mux.HandleFunc("POST /dlq/replay", s.auth(s.rateLimit(s.replayAllDLQ)))
 	s.mux.HandleFunc("DELETE /dlq", s.auth(s.rateLimit(s.clearDLQ)))
-	s.mux.HandleFunc("POST /dlq/load", s.auth(s.rateLimit(s.loadDLQFromTopic)))
+	s.mux.HandleFunc("POST /dlq/load", s.auth(s.rateLimit(requireContentType(s.loadDLQFromTopic))))
 }
 
 // RegisterExtended registers admin endpoints that require node-level dependencies.
@@ -100,6 +101,16 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		slog.Error("json encode error", "error", err)
+	}
+}
+
+func requireContentType(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if ct := r.Header.Get("Content-Type"); ct != "" && !strings.HasPrefix(ct, "application/json") {
+			http.Error(w, "Content-Type must be application/json", http.StatusUnsupportedMediaType)
+			return
+		}
+		next(w, r)
 	}
 }
 

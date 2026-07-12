@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"bytes"
 	"fmt"
 	"log/slog"
 	"os"
@@ -8,6 +9,10 @@ import (
 
 	"github.com/premchandkpc/FlowRulZ/server/bridge"
 )
+
+const maxWasmSize = 10 * 1024 * 1024 // 10MB
+
+var wasmMagic = []byte{0x00, 'a', 's', 'm'}
 
 func LoadDir(pluginDir string) error {
 	entries, err := os.ReadDir(pluginDir)
@@ -31,6 +36,13 @@ func LoadDir(pluginDir string) error {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return fmt.Errorf("read plugin %s: %w", path, err)
+		}
+		if len(data) > maxWasmSize {
+			return fmt.Errorf("plugin %s: exceeds max size %d bytes", name, maxWasmSize)
+		}
+		if len(data) >= 4 && !bytes.HasPrefix(data, wasmMagic) {
+			slog.Warn("plugins: invalid WASM magic bytes, skipping", "name", name, "path", path)
+			continue
 		}
 		if err := bridge.RegisterPlugin(name, data); err != nil {
 			return fmt.Errorf("register plugin %s: %w", name, err)

@@ -212,8 +212,20 @@ func (g *Gossiper) HandleGossipMessage(ctx context.Context, topic string, body [
 		return
 	}
 
+	if msg.Sender == "" {
+		slog.Warn("gossip: rejecting message with empty sender")
+		return
+	}
+
+	g.statesMu.RLock()
+	_, knownPeer := g.states[msg.Sender]
+	g.statesMu.RUnlock()
+
 	switch msg.Type {
 	case "push":
+		if !knownPeer && msg.Sender != g.nodeID {
+			slog.Warn("gossip: received push from unknown sender", "sender", msg.Sender)
+		}
 		for _, state := range msg.States {
 			if state.NodeID == g.nodeID {
 				continue

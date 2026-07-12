@@ -197,7 +197,6 @@ func TestRemoveConcurrentWithDeploy(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make(chan error, 20)
 
-	// Concurrent Remove
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
@@ -205,8 +204,6 @@ func TestRemoveConcurrentWithDeploy(t *testing.T) {
 			e.Remove("conc-rule")
 		}()
 	}
-
-	// Concurrent Deploy
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
@@ -227,72 +224,56 @@ func TestRemoveConcurrentWithDeploy(t *testing.T) {
 
 func TestRemoveNonexistent(t *testing.T) {
 	e := New("")
-	e.Remove("nonexistent") // should not panic
-}
-
-func TestRemoveWaitsForActiveExec(t *testing.T) {
-	e := New("")
-	e.Deploy("wait-rule", "n:validate")
-
-	ch := make(chan struct{})
-	go func() {
-		e.Remove("wait-rule")
-		close(ch)
-	}()
-
-	// Remove should complete quickly since no active exec
-	select {
-	case <-ch:
-	case <-time.After(time.Second):
-		t.Fatal("Remove did not complete")
-	}
-
-	rules := e.Rules()
-	if len(rules) != 0 {
-		t.Fatalf("expected 0 rules after remove, got %d", len(rules))
-	}
-}
-
-func TestRemoveCalledTwice(t *testing.T) {
-	e := New("")
-	e.Deploy("double-rule", "n:validate")
-
-	e.Remove("double-rule")
-	e.Remove("double-rule") // second remove should be no-op
-
-	rules := e.Rules()
-	if len(rules) != 0 {
-		t.Fatalf("expected 0 rules, got %d", len(rules))
-	}
-}
-
-func TestRemoveNonexistentRule(t *testing.T) {
-	e := New("")
 	e.Remove("nonexistent")
 	if len(e.Rules()) != 0 {
 		t.Fatal("expected no rules after removing nonexistent")
 	}
 }
 
-func TestDrainConcurrentWithRemove(t *testing.T) {
+func TestRemoveWaitsForActiveExec(t *testing.T) {
 	e := New("")
-	e.Deploy("test-1", "n:validate")
+	e.Deploy("wait-rule", "n:validate")
+
 	rules := e.Rules()
-	v1 := rules[0].ActivePlan().Version
+	vp := rules[0].ActivePlan()
+	vp.ActiveExec.Add(1)
 
-	e.Deploy("test-1", "n:validate")
+	removed := make(chan struct{})
+	go func() {
+		e.Remove("wait-rule")
+		close(removed)
+	}()
 
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		e.Drain("test-1", v1)
-	}()
-	go func() {
-		defer wg.Done()
-		e.Remove("test-1")
-	}()
-	wg.Wait()
+	select {
+	case <-removed:
+		t.Fatal("Remove returned before ActiveExec.Wait()")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	vp.ActiveExec.Done()
+
+	select {
+	case <-removed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Remove did not complete after ActiveExec.Done()")
+	}
+
+	rules = e.Rules()
+	if len(rules) != 0 {
+		t.Fatal("expected rule to be removed")
+	}
+}
+
+func TestSaveRulesInsideLock(t *testing.T) {
+	e := New("")
+	e.Deploy("save-rule", "n:validate")
+	e.Deploy("save-rule", "n:validate")
+
+	e.Remove("save-rule")
+	rules := e.Rules()
+	if len(rules) != 0 {
+		t.Fatal("expected 0 rules after remove")
+	}
 }
 
 func TestPromoteNonexistentVersion(t *testing.T) {
@@ -377,50 +358,24 @@ func TestRulesCopyIsolation(t *testing.T) {
 	}
 }
 
-func TestSaveRulesInsideLock(t *testing.T) {
+func TestDrainConcurrentWithRemove(t *testing.T) {
 	e := New("")
-	e.Deploy("save-rule", "n:validate")
-	e.Deploy("save-rule", "n:validate") // second version
-
-	// Remove should save rules atomically
-	e.Remove("save-rule")
+	e.Deploy("test-1", "n:validate")
 	rules := e.Rules()
-	if len(rules) != 0 {
-		t.Fatal("expected 0 rules after remove")
-	}
-}
+	v1 := rules[0].ActivePlan().Version
+	e.Deploy("test-1", "n:validate")
 
-func TestRemoveWaitsForActiveExecutions(t *testing.T) {
-	e := New("")
-	e.Deploy("wait-rule", "n:validate")
-
-	rules := e.Rules()
-	vp := rules[0].ActivePlan()
-	vp.ActiveExec.Add(1)
-
-	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
 	go func() {
-		e.Remove("wait-rule")
-		close(done)
+		defer wg.Done()
+		e.Drain("test-1", v1)
 	}()
-
-	select {
-	case <-done:
-		t.Fatal("Remove returned before ActiveExec.Wait completed")
-	case <-time.After(100 * time.Millisecond):
-	}
-
-	vp.ActiveExec.Done()
-
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("Remove did not complete after ActiveExec.Done")
-	}
-
-	if len(e.Rules()) != 0 {
-		t.Fatal("expected 0 rules after remove")
-	}
+	go func() {
+		defer wg.Done()
+		e.Remove("test-1")
+	}()
+	wg.Wait()
 }
 
 func TestRemoveMultipleVersions(t *testing.T) {

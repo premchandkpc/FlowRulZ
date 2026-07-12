@@ -53,6 +53,7 @@ docs/         Architecture guides + Obsidian vault (26 notes)
 - Scheduler.mu: sync.RWMutex — Snapshot() uses RLock to allow concurrent EnqueueTask
 - Health endpoint: unauthenticated, returns only {status:ok} — detailed stats behind /metrics (authed)
 - TLS cipher suites: explicit allowlist (ECDHE+AES-GCM only), no CBC/3DES
+- Cluster TLS: GRPCClient.ConnectWithTLS implemented; ClusterNode uses TLS when configured; AddPeer auto-selects TLS/plaintext
 
 ## Docs
 `flow-architecture.md` `vm-architecture.md` `bytecode-format.md` `dsl-syntax.md` `memory-management.md` `ffi-api.md` `cluster-model.md` `flows.md` `file-index.md` `obsidian-vault/`

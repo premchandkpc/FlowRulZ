@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -229,17 +228,4 @@ func (h *Harness) Snapshot() []map[string]interface{} {
 // Cleanup removes all temporary files.
 func (h *Harness) Cleanup() {
 	os.RemoveAll(h.tmpDir)
-}
-
-// tempDir returns a temporary directory path.
-func tempDir(pattern string) string {
-	dir, _ := os.MkdirTemp("", pattern)
-	return dir
-}
-
-// init creates the temp directory.
-func init() {
-	// Ensure temp directory exists.
-	execDir := filepath.Join(os.TempDir(), "flowrulz-sim")
-	os.MkdirAll(execDir, 0755)
 }

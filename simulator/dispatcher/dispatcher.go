@@ -1,7 +1,6 @@
 package dispatcher
 
 import (
-	"hash/fnv"
 	"log/slog"
 
 	"github.com/premchandkpc/FlowRulZ/simulator/execution"
@@ -44,9 +43,13 @@ func (d *Dispatcher) hashNode(key string, n int) int {
 	if n == 0 {
 		return 0
 	}
-	h := fnv.New32a()
-	h.Write([]byte(key))
-	return int(h.Sum32()) % n
+	// Inline FNV-1a hash to avoid allocating a new hasher per call.
+	var h uint32 = 2166136261
+	for i := 0; i < len(key); i++ {
+		h ^= uint32(key[i])
+		h *= 16777619
+	}
+	return int(h) % n
 }
 
 func (d *Dispatcher) StartAll() {

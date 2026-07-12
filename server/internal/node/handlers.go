@@ -2,14 +2,13 @@ package node
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
 	"time"
 
+	"github.com/premchandkpc/FlowRulZ/server/internal/common"
 	pkgcluster "github.com/premchandkpc/FlowRulZ/server/pkg/cluster"
 	pkgpartition "github.com/premchandkpc/FlowRulZ/server/pkg/partition"
 )
@@ -26,19 +25,7 @@ func (n *ProdNode) registerHandlers(mux *http.ServeMux) {
 }
 
 func (n *ProdNode) requireClusterAuth(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		apiKey := os.Getenv("FLOWRULZ_API_KEY")
-		if apiKey == "" {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		key := r.Header.Get("Authorization")
-		if subtle.ConstantTimeCompare([]byte(key), []byte("Bearer "+apiKey)) != 1 {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		next(w, r)
-	}
+	return common.BearerAuth("")(next)
 }
 
 func (n *ProdNode) handleClusterJoin(w http.ResponseWriter, r *http.Request) {

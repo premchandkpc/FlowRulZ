@@ -53,14 +53,7 @@ func (rs *ruleService) ListRules() []ruleView {
 	rules := rs.engine.Rules()
 	views := make([]ruleView, 0, len(rules))
 	for _, ru := range rules {
-		vvs := make([]versionView, len(ru.Versions))
-		for i, v := range ru.Versions {
-			vvs[i] = versionView{
-				Version: v.Version,
-				Active:  i == ru.ActiveVersion,
-			}
-		}
-		views = append(views, ruleView{ID: ru.ID, Versions: vvs})
+		views = append(views, ruleView{ID: ru.ID, Versions: buildVersionViews(ru, false)})
 	}
 	return views
 }
@@ -73,16 +66,7 @@ func (rs *ruleService) RuleDetail(id string) (map[string]interface{}, bool) {
 		if ru.ID != id {
 			continue
 		}
-		vvs := make([]versionView, len(ru.Versions))
-		for i, v := range ru.Versions {
-			vvs[i] = versionView{
-				Version: v.Version,
-				DSL:     v.DSL,
-				Active:  i == ru.ActiveVersion,
-				Lane:    string(v.Lane),
-			}
-		}
-		return map[string]interface{}{"id": ru.ID, "versions": vvs}, true
+		return map[string]interface{}{"id": ru.ID, "versions": buildVersionViews(ru, true)}, true
 	}
 	return nil, false
 }
@@ -93,18 +77,27 @@ func (rs *ruleService) RuleVersions(id string) []versionView {
 	}
 	for _, ru := range rs.engine.Rules() {
 		if ru.ID == id {
-			vvs := make([]versionView, len(ru.Versions))
-			for i, v := range ru.Versions {
-				vvs[i] = versionView{
-					Version: v.Version,
-					DSL:     v.DSL,
-					Active:  i == ru.ActiveVersion,
-				}
-			}
-			return vvs
+			return buildVersionViews(ru, true)
 		}
 	}
 	return []versionView{}
+}
+
+// buildVersionViews constructs versionView slices from a rule's versions.
+// If includeDSL is true, the DSL source is included in each view.
+func buildVersionViews(ru engine.Rule, includeDSL bool) []versionView {
+	vvs := make([]versionView, len(ru.Versions))
+	for i, v := range ru.Versions {
+		vvs[i] = versionView{
+			Version: v.Version,
+			Active:  i == ru.ActiveVersion,
+		}
+		if includeDSL {
+			vvs[i].DSL = v.DSL
+			vvs[i].Lane = string(v.Lane)
+		}
+	}
+	return vvs
 }
 
 func (rs *ruleService) ValidateDSL(dsl string) (map[string]interface{}, error) {

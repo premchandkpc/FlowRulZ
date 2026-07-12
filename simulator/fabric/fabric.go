@@ -10,7 +10,6 @@ package fabric
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -241,5 +240,5 @@ func (f *Fabric) dispatchRemote(fromNode, topic string, msg *transport.Message) 
 
 // linkKey generates a unique key for a unidirectional link.
 func linkKey(from, to string) string {
-	return fmt.Sprintf("%s->%s", from, to)
+	return from + "->" + to
 }

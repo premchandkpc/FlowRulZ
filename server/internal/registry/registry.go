@@ -95,6 +95,26 @@ func New() *ServiceRegistry {
 	}
 }
 
+// validateEndpoint checks protocol-specific field requirements.
+func validateEndpoint(ep *Endpoint) error {
+	switch ep.Protocol {
+	case ProtocolHTTP, ProtocolGRPC, ProtocolTCP:
+		if ep.Address == "" {
+			return fmt.Errorf("registry: empty endpoint address for %s", ep.Protocol)
+		}
+		if ep.Port <= 0 {
+			return fmt.Errorf("registry: invalid port %d for %s", ep.Port, ep.Protocol)
+		}
+	case ProtocolKafka:
+		if ep.Topic == "" {
+			return fmt.Errorf("registry: empty topic for kafka endpoint")
+		}
+	default:
+		return fmt.Errorf("registry: unsupported protocol %q", ep.Protocol)
+	}
+	return nil
+}
+
 func (r *ServiceRegistry) Register(name string, endpoint *Endpoint) error {
 	if name == "" {
 		return fmt.Errorf("registry: empty service name")
@@ -106,21 +126,8 @@ func (r *ServiceRegistry) Register(name string, endpoint *Endpoint) error {
 		endpoint.Protocol = ProtocolHTTP
 	}
 
-	// Protocol-specific validation
-	switch endpoint.Protocol {
-	case ProtocolHTTP, ProtocolGRPC, ProtocolTCP:
-		if endpoint.Address == "" {
-			return fmt.Errorf("registry: empty endpoint address for %s", endpoint.Protocol)
-		}
-		if endpoint.Port <= 0 {
-			return fmt.Errorf("registry: invalid port %d for %s", endpoint.Port, endpoint.Protocol)
-		}
-	case ProtocolKafka:
-		if endpoint.Topic == "" {
-			return fmt.Errorf("registry: empty topic for kafka endpoint")
-		}
-	default:
-		return fmt.Errorf("registry: unsupported protocol %q", endpoint.Protocol)
+	if err := validateEndpoint(endpoint); err != nil {
+		return err
 	}
 
 	if endpoint.NodeID == "" {
@@ -155,21 +162,8 @@ func (r *ServiceRegistry) RegisterInstance(inst *ServiceInstance) error {
 		inst.Endpoint.Protocol = ProtocolHTTP
 	}
 
-	// Protocol-specific validation
-	switch inst.Endpoint.Protocol {
-	case ProtocolHTTP, ProtocolGRPC, ProtocolTCP:
-		if inst.Endpoint.Address == "" {
-			return fmt.Errorf("registry: empty endpoint address for %s", inst.Endpoint.Protocol)
-		}
-		if inst.Endpoint.Port <= 0 {
-			return fmt.Errorf("registry: invalid port %d for %s", inst.Endpoint.Port, inst.Endpoint.Protocol)
-		}
-	case ProtocolKafka:
-		if inst.Endpoint.Topic == "" {
-			return fmt.Errorf("registry: empty topic for kafka endpoint")
-		}
-	default:
-		return fmt.Errorf("registry: unsupported protocol %q", inst.Endpoint.Protocol)
+	if err := validateEndpoint(&inst.Endpoint); err != nil {
+		return err
 	}
 
 	if inst.ID == "" {

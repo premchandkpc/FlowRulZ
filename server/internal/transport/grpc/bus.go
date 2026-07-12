@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/premchandkpc/FlowRulZ/server/internal/common"
 	"github.com/premchandkpc/FlowRulZ/server/pkg/transport"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -88,13 +89,8 @@ func (b *GRPCBus) Start() error {
 		}
 		creds := credentials.NewTLS(&tls.Config{
 			Certificates: []tls.Certificate{cert},
-			CipherSuites: []uint16{
-				tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-				tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-				tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-			},
-			MinVersion: tls.VersionTLS12,
+			CipherSuites: common.TLSCipherSuites,
+			MinVersion:   tls.VersionTLS12,
 		})
 		opts = append(opts, grpc.Creds(creds))
 		slog.Info("gRPC bus starting with TLS", "addr", b.addr)

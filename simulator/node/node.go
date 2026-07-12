@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/premchandkpc/FlowRulZ/server/bridge"
 	"github.com/premchandkpc/FlowRulZ/server/pkg/transport"
@@ -30,25 +29,12 @@ type SimNode struct {
 	Invoker services.ServiceInvoker
 
 	// Execution state.
-	planCache   map[string][]byte // ruleID -> planBytes
-	stateStore  map[string]*ExecState
-	stateMu     sync.RWMutex
+	planCache map[string][]byte // ruleID -> planBytes
+	stateMu   sync.RWMutex
 
 	// Lifecycle.
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
-}
-
-// ExecState tracks execution state for a simulated execution.
-type ExecState struct {
-	ID        string
-	RuleID    string
-	Status    string
-	CtxBytes  []byte
-	Output    []byte
-	Error     string
-	CreatedAt time.Time
-	UpdatedAt time.Time
 }
 
 // Config configures a simulated node.
@@ -74,7 +60,6 @@ func New(cfg Config, f *fabric.Fabric, invoker services.ServiceInvoker) *SimNode
 		Fabric:    f,
 		Invoker:   invoker,
 		planCache: make(map[string][]byte),
-		stateStore: make(map[string]*ExecState),
 	}
 
 	return sim
@@ -228,8 +213,7 @@ func (s *SimNode) Snapshot() map[string]interface{} {
 	defer s.stateMu.RUnlock()
 
 	return map[string]interface{}{
-		"id":     s.ID,
-		"plans":  len(s.planCache),
-		"states": len(s.stateStore),
+		"id":    s.ID,
+		"plans": len(s.planCache),
 	}
 }

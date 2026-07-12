@@ -5,8 +5,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/premchandkpc/FlowRulZ/simulator/timeline"
 )
 
 type Result struct {
@@ -62,7 +60,6 @@ type ExecutionContext struct {
 	OnDone           func()
 
 	StateChanges []StateChange
-	Events       []timeline.Event
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -132,34 +129,23 @@ func (ec *ExecutionContext) Transition(to State, meta string) {
 }
 
 func (ec *ExecutionContext) MarkDone() {
-	ec.mu.Lock()
-	ec.Duration = time.Since(ec.CreatedAt)
-	prev := ec.state
-	ec.state = StateCompleted
-	ec.StateChanges = append(ec.StateChanges, StateChange{
-		From: prev,
-		To:   StateCompleted,
-		At:   time.Now(),
-		Meta: "execution completed",
-	})
-	ec.UpdatedAt = time.Now()
-	onDone := ec.OnDone
-	ec.mu.Unlock()
-	if onDone != nil {
-		onDone()
-	}
+	ec.markFinal(StateCompleted, "execution completed")
 }
 
 func (ec *ExecutionContext) MarkFailed(err error) {
+	ec.markFinal(StateFailed, err.Error())
+}
+
+func (ec *ExecutionContext) markFinal(to State, meta string) {
 	ec.mu.Lock()
 	ec.Duration = time.Since(ec.CreatedAt)
 	prev := ec.state
-	ec.state = StateFailed
+	ec.state = to
 	ec.StateChanges = append(ec.StateChanges, StateChange{
 		From: prev,
-		To:   StateFailed,
+		To:   to,
 		At:   time.Now(),
-		Meta: err.Error(),
+		Meta: meta,
 	})
 	ec.UpdatedAt = time.Now()
 	onDone := ec.OnDone

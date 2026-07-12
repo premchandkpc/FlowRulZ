@@ -297,11 +297,6 @@ func SimpleServices() *ServiceRegistry {
 	return r
 }
 
-// EnterpriseServices returns all 40+ services for Mode 2 (Enterprise).
-func EnterpriseServices() *ServiceRegistry {
-	return DefaultServices()
-}
-
 // ChaosServices returns services with high failure rates for Mode 3 (Chaos).
 func ChaosServices() *ServiceRegistry {
 	r := DefaultServices()

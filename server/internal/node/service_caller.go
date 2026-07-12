@@ -12,10 +12,12 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/premchandkpc/FlowRulZ/server/internal/common"
 	"github.com/premchandkpc/FlowRulZ/server/internal/registry"
 	"github.com/premchandkpc/FlowRulZ/server/internal/reliability"
 	pkgreliability "github.com/premchandkpc/FlowRulZ/server/pkg/reliability"
@@ -66,32 +68,30 @@ type tcpConnPool struct {
 	closeMu sync.Mutex
 }
 
+// defaultHTTPClient returns a shared HTTP client with standard transport settings.
+func defaultHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     90 * time.Second,
+		},
+	}
+}
+
 // NewServiceCaller creates a new ServiceCaller with default HTTP client.
 func NewServiceCaller() *ServiceCaller {
 	return &ServiceCaller{
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 10,
-				IdleConnTimeout:     90 * time.Second,
-			},
-		},
-		tcpConns: make(map[string]*tcpConnPool),
+		httpClient: defaultHTTPClient(),
+		tcpConns:   make(map[string]*tcpConnPool),
 	}
 }
 
 // NewServiceCallerWithTLS creates a new ServiceCaller with TLS for gRPC connections.
 func NewServiceCallerWithTLS(certFile, keyFile string) *ServiceCaller {
 	return &ServiceCaller{
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 10,
-				IdleConnTimeout:     90 * time.Second,
-			},
-		},
+		httpClient:  defaultHTTPClient(),
 		tcpConns:    make(map[string]*tcpConnPool),
 		tlsCertFile: certFile,
 		tlsKeyFile:  keyFile,
@@ -320,12 +320,8 @@ func isRetryableError(err error) bool {
 		"grpc connect",
 	}
 	for _, pattern := range retryable {
-		if len(errStr) >= len(pattern) {
-			for i := 0; i <= len(errStr)-len(pattern); i++ {
-				if errStr[i:i+len(pattern)] == pattern {
-					return true
-				}
-			}
+		if strings.Contains(errStr, pattern) {
+			return true
 		}
 	}
 	return false
@@ -499,13 +495,8 @@ func (sc *ServiceCaller) getGRPCConn(addr string) (*grpc.ClientConn, error) {
 		}
 		creds := credentials.NewTLS(&tls.Config{
 			Certificates: []tls.Certificate{cert},
-			CipherSuites: []uint16{
-				tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-				tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-				tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-			},
-			MinVersion: tls.VersionTLS12,
+			CipherSuites: common.TLSCipherSuites,
+			MinVersion:   tls.VersionTLS12,
 		})
 		opts = append(opts, grpc.WithTransportCredentials(creds))
 	} else {

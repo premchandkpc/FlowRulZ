@@ -162,6 +162,7 @@ func (e *Engine) Promote(id string, version uint64) error {
 		e.mu.Unlock()
 		return fmt.Errorf("version %d not found for rule %s", version, id)
 	}
+	e.saveRules()
 	e.mu.Unlock()
 
 	if e.AfterPromote != nil {

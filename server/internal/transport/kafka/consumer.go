@@ -147,6 +147,7 @@ func (kc *Consumer) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.
 		_, err := kc.handler(sess.Context(), msg.Value)
 		if err != nil {
 			slog.Error("kafka consumer handler error", "topic", kc.topic, "error", err)
+			continue
 		}
 		if kc.manualCommit {
 			sess.MarkMessage(msg, "")

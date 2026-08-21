@@ -54,6 +54,7 @@ Event-driven DAG execution engine. DSL → bytecode → Raft cluster → Rust VM
 
 | Doc | Description |
 |-----|-------------|
+| [Complete System Flow](complete-system-flow.md) | End-to-end trace: startup → registration → execution → cluster → errors |
 | [Architecture Overview](architecture.md) | System components, data flow, deployment model |
 | [VM Architecture](vm-architecture.md) | Rust VM internals — executor, memory, tracing |
 | [Bytecode Format](bytecode-format.md) | Instruction encoding, opcodes, execution plan structure |

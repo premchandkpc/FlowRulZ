@@ -121,10 +121,6 @@ func (m *Manager) Rebalance(aliveNodes []string, term uint64) []Assignment {
 	m.assignments = newAssignments
 	m.nodeParts = nodeParts
 
-	if len(aliveNodes) > 0 {
-		m.leaderID = aliveNodes[0]
-	}
-
 	assignments := make([]Assignment, m.numPartitions)
 	for i, nodeID := range m.assignments {
 		assignments[i] = Assignment{

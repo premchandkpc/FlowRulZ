@@ -1,5 +1,11 @@
 # Hexagonal Architecture Refactoring Plan
 
+> **ARCHIVED (2026-07-12):** This plan was not implemented. The target directories
+> (`internal/ports/`, `internal/core/`, `internal/adapters/`) were created and then
+> deleted as dead code (zero imports, never wired). The current architecture uses
+> `server/pkg/` interfaces + `internal/*/pkgsupport.go` adapter patterns.
+> See `architecture-overview.md` for current state.
+
 > Goal: Separate concerns properly with ports & adapters, single composition root,
 > loose coupling. Incremental — not a rewrite.
 

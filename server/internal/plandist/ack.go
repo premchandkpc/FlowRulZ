@@ -49,8 +49,12 @@ func (pd *PlanDistributor) WaitForAcks(ctx context.Context, ruleID string, versi
 				return nil
 			}
 		} else {
-			slog.Warn("plandist: no QuorumProvider configured, defaulting to quorum=1", "rule", ruleID, "version", version)
-			quorum = 1 // fallback: wait for at least one ack
+			// No QuorumProvider wired — this is a configuration bug, not a
+			// runtime condition. Silent under-quorum defaults cause split-brain
+			// plan activation: a rule version activates cluster-wide after
+			// receiving just 1 ack, when majority consensus was intended.
+			return fmt.Errorf("plandist: QuorumProvider not configured, cannot determine quorum (rule=%s v=%d); "+
+				"wire WithQuorumProvider in NodeBuilder or pass explicit quorum > 0", ruleID, version)
 		}
 	}
 	if quorum <= 0 {

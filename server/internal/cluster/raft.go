@@ -185,11 +185,10 @@ func (rc *RaftCluster) BootstrapCluster() error {
 	if rc.raft == nil {
 		return fmt.Errorf("raft not started")
 	}
-	hasState := true
-	if _, err := os.Stat(filepath.Join(rc.raftDir, "raft-log.db")); os.IsNotExist(err) {
-		hasState = false
-	}
-	if hasState {
+	existing, err := raft.HasExistingState(rc.logStore, rc.stable, rc.snapStore)
+	if err != nil {
+		slog.Warn("raft: checking existing state failed, proceeding with bootstrap", "error", err)
+	} else if existing {
 		slog.Info("raft cluster: existing state found, skipping bootstrap", "node_id", rc.nodeID)
 		return nil
 	}

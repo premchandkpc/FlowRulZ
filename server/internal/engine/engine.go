@@ -145,21 +145,29 @@ func (e *Engine) AddVersion(id, dsl string, plan []byte, version uint64) error {
 
 func (e *Engine) Promote(id string, version uint64) error {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	r, ok := e.rules[id]
 	if !ok {
+		e.mu.Unlock()
 		return fmt.Errorf("rule not found: %s", id)
 	}
+	var found bool
 	for i, v := range r.Versions {
 		if v.Version == version {
 			r.ActiveVersion = i
-			if e.AfterPromote != nil {
-				e.AfterPromote(id, version)
-			}
-			return nil
+			found = true
+			break
 		}
 	}
-	return fmt.Errorf("version %d not found for rule %s", version, id)
+	if !found {
+		e.mu.Unlock()
+		return fmt.Errorf("version %d not found for rule %s", version, id)
+	}
+	e.mu.Unlock()
+
+	if e.AfterPromote != nil {
+		e.AfterPromote(id, version)
+	}
+	return nil
 }
 
 func (e *Engine) Drain(id string, version uint64) error {

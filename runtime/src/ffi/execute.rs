@@ -375,8 +375,9 @@ pub unsafe extern "C" fn flowrulz_execute(
                     if rc != 0 {
                         Err(format!("caller returned {}", rc))
                     } else {
-                        resp_buf.truncate(resp_len);
-                        Ok(std::mem::take(resp_buf))
+                        let result = resp_buf[..resp_len].to_vec();
+                        resp_buf.clear();
+                        Ok(result)
                     }
                 })
             };
@@ -533,8 +534,9 @@ pub unsafe extern "C" fn flowrulz_execute_step(
                     if rc != 0 {
                         Err(format!("caller returned {}", rc))
                     } else {
-                        resp_buf.truncate(resp_len);
-                        Ok(std::mem::take(resp_buf))
+                        let result = resp_buf[..resp_len].to_vec();
+                        resp_buf.clear();
+                        Ok(result)
                     }
                 })
             };

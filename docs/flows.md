@@ -22,11 +22,11 @@ Announce on _flowrulz_members (cluster bus topic)
     ├── Gossip protocol propagates state to all nodes
     │
     ▼
-Leader election (every node runs independently)
-    ├── Read all alive entries from _flowrulz_members
-    ├── Sort by node_id ascending
-    ├── Lowest ID = leader
-    └── No Raft/Paxos — lowest-ID-alive via cluster bus gossip
+Leader election (Raft consensus)
+    ├── Raft TCP transport between cluster nodes
+    ├── NoopFSM — Raft used for leader election + term tracking only
+    ├── Control-plane state distributed via gRPC Cluster Bus (Kafka legacy fallback)
+    └── Fencing: Raft term embedded in PlanMessage, followers reject stale terms
     │
     ▼
 Periodic heartbeat

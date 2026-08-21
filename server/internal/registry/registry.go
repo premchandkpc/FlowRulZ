@@ -286,6 +286,12 @@ func init() {
 	localNodeIDValue.Store("")
 }
 
+// SetLocalNodeID sets the local node identifier for endpoint registration.
+// Must be called before any Register/RegisterInstance calls.
+func SetLocalNodeID(id string) {
+	localNodeIDValue.Store(id)
+}
+
 func localNodeID() string {
 	v, _ := localNodeIDValue.Load().(string)
 	return v

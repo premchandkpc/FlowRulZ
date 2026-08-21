@@ -114,7 +114,10 @@ func DefaultDependencies(cfg Config) Dependencies {
 		slog.Warn("execstate: init warning", "error", err)
 	}
 
-	// Saga tracker
+	// Saga tracker — created with a no-op compensator. The real compensator
+	// (which calls serviceCaller) is wired post-construction in configureSagaCompensator()
+	// because serviceCaller and Registry are created in NewNode() after this function returns.
+	// This is safe because saga compensators are only invoked during execution, not construction.
 	saga := reliability.NewSagaTrackerWithDir(func(svc, method string, body []byte) error {
 		return nil
 	}, execDir)
@@ -122,7 +125,11 @@ func DefaultDependencies(cfg Config) Dependencies {
 	// Raft
 	var raftCluster pkgcluster.ClusterMember
 	if cfg.RaftDir != "" && cfg.RaftPort > 0 {
-		raftBind := fmt.Sprintf("localhost:%d", cfg.RaftPort)
+		raftHost := cfg.AdvertiseHost()
+		if raftHost == "" || raftHost == "localhost" {
+			raftHost = "0.0.0.0"
+		}
+		raftBind := fmt.Sprintf("%s:%d", raftHost, cfg.RaftPort)
 		rc := cluster.NewRaftCluster(cfg.NodeID, cfg.RaftDir, raftBind)
 		raftCluster = cluster.NewClusterMember(rc)
 	}

@@ -1,6 +1,6 @@
 # Cluster Model
 
-FlowRulZ operates as a **single-leader cluster** with no Raft. The gRPC-based Cluster Bus provides peer-to-peer messaging; no Kafka, no ZK, no external dependencies.
+FlowRulZ operates as a **single-leader cluster** with Raft consensus for leader election. The gRPC-based Cluster Bus provides peer-to-peer messaging and is the default transport for control-plane events (plans, acks, membership). Kafka remains available as a legacy fallback when `FLOWRULZ_KAFKA_BROKERS` is explicitly set. No external coordination services (etcd, ZooKeeper) are required.
 
 ## Node Roles
 
@@ -104,19 +104,29 @@ This converges membership state across the cluster faster than heartbeat-only de
 
 ## Leader Election
 
-**Simple ordering — no Raft, no Paxos, no external dependency.**
+**Raft consensus with NoopFSM — used for leader election and term management only.**
+
+Raft is embedded via `hashicorp/raft` with BoltDB-backed log and stable stores. The FSM (`NoopFSM`) applies no state — Raft's purpose here is leader election and monotonic term tracking, not state replication. Control-plane state (partition assignments, plans) is distributed via gRPC Cluster Bus (default) or Kafka pub/sub (legacy fallback when `FLOWRULZ_KAFKA_BROKERS` set).
 
 ```
-Algorithm:
-1. Every node consumes `_flowrulz_members` topic
-2. Sort alive nodes by (ID, ascending)
-3. Lowest-ID node is leader
-4. If leader stops heartbeating → nodes detect absence (3x timeout)
-5. Next-lowest-ID node promotes itself to leader
-6. New leader publishes its leadership claim to `_flowrulz_members`
+Startup sequence:
+1. Node starts → NewRaftCluster(nodeID, raftDir, raftBind)
+2. RaftCluster.Start() → opens BoltStore log + stable, FileSnapshotStore, TCP transport
+3. If bootstrap node: BootstrapCluster() → adds self as sole voter
+4. If follower node: joinRaftCluster() → HTTP POST to seed's /cluster/join
+5. Raft leader election runs automatically (raft.NewRaft configures timeouts)
+6. SubscribeLeaderChanges() → ProdNode updates leadership state on change
 ```
 
-**Epoch-based fencing**: Each leader election increments a monotonic `term` number. The leader embeds its term in every `PlanMessage`. Followers reject plan activation from any term lower than their known current term. `PlanDistributor.SetTerm()` / `CurrentTerm()` manage the term atomically.
+**Raft configuration** (`cluster/raft.go`):
+- `HeartbeatTimeout`: 1s (default)
+- `ElectionTimeout`: 1s (default)
+- `SnapshotThreshold`: 8192 (default)
+- `MaxAppendEntries`: 64 (default)
+- Transport: TCP (`raft.NewTCPTransport`)
+- Snapshot: `raft.NewFileSnapshotStore` (retains 2)
+
+**Epoch-based fencing**: Raft term serves as the fencing token. The leader embeds its term in every `PlanMessage`. Followers reject plan activation from any term lower than their known current term. `PlanDistributor.SetTerm()` / `CurrentTerm()` manage the term atomically.
 
 **Term persistence**: Term and current leader ID are persisted to `cluster-term.json` in the exec state directory (`TermStore`). On restart, the node restores its known term to avoid accepting stale plans from a previous term.
 
@@ -124,14 +134,16 @@ Algorithm:
 
 **Fencing on heartbeat receive**: When a non-leader heartbeat carries a higher term, the current leader steps down immediately (`handleMembershipMessage` compares `hb.Term > CurrentTerm()`).
 
+**Multi-node enforcement**: `ProdNode.Start()` refuses to start if `Seeds` are configured without `RaftCluster` — multi-node deployments require Raft consensus.
+
 ```
-t=0  Node A starts → no leader → claims leadership → leader=A
-t=1  Node B starts → leader=A → follower=B  
-t=2  Node C starts → leader=A → follower=C
-t=5  Node A crashes → heartbeats stop
-t=8  Node B detects A dead → B is now lowest alive → claims leadership → leader=B, term++
-t=9  Node C detects A dead → sees leader=B → stays follower
-t=10 Node A restarts → sees leader=B → stays follower
+t=0  Node A starts → bootstrap=true → Raft elects A as leader (term=1)
+t=1  Node B starts → joins cluster via A's /cluster/join → Raft replicates membership
+t=2  Node C starts → joins cluster via A's /cluster/join
+t=5  Node A crashes → Raft detects leader loss → triggers new election
+t=6  Raft elects B as leader (term=2) → B begins plan distribution
+t=7  Node C sees B as leader → follows B
+t=10 Node A restarts → rejoins cluster → sees B as leader (term=2)
 ```
 
 ## Partition Ownership

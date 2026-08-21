@@ -23,6 +23,7 @@ import "C"
 
 import (
 	"fmt"
+	"sync"
 	"unsafe"
 )
 
@@ -36,7 +37,8 @@ func Compile(dsl string, ruleID string) ([]byte, error) {
 	outBuf := *outputBufPool.Get().(*[]byte)
 	defer outputBufPool.Put(&outBuf)
 	var outLen C.size_t
-	errBuf := make([]byte, 4096)
+	errBuf := *errBufPool.Get().(*[]byte)
+	defer errBufPool.Put(&errBuf)
 	var errLen C.size_t
 
 	rc := C.flowrulz_compile(
@@ -61,8 +63,16 @@ func Intern(s string) uint16 {
 	return uint16(C.flowrulz_intern((*C.uchar)(unsafe.Pointer(&b[0])), C.size_t(len(b))))
 }
 
+var internBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 256)
+		return &b
+	},
+}
+
 func InternLookup(id uint16) string {
-	buf := make([]byte, 256)
+	buf := *internBufPool.Get().(*[]byte)
+	defer internBufPool.Put(&buf)
 	var outLen C.size_t
 	C.flowrulz_intern_lookup(C.uint16_t(id), (*C.uchar)(unsafe.Pointer(&buf[0])), &outLen)
 	if int(outLen) > cap(buf) {

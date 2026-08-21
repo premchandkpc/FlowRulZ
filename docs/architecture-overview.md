@@ -1,49 +1,51 @@
 # Go Server Architecture
 
-> Last updated: 2026-07-06. Replaces the archived `restructure-plan-ARCHIVED.md`.
+> Last updated: 2026-07-12. Replaces the archived `restructure-plan-ARCHIVED.md`.
 
-## Package Hierarchy (Hexagonal)
+## Package Hierarchy
 
 ```
 cmd/flowrulz/              ← thin entry point, env→Config only
   │
-  └─ internal/bootstrap/   ← COMPOSITION ROOT: wires adapters → ports
+  └─ internal/bootstrap/   ← COMPOSITION ROOT: NodeBuilder.WithDefaults()
        │
-       ├─ internal/core/           ← DOMAIN LOGIC (zero adapter imports)
-       │    ├─ domain/             ← domain types (ExecutionID, ServiceInstance, etc.)
-       │    ├─ execution/          ← ExecutionEngine + IngressPipeline
-       │    ├─ clustering/         ← RaftLeadershipStrategy, SingleLeaderStrategy
-       │    └─ distribution/       ← PlanOrchestrator (publish → ack → activate)
-       │
-       ├─ internal/ports/          ← INTERFACES the core needs (zero internal imports)
-       │
-       ├─ internal/adapters/       ← IMPLEMENTATIONS of ports
-       │    ├─ invoker/            ← ProductionInvoker (HTTP/gRPC/TCP dispatch)
-       │    ├─ observability/      ← MetricsAdapter (wraps global singletons)
-       │    └─ cluster/            ← TransportAdapter (wraps ClusterNode)
-       │
-       └─ internal/node/           ← ProdNode: thin lifecycle orchestrator
+       ├─ internal/node/           ← ProdNode: central orchestrator
+       ├─ internal/engine/         ← Rule lifecycle, versioning
+       ├─ internal/scheduler/      ← Priority lanes, work stealing
+       ├─ internal/cluster/        ← gRPC Cluster Bus + RaftCluster
+       ├─ internal/membership/     ← Gossip, leader lease, heartbeat
+       ├─ internal/partition/      ← FNV-32a hashing, shard assignment
+       ├─ internal/plandist/       ← Plan distribution + ack protocol
+       ├─ internal/reliability/    ← DLQ, saga, circuit breaker, dedup
+       ├─ internal/registry/       ← Service registry via HTTP heartbeat
+       ├─ internal/execstate/      ← Execution state (MemoryStore, FileStore)
+       ├─ internal/compiler/       ← DSL compiler (local/remote)
+       ├─ internal/flow/           ← Flow DSL parser, analyzer, formatter
+       ├─ internal/transport/      ← Adapter layer (Kafka legacy + gRPC)
+       ├─ internal/observability/  ← OTel tracing, Prometheus metrics
+       └─ internal/plugins/        ← WASM plugin loader (wasmtime)
 ```
-
-**Golden rule:** `core/` never imports `adapters/`. `adapters/` import `ports/`.
-`bootstrap/` imports both. `cmd/` imports only `bootstrap/`.
 
 ---
 
-## `server/pkg/` — 8 Live Interface Packages
+## `server/pkg/` — 14 Interface Packages (DI contracts)
 
 | Package | Purpose | Key Types |
 |---|---|---|
 | `cluster` | Cluster membership & leadership | `ClusterMember`, `MemberID`, `LeadershipToken` |
+| `common` | Shared utilities (TLS, auth middleware) | `TLSCipherSuites`, `BearerAuth` |
+| `engine` | Engine interface | `Engine` |
 | `membership` | Node membership tracking | `Membership`, `MemberInfo` |
 | `node` | Node types only (no interface) | `ID`, `ExecuteRequest`, `ExecuteResponse` |
 | `partition` | Key-space shard management | `Partition`, `Partitioner` |
 | `plandist` | Plan distribution protocol | `PlanDistributor`, `PlanMessage` |
+| `registry` | Service registry interface | `ServiceRegistry`, `Endpoint` |
+| `reliability` | DLQ, saga, circuit breaker, dedup, rate limit | `DLQ`, `SagaOrchestrator`, `RateLimiter` |
 | `replyrouter` | Correlation ID routing | `ReplyRouter` |
 | `scheduler` | Priority lanes + scheduling | `Scheduler`, `Lane`, `Result` |
+| `store` | Execution state store | `Store`, `ExecutionState` |
 | `transport` | Event bus abstraction | `EventBus`, `Publisher`, `Subscriber` |
-
-**Deleted (2026-07-06):** `engine/`, `registry/`, `store/`, `reliability/`, `vm/` — Potemkin abstractions declared but never used as DI types. `node/Node` interface — dead (only referenced by a compile-time shim).
+| `vm` | VM interface | `VM`, `Plan` |
 
 ---
 
@@ -56,8 +58,6 @@ cmd/flowrulz/              ← thin entry point, env→Config only
 ### Execution
 - **`engine/`** — Rule lifecycle, versioning, lane routing, persistence
 - **`scheduler/`** — Priority lanes (fast/heavy/normal), work stealing
-- **`pipeline/`** — Ingress pipeline, enrichment, Gate/Map execution
-- **`flowengine/`** — Flow orchestration state machine
 
 ### Cluster & Distribution
 - **`cluster/`** — gRPC Cluster Bus (peer-to-peer), `RaftCluster`, `ClusterMember` adapter
@@ -72,7 +72,6 @@ cmd/flowrulz/              ← thin entry point, env→Config only
 - **`transport/kafka/`** — Kafka transport (legacy fallback, only active when `FLOWRULZ_KAFKA_BROKERS` set)
 
 ### Infrastructure
-- **`policy/`** — 9-level policy resolver (Platform → Runtime), deep-merge semantics, O(1) cached lookup
 - **`registry/`** — Service registry via HTTP heartbeat, `ServiceRegistry`, `Endpoint`
 - **`execstate/`** — In-memory execution state (`MemoryStore`), JSON file persistence (`FileStore`)
 - **`reliability/`** — DLQ, saga tracker, circuit breaker, dedup, rate limiter
@@ -111,73 +110,18 @@ The step API inverts control: Go drives the VM loop, resolving service calls bet
 | `internal/adapters/` (old) | 2026-07-06 | Zero imports, never wired |
 | `internal/ports/` (old) | 2026-07-06 | Zero imports, never used |
 | `bridge/vm_adapter.go` | 2026-07-06 | `NewBridgeVM` never called |
-| `pkg/engine/` | 2026-07-06 | Interface never used as DI type |
-| `pkg/registry/` | 2026-07-06 | Interface never used as DI type |
-| `pkg/store/` | 2026-07-06 | Interface never used as DI type |
-| `pkg/reliability/` | 2026-07-06 | Interfaces never used as DI types |
-| `pkg/vm/` | 2026-07-06 | Interface never used as DI type |
 | `pkg/node/Node` | 2026-07-06 | Interface dead; types kept |
-| `internal/engine/pkgsupport.go` | 2026-07-06 | Adapter for dead interface |
-| `internal/registry/pkgsupport.go` | 2026-07-06 | Adapter for dead interface |
-| `internal/execstate/pkgsupport.go` | 2026-07-06 | Adapter for dead interface |
-| `internal/reliability/pkgsupport.go` | 2026-07-06 | Adapter for dead interface |
-
-**Re-created (2026-07-06):** `internal/ports/`, `internal/core/`, `internal/adapters/` — new hexagonal packages with clean interfaces, zero internal imports, fully wired to existing code via adapters.
+| `internal/pipeline/` | pre-2026-07-06 | Removed, ingress logic moved to engine |
+| `internal/flowengine/` | pre-2026-07-06 | Removed, flow orchestration moved to flow/ |
+| `internal/policy/` | pre-2026-07-06 | Removed, policy resolver moved to flow/ |
 
 ---
 
 ## Cluster Model
 
-Single-leader, **no Raft/Paxos** for cluster state (per `cluster-model.md`). Leader elected by lowest-ID ordering of alive nodes. gRPC Cluster Bus for peer-to-peer communication. Kafka is a legacy fallback only.
+Single-leader, **Raft consensus for leader election** (`cluster/raft.go`, NoopFSM — no state replication through the Raft log). Leader elected by Raft; control-plane state distributed via gRPC Cluster Bus (default) or Kafka pub/sub (legacy fallback when `FLOWRULZ_KAFKA_BROKERS` set).
 
-Fencing token pattern: capture token → do work → re-validate token → publish. Skipping re-validation opens split-brain.
-
----
-
-## Hexagonal Architecture (New — incremental migration)
-
-New packages provide clean hexagonal architecture. Existing code continues to work.
-
-### New packages (`internal/`)
-
-| Package | File | Lines | Purpose |
-|---|---|---|---|
-| `ports/` | `ports.go` | 258 | 20+ interfaces, zero internal imports |
-| `core/domain/` | `types.go` | 68 | Pure domain types |
-| `core/execution/` | `engine.go` | 205 | VM execution engine |
-| `core/execution/` | `ingress.go` | 68 | Rate limit → dedup → exec → DLQ |
-| `core/clustering/` | `leadership.go` | 97 | Raft + SingleLeader strategies |
-| `core/distribution/` | `plan_orchestrator.go` | 52 | Publish → ack → activate |
-| `adapters/invoker/` | `invoker.go` | 234 | HTTP/gRPC/TCP dispatch |
-| `adapters/observability/` | `metrics.go` | 52 | Injectable metrics adapter |
-| `adapters/cluster/` | `transport.go` | 42 | Cluster transport adapter |
-
-### Existing code (still working, not deleted)
-
-| File | Status | Notes |
-|---|---|---|
-| `node/execution_engine.go` | ✅ **Replaced** | Delegates to `core/execution.Engine` via adapters |
-| `node/adapters.go` | **NEW** | Bridges `execstate.Store`, `reliability.SagaTracker`, etc. → `ports.*` |
-| `node/leadership.go` | Kept as-is | Uses `pkgcluster.LeadershipToken` — migration deferred |
-| `node/production_invoker.go` | Kept as-is | Uses `registry.ServiceInstance` — migration deferred |
-| `node/service_caller.go` | Kept as-is | Protocol dispatch — migration deferred |
-| `node/cluster_adapter.go` | Kept as-is | Wraps `ClusterNode` — migration deferred |
-
-### Migration path (incremental, per-file)
-
-1. **`node/leadership.go`** → `core/clustering/leadership.go`: Replace `pkgcluster.LeadershipToken` with `ports.LeadershipToken` across `prod.go`, `leadership.go`, `lifecycle.go`. Update `pkgcluster.ClusterMember` references to `ports.ClusterMember`.
-
-2. **`node/production_invoker.go`** + `service_caller.go` → `adapters/invoker/invoker.go`: Replace `registry.ServiceInstance` with `ports.ServiceInstance` across `registry/` package. Update `ServiceLookup` → `ports.ServiceLookup`.
-
-3. **`node/cluster_adapter.go`** → `adapters/cluster/transport.go`: Replace `ClusterTransport` interface with `ports.ClusterTransport`.
-
-4. **`node/prod.go`**: After all adapters migrated, remove old adapter code from `node/` and have `prod.go` import from `core/` + `adapters/` directly.
-
-### When to migrate each file
-
-- When touching a file for a feature/bug fix, migrate it then
-- Don't do a big-bang rewrite — incremental is safer
-- The new packages are available for any new code that imports from `ports/`
+Fencing token pattern: capture Raft term → do work → re-validate term → publish. Skipping re-validation opens split-brain.
 
 ---
 

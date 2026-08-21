@@ -79,6 +79,23 @@ var outputBufPool = sync.Pool{
 	},
 }
 
+var errBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 4096)
+		return &b
+	},
+}
+
+var stepOutputPool = sync.Pool{
+	New: func() any {
+		return new(StepOutput)
+	},
+}
+
+// MaxResponseSize is the maximum allowed response size from a service callback.
+// This must match the Rust FFI thread-local buffer size (RESP_BUF) in runtime/src/ffi/mod.rs.
+const MaxResponseSize = 65536
+
 type ServiceCaller func(svcID uint16, body []byte) ([]byte, error)
 
 type ExecContext struct {
@@ -118,7 +135,7 @@ func goServiceCaller(ctxID C.uint64_t, svcID C.uint16_t, bodyPtr *C.uchar, bodyL
 		return -1
 	}
 
-	if len(resp) > 65536 {
+	if len(resp) > MaxResponseSize {
 		return -1
 	}
 	copy((*[1 << 30]byte)(unsafe.Pointer(respPtr))[:len(resp):len(resp)], resp)

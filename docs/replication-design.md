@@ -10,29 +10,29 @@ FlowRulZ has three distinct classes of state, each with different replication re
 
 **What:** Partition assignments, plan versions, term/leader info, membership changes.
 
-**Current mechanism:** Distributed via Kafka pub/sub topics (`_flowrulz_plans`, `_flowrulz_partitions`, `_flowrulz_members`). Raft is used only for leader election (NoopFSM — no state goes through the Raft log).
+**Current mechanism:** Distributed via gRPC Cluster Bus (default) or Kafka pub/sub topics (`_flowrulz_plans`, `_flowrulz_partitions`, `_flowrulz_members`) when `FLOWRULZ_KAFKA_BROKERS` is set. Raft is used only for leader election (NoopFSM — no state goes through the Raft log).
 
 **Target consistency:** Eventual consistency is acceptable here.
 
-**Why Kafka + eventual consistency is acceptable:**
+**Why eventual consistency is acceptable:**
 - Partition assignments are idempotent (applying the same assignment twice is safe)
 - Plan versions are monotonic (only higher versions are accepted)
 - The consistency window is bounded by Kafka replication lag (~100ms in production)
 - The fencing token pattern prevents split-brain: stale leaders cannot publish
 
-**Consistency window:** < 200ms (Kafka replication lag + consumer poll interval).
+**Consistency window:** < 200ms via Kafka (replication lag + consumer poll interval); near-zero via gRPC Cluster Bus (direct peer-to-peer delivery).
 
 **Failure mode:** If the leader dies mid-publish, the new leader will re-rebalance after detecting the membership change. In-flight publishes from the old leader are harmless because:
 1. Fencing tokens prevent stale publishes (term mismatch)
 2. Assignments are idempotent
 3. Plans are version-stamped (only higher versions accepted)
 
-**Future improvement:** Move partition assignments and plan distribution through the Raft log instead of Kafka for stronger consistency. This would:
-- Eliminate the Kafka dependency for control-plane operations
+**Future improvement:** Move partition assignments and plan distribution through the Raft log instead of Kafka/Cluster Bus for stronger consistency. This would:
+- Eliminate the Kafka dependency entirely (Cluster Bus is already the default)
 - Provide linearizable reads for leadership-gated operations
 - Reduce the consistency window to 0
 
-**Trade-off:** Raft log replication adds latency (~50ms per round-trip) and requires all nodes to be reachable. Kafka provides better availability under network partitions.
+**Trade-off:** Raft log replication adds latency (~50ms per round-trip) and requires all nodes to be reachable. gRPC Cluster Bus provides better availability under network partitions.
 
 ### 2. Per-Execution State (execstate.Store)
 
@@ -97,9 +97,9 @@ txn.Commit()
 
 | Data Class | Replication | Consistency | Failure Mode | Future |
 |---|---|---|---|---|
-| Control-plane (partitions, plans) | Kafka pub/sub | Eventual (< 200ms) | Re-rebalance after leader election | Raft log |
+| Control-plane (partitions, plans) | gRPC Cluster Bus (Kafka legacy fallback) | Eventual (< 200ms) | Re-rebalance after leader election | Raft log |
 | Execution state | Local disk | None (ephemeral) | Lose in-flight work | Replicated store |
-| Message acknowledgment | Kafka offset commits | At-least-once | Replay + dedup | Kafka transactions |
+| Message acknowledgment | Consumer offset commits (Kafka legacy) | At-least-once | Replay + dedup | Kafka transactions |
 
 ## Liveness Model
 

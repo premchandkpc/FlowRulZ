@@ -44,8 +44,8 @@ Strong Rust/Go language split: Rust owns the hot path (compiler, VM, expression 
 ### 1. ~~`execnode.go` is a God object (1049 lines)~~
 **✅ RESOLVED** — `server/internal/execnode/` was deleted (11 files removed). Replaced by `server/internal/node/` (ProdNode, 13 files) + `server/internal/bootstrap/` (NodeBuilder.WithDefaults()). DI constructor delegates to `DefaultDependencies()`, all subsystems wired via `Dependencies` struct.
 
-### 2. Single-leader bottleneck
-Lowest-ID leader election. No formal consensus (no Raft/Paxos). Leader does all compilation, plan distribution, partition assignment.
+### 2. ~~Single-leader bottleneck~~
+**✅ MITIGATED** — Raft consensus for leader election (`cluster/raft.go`, NoopFSM). Leader does compilation, plan distribution, partition assignment. Raft provides split-brain protection via term-based fencing. Control-plane state still distributed via Kafka (not Raft log) — eventual consistency is acceptable for idempotent operations.
 
 ### 3. Fixed 64 partitions
 Cannot change partition count without data reshuffle. No consistent hashing with virtual nodes.

@@ -148,10 +148,7 @@ flowrulz/
 
 2. **Rust VM is a library, not a service.** The VM is a C library loaded via CGo. Every execution step crosses the FFI boundary (Go → C → Rust → C → Go). No persistent VM process. No shared memory. This is the single biggest performance bottleneck.
 
-3. **No consensus layer.** Single-leader election based on lowest node ID. No Raft, no etcd, no ZooKeeper. Leader crash means:
-   - All in-flight executions are lost (no state transfer)
-   - No compilation until a new leader is elected
-   - Split-brain is possible if `stopHb` fails
+3. **~~No consensus layer.~~** **✅ RESOLVED** — Raft consensus for leader election (`cluster/raft.go`, NoopFSM via `hashicorp/raft`). Multi-node deployments require Raft. Split-brain protection via Raft term fencing. Control-plane state distributed via gRPC Cluster Bus (default) or Kafka (legacy fallback) — eventual consistency is acceptable for idempotent operations.
 
 4. **~~Engine and Scheduler are independent, not integrated.~~** **✅ RESOLVED** — `Engine.ExecuteAll()` now routes through `scheduler.EnqueueAndWait()`. All execution goes through the priority lanes with work stealing.
 
@@ -333,12 +330,7 @@ pub struct ExecutionPlan {
 | Clock drift | No | `time.Now()` used for deadlines, heartbeats, rate limiting. |
 | Slow consumer | No | Kafka consumer has no backpressure mechanism. `ExecuteAll` blocks the consumer. |
 
-**Consensus:** There is none. Lowest-ID leader election is not consensus. It's a distributed systems anti-pattern. With 3 nodes:
-- Node 1 (ID=1) is leader
-- Node 1 gets partitioned
-- Nodes 2 and 3 see leader as dead
-- Node 2 (ID=2) becomes leader (both think they're leader)
-- Partition heals → two leaders
+**Consensus:** Raft consensus for leader election (`cluster/raft.go`, NoopFSM). Term-based fencing prevents split-brain: stale leaders cannot publish because followers reject plans from older terms. Control-plane state (partition assignments, plan versions) distributed via gRPC Cluster Bus (default) or Kafka (legacy fallback) with idempotent operations.
 
 ---
 
@@ -639,7 +631,7 @@ pub struct ExecutionPlan {
 | Requirement | Status | Gap |
 |-------------|--------|-----|
 | Security (TLS, mTLS, RBAC) | ❌ Critical gaps | No transport security, no authorization |
-| High availability (HA) | ❌ | No consensus, no state replication |
+| High availability (HA) | ⚠️ Partial | Raft leader election (NoopFSM). No state replication through Raft log. |
 | Disaster recovery (DR) | ❌ | No backups, no cross-region replication |
 | Audit logging | ❌ | No execution history, no API audit |
 | Multi-tenancy | ❌ | No tenant isolation, no rate limiting |
@@ -672,7 +664,7 @@ FlowRulZ has a genuinely novel core idea — compiling rule pipelines to bytecod
 
 However, the architecture had fundamental issues. Several have been addressed:
 
-1. **No consensus** — single-leader with no split-brain protection *(remaining)*
+1. ~~**No consensus** — single-leader with no split-brain protection~~ ✅ RESOLVED — Raft consensus for leader election (`cluster/raft.go`, NoopFSM)
 2. **No deterministic execution** — cannot replay workflows for debugging or recovery *(remaining)*
 3. **FFI-bound performance ceiling** — serialization round-trip per step limits throughput *(remaining)*
 4. ~~**God object architecture** — `ExecutionNode` wired everything~~ ✅ RESOLVED — replaced by `ProdNode` + `NodeBuilder` DI
@@ -687,7 +679,7 @@ However, the architecture had fundamental issues. Several have been addressed:
 | Rust Compiler | 8/10 | Stable |
 | Rust VM | 8/10 | Stable |
 | Go Scheduler | 7/10 | Improved (work stealing added) |
-| Distributed Systems | 3/10 | Critical gap |
+| Distributed Systems | 6/10 | Raft consensus implemented (NoopFSM), term fencing, Kafka pub/sub |
 | Storage | 4/10 | Starting (exec history persisted) |
 | Security | 2/10 | Critical gap |
 | Observability | 5/10 | Slight (structured logging added) |
@@ -712,7 +704,7 @@ However, the architecture had fundamental issues. Several have been addressed:
 
 | # | Fix | Effort | Status |
 |---|-----|--------|--------|
-| 1 | Add Raft consensus (embed etcd or use HashiCorp Raft) | 2 weeks | Pending |
+| 1 | ~~Add Raft consensus (embed etcd or use HashiCorp Raft)~~ | 2 weeks | ✅ Done (`cluster/raft.go`, NoopFSM, `hashicorp/raft`) |
 | 2 | Strip no-op opcodes from runtime bytecode | 2 days | Pending |
 | 3 | Add structured logging (zerolog/slog) | 2 days | ✅ Done (64 `log.Printf` → `slog`) |
 | 4 | Heartbeat + lease-based leader detection | 3 days | ✅ Done (`LeaderLease`, eviction) |
@@ -744,8 +736,8 @@ However, the architecture had fundamental issues. Several have been addressed:
 ┌───────────────────────┐
 │    Control Plane       │
 │  ┌─────────────────┐  │
-│  │  Raft Cluster    │  │  ← Replace single-leader
-│  │  (etcd or nats)  │  │
+│  │  Raft Cluster    │  │  ✅ Already implemented (NoopFSM)
+│  │  (leader elect.) │  │
 │  └────────┬────────┘  │
 │           │            │
 │  ┌────────▼────────┐  │
@@ -785,9 +777,9 @@ However, the architecture had fundamental issues. Several have been addressed:
 
 ### Overall Grade: **B-**
 
-Solid architectural foundation (Rust/Go split, bytecode compilation, arena memory). Above-average documentation and testing for a pre-1.0 project. But critical gaps in distributed systems (no consensus, no deterministic replay), security (no TLS), and production readiness (no audit trail, memory-only state) prevent an enterprise-grade rating.
+Solid architectural foundation (Rust/Go split, bytecode compilation, arena memory). Above-average documentation and testing for a pre-1.0 project. Raft consensus implemented for leader election (NoopFSM). Critical gaps remain in deterministic replay, security (no TLS), and production readiness (no audit trail, memory-only state) prevent an enterprise-grade rating.
 
-The concerns are fixable — none are fundamental design mistakes. The Rust VM is genuinely good. The bytecode format needs minimal changes. The Go data plane needs a significant refactoring of `ExecutionNode` and the addition of Raft consensus, but the individual pieces (scheduler, transport, engine) are well-structured enough to survive the refactoring.
+The concerns are fixable — none are fundamental design mistakes. The Rust VM is genuinely good. The bytecode format needs minimal changes. The Go data plane had a significant refactoring (execnode → ProdNode + NodeBuilder) and Raft consensus is now wired. The individual pieces (scheduler, transport, engine) are well-structured.
 
 **Most important recommendation:** Ship v0.1 as a single-node rules engine with excellent developer experience. Let 100 startups use it before you build the distributed version. Distributed systems are not something you get right on the first attempt.
 

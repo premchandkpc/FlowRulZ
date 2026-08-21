@@ -13,6 +13,7 @@ import "C"
 import (
 	"encoding/json"
 	"fmt"
+	"sync"
 	"unsafe"
 )
 
@@ -21,11 +22,19 @@ type ServiceEntry struct {
 	Name string `json:"name"`
 }
 
+var planBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 4096)
+		return &b
+	},
+}
+
 func PlanServices(plan []byte) ([]ServiceEntry, error) {
 	if len(plan) == 0 {
 		return nil, fmt.Errorf("plan services: empty plan")
 	}
-	outBuf := make([]byte, 4096)
+	outBuf := *planBufPool.Get().(*[]byte)
+	defer planBufPool.Put(&outBuf)
 	var outLen C.size_t
 	rc := C.flowrulz_plan_services(
 		(*C.uchar)(unsafe.Pointer(&plan[0])), C.size_t(len(plan)),

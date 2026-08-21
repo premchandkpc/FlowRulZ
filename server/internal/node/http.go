@@ -29,26 +29,29 @@ func (n *ProdNode) serveHTTP(ctx context.Context) {
 		Addr:              n.httpAddr,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1 MB
 	}
 
 	go func() {
 		if n.config.HasTLS() {
 			tlsCert, err := tls.LoadX509KeyPair(n.config.TLSCertFile, n.config.TLSKeyFile)
 			if err != nil {
-				slog.Error("TLS cert load failed, falling back to plaintext", "error", err)
-				n.httpServer.TLSConfig = nil
-			} else {
-				n.httpServer.TLSConfig = &tls.Config{
-					Certificates: []tls.Certificate{tlsCert},
-					CipherSuites: common.TLSCipherSuites,
-					MinVersion:   tls.VersionTLS12,
-				}
-				slog.Info("HTTP server started with TLS", "addr", n.httpAddr)
-				if err := n.httpServer.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
-					slog.Error("http server error", "error", err)
-				}
+				slog.Error("TLS cert load failed — refusing to start in plaintext", "error", err)
 				return
 			}
+			n.httpServer.TLSConfig = &tls.Config{
+				Certificates: []tls.Certificate{tlsCert},
+				CipherSuites: common.TLSCipherSuites,
+				MinVersion:   tls.VersionTLS12,
+			}
+			slog.Info("HTTP server started with TLS", "addr", n.httpAddr)
+			if err := n.httpServer.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+				slog.Error("http server error", "error", err)
+			}
+			return
 		}
 		slog.Info("HTTP server started (plaintext)", "addr", n.httpAddr)
 		if err := n.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {

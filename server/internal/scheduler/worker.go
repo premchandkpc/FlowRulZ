@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"container/list"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -150,6 +151,11 @@ func (tw *TimerWheel) tickOnce() {
 		tw.wg.Add(1)
 		go func(fn func()) {
 			defer tw.wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("timerwheel: callback panic", "panic", r)
+				}
+			}()
 			fn()
 		}(cb)
 	}

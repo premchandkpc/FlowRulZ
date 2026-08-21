@@ -236,6 +236,12 @@ func (d *DLQ) Replay(ctx context.Context, id string) error {
 	return nil
 }
 
+// ReplayAll attempts to replay all dead letter entries.
+// WARNING: If the process crashes during replay, entries that were cleared from
+// memory but not yet replayed will be lost. This is an acceptable trade-off because:
+// 1. The alternative (atomic remove-per-entry) introduces duplicate entry bugs
+// 2. Replay failures are rare in practice
+// 3. Entries are persisted to disk, so a full restart can reload them
 func (d *DLQ) ReplayAll(ctx context.Context) int {
 	d.mu.Lock()
 	entries := make([]*DeadLetterEntry, len(d.entries))
@@ -244,27 +250,30 @@ func (d *DLQ) ReplayAll(ctx context.Context) int {
 	fn := d.replayFn
 	d.mu.Unlock()
 
+	if fn == nil {
+		return 0
+	}
+
 	count := 0
 	for _, entry := range entries {
-		if fn != nil {
-			entry.RetryCount++
-			replayErr := func() (err error) {
-				defer func() {
-					if r := recover(); r != nil {
-						err = &replayPanicError{value: r}
-					}
-				}()
-				return fn(ctx, entry)
-			}()
-			if replayErr != nil {
-				if pe, ok := replayErr.(*replayPanicError); ok {
-					slog.Error("dlq: replay panic, re-queuing", "id", entry.ID, "panic", pe.value)
+		entry.RetryCount++
+		replayErr := func() (err error) {
+			defer func() {
+				if r := recover(); r != nil {
+					err = &replayPanicError{value: r}
 				}
-				_ = d.Send(entry)
-				continue
+			}()
+			return fn(ctx, entry)
+		}()
+		if replayErr != nil {
+			if pe, ok := replayErr.(*replayPanicError); ok {
+				slog.Error("dlq: replay panic, re-queuing", "id", entry.ID, "panic", pe.value)
 			}
-			count++
+			_ = d.Send(entry)
+			continue
 		}
+		d.removePersisted(entry.ID)
+		count++
 	}
 	return count
 }

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/premchandkpc/FlowRulZ/server/internal/agent"
 	"github.com/premchandkpc/FlowRulZ/server/internal/cluster"
 )
 
@@ -65,20 +66,34 @@ type Config struct {
 
 	// Topics
 	Topic string
+
+	// Agent pool configuration
+	AgentMinAgents   int
+	AgentMaxAgents   int
+	AgentQueueSize   int
+	AgentExecTimeout time.Duration
+	AgentHealthCheck time.Duration
 }
 
 func DefaultConfig() *Config {
+	homeDir, _ := os.UserHomeDir()
+	persistRoot := filepath.Join(homeDir, ".flowrulz")
 	return &Config{
-		NodeID:        DefaultNodeID,
-		HTTPAddr:      DefaultHTTPAddr,
-		GRPCAddr:      DefaultGRPCAddr,
-		TLSCertFile:   os.Getenv("FLOWRULZ_TLS_CERT"),
-		TLSKeyFile:    os.Getenv("FLOWRULZ_TLS_KEY"),
-		RaftPort:      cluster.DefaultRaftPort,
-		RaftDir:       filepath.Join(os.TempDir(), "flowrulz-raft"),
-		RaftBootstrap: false,
-		Topic:         DefaultTopic,
-		KafkaGroupID:  DefaultGroupID,
+		NodeID:          DefaultNodeID,
+		HTTPAddr:        DefaultHTTPAddr,
+		GRPCAddr:        DefaultGRPCAddr,
+		TLSCertFile:     os.Getenv("FLOWRULZ_TLS_CERT"),
+		TLSKeyFile:      os.Getenv("FLOWRULZ_TLS_KEY"),
+		RaftPort:        cluster.DefaultRaftPort,
+		RaftDir:         filepath.Join(persistRoot, "raft"),
+		RaftBootstrap:   false,
+		Topic:           DefaultTopic,
+		KafkaGroupID:    DefaultGroupID,
+		AgentMinAgents:  4,
+		AgentMaxAgents:  32,
+		AgentQueueSize:  10000,
+		AgentExecTimeout: 60 * time.Second,
+		AgentHealthCheck: 5 * time.Second,
 	}
 }
 
@@ -113,6 +128,16 @@ func (c *Config) ReplyRouterCleanupInterval() time.Duration {
 
 func (c *Config) ReplyRouterMaxPending() int {
 	return defaultReplyRouterMaxPending
+}
+
+func (c *Config) AgentPoolConfig() agent.PoolConfig {
+	return agent.PoolConfig{
+		MinAgents:   c.AgentMinAgents,
+		MaxAgents:   c.AgentMaxAgents,
+		QueueSize:   c.AgentQueueSize,
+		ExecTimeout: c.AgentExecTimeout,
+		HealthCheck: c.AgentHealthCheck,
+	}
 }
 
 func (c *Config) DedupCapacity() int {

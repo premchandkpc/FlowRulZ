@@ -56,6 +56,7 @@ func (n *ProdNode) Start(ctx context.Context) error
 
 **Flow:**
 
+0. **Multi-node guard:** If `Seeds` is non-empty AND `RaftCluster` is nil → returns error immediately ("multi-node deployment requires Raft — set RaftDir and RaftPort, or remove Seeds config"). This prevents misconfigured multi-node clusters from running without consensus.
 1. Builds Kafka config from `n.config`.
 2. Calls `startCluster(ctx)` — initializes gossip if `ClusterNode` is non-nil.
 3. Calls `startConsumers(ctx, handler, kafkaCfg)` — creates and starts 5 consumers (input, membership, plan, ack, partition).
@@ -67,8 +68,9 @@ func (n *ProdNode) Start(ctx context.Context) error
 
 **Edge Cases:**
 
-- Starts in a fixed order with no rollback on partial failure. If one subsystem fails to start, subsequent subsystems still start.
-- Always returns `nil` — errors are logged, not propagated.
+- Returns error (not nil) if Seeds configured without RaftCluster — fail-loud, not silent misconfiguration.
+- After the Seeds/RaftCluster guard, starts in a fixed order with no rollback on partial failure. If one subsystem fails to start, subsequent subsystems still start.
+- Raft start failure is logged, not fatal — node proceeds in degraded (single-node) mode.
 
 ---
 

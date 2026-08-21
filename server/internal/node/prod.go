@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/premchandkpc/FlowRulZ/server/internal/admin"
+	"github.com/premchandkpc/FlowRulZ/server/internal/agent"
 	"github.com/premchandkpc/FlowRulZ/server/internal/cluster"
 	"github.com/premchandkpc/FlowRulZ/server/internal/engine"
 	"github.com/premchandkpc/FlowRulZ/server/internal/execstate"
@@ -80,6 +81,7 @@ type ProdNode struct {
 	AdminSrv     *admin.Server
 	Metrics      *observability.MetricsCollector
 	OtelExporter *observability.SpanExporter
+	AgentPool    *agent.AgentPool
 
 	// Unexported internals
 	httpServer      *http.Server
@@ -135,10 +137,16 @@ func NewNode(cfg Config, deps Dependencies) *ProdNode {
 
 	n.Execs = NewExecRegistry()
 
+	// Set the local node ID for registry endpoint registration.
+	registry.SetLocalNodeID(cfg.NodeID)
+
 	n.Registry.SetHeartbeatTimeout(cfg.RegistryHeartbeatTimeout())
 
 	n.configureEngineHooks()
 	n.configureSagaCompensator()
+
+	// Agent pool for incoming message handling
+	n.AgentPool = agent.NewPool(cfg.AgentPoolConfig())
 
 	// Plugins
 	if cfg.PluginDir != "" {
@@ -264,6 +272,12 @@ func (n *ProdNode) Start(ctx context.Context) error {
 	n.startOTel(ctx)
 	n.serveHTTP(ctx)
 
+	// Start agent pool for incoming message handling
+	if err := n.AgentPool.Start(ctx); err != nil {
+		slog.Error("agent pool start failed", "error", err)
+		return fmt.Errorf("agent pool: %w", err)
+	}
+
 	slog.Info("prodnode started", "node_id", n.nodeID)
 	return nil
 }
@@ -272,6 +286,11 @@ func (n *ProdNode) Shutdown(ctx context.Context) error {
 	slog.Info("shutdown: starting", "node_id", n.nodeID)
 
 	n.Execs.CancelAll()
+
+	// Stop agent pool first to drain pending tasks
+	if n.AgentPool != nil {
+		n.AgentPool.Stop()
+	}
 
 	n.mu.Lock()
 	consumers := n.consumers

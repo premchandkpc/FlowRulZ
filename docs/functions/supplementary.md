@@ -306,7 +306,7 @@ Marshals `AckMessage` → sends via ack producer with key `ruleID:version`.
 
 **Edge Cases:**
 - Single node (no followers) → logs info, returns nil immediately (nothing to wait for).
-- No `QuorumProvider` configured → logs warning, defaults to quorum=1 (may timeout if nobody sends acks).
+- No `QuorumProvider` configured → returns error immediately (configuration bug, not runtime condition). Silent under-quorum defaults cause split-brain plan activation. Fix: wire `WithQuorumProvider` in `NodeBuilder` or pass explicit `quorum > 0`.
 - Timeout → error with received/expected count.
 - Quorum reached → return nil.
 

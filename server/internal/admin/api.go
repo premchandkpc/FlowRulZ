@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"runtime"
 	"strconv"
@@ -90,6 +91,15 @@ func (s *Server) RegisterExtended(nodeID string, schedulerSnapshot func() interf
 	s.mux.HandleFunc("GET /scheduler/snapshot", s.auth(s.rateLimit(s.getSchedulerSnapshot)))
 	s.mux.HandleFunc("POST /recovery/trigger", s.auth(s.rateLimit(s.triggerRecovery)))
 	s.mux.HandleFunc("GET /node/info", s.auth(s.rateLimit(s.getNodeInfo)))
+}
+
+// RegisterPprof registers profiling endpoints behind auth.
+func (s *Server) RegisterPprof() {
+	s.mux.HandleFunc("GET /debug/pprof/", s.auth(s.rateLimit(s.pprofIndex)))
+	s.mux.HandleFunc("GET /debug/pprof/cmdline", s.auth(s.rateLimit(s.pprofCmdline)))
+	s.mux.HandleFunc("GET /debug/pprof/profile", s.auth(s.rateLimit(s.pprofProfile)))
+	s.mux.HandleFunc("GET /debug/pprof/symbol", s.auth(s.rateLimit(s.pprofSymbol)))
+	s.mux.HandleFunc("GET /debug/pprof/trace", s.auth(s.rateLimit(s.pprofTrace)))
 }
 
 func (s *Server) Handler() http.Handler {
@@ -377,4 +387,24 @@ func (s *Server) getNodeInfo(w http.ResponseWriter, r *http.Request) {
 		"go_version": runtime.Version(),
 		"goroutines": runtime.NumGoroutine(),
 	})
+}
+
+func (s *Server) pprofIndex(w http.ResponseWriter, r *http.Request) {
+	pprof.Index(w, r)
+}
+
+func (s *Server) pprofCmdline(w http.ResponseWriter, r *http.Request) {
+	pprof.Cmdline(w, r)
+}
+
+func (s *Server) pprofProfile(w http.ResponseWriter, r *http.Request) {
+	pprof.Profile(w, r)
+}
+
+func (s *Server) pprofSymbol(w http.ResponseWriter, r *http.Request) {
+	pprof.Symbol(w, r)
+}
+
+func (s *Server) pprofTrace(w http.ResponseWriter, r *http.Request) {
+	pprof.Trace(w, r)
 }

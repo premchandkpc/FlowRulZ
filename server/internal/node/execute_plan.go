@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/premchandkpc/FlowRulZ/server/bridge"
+	"github.com/premchandkpc/FlowRulZ/server/internal/agent"
 	"github.com/premchandkpc/FlowRulZ/server/internal/execstate"
 	"github.com/premchandkpc/FlowRulZ/server/internal/observability"
 	"github.com/premchandkpc/FlowRulZ/server/internal/reliability"
@@ -246,24 +247,33 @@ func (n *ProdNode) handleIncomingMessage(ctx context.Context, msg []byte) ([]byt
 		return nil, nil
 	}
 
-	execCtx, execCancel := context.WithTimeout(ctx, defaultExecTimeout)
-	defer execCancel()
-
-	results, err := n.executeAll(execCtx, msg)
+	// Submit to agent pool for stateless execution
+	result, err := n.AgentPool.SubmitAndWait(ctx, &agent.Task{
+		ID:   msgIDStr,
+		Body: msg,
+		Execute: func(taskCtx context.Context, task *agent.Task) ([]byte, error) {
+			results, execErr := n.executeAll(taskCtx, task.Body)
+			if execErr != nil {
+				return nil, execErr
+			}
+			if len(results) == 0 {
+				return nil, nil
+			}
+			return results[0], nil
+		},
+	})
 	if err != nil {
 		observability.RecordError("exec")
 		n.DLQ.Send(&reliability.DeadLetterEntry{
-			ID:    "exec-error",
+			ID:    common.HashBody(msg),
 			Body:  msg,
 			Error: err.Error(),
 		})
 		return nil, err
 	}
-	if len(results) == 0 {
-		return nil, nil
-	}
+
 	observability.RecordExec("msg")
-	return results[0], nil
+	return result, nil
 }
 
 func (n *ProdNode) callService(ctx context.Context, svcName, method string, body []byte, timeoutMs uint64) ([]byte, error) {

@@ -54,7 +54,8 @@ func InitContext(body []byte) ([]byte, error) {
 	outBuf := *outputBufPool.Get().(*[]byte)
 	defer outputBufPool.Put(&outBuf)
 	var outLen C.size_t
-	errBuf := make([]byte, 4096)
+	errBuf := *errBufPool.Get().(*[]byte)
+	defer errBufPool.Put(&errBuf)
 	var errLen C.size_t
 
 	var bodyPtr *C.uchar
@@ -118,7 +119,8 @@ func Execute(plan []byte, body []byte, caller ServiceCaller, ctx *ExecContext) (
 	outBuf := *outputBufPool.Get().(*[]byte)
 	defer outputBufPool.Put(&outBuf)
 	var outLen C.size_t
-	errBuf := make([]byte, 4096)
+	errBuf := *errBufPool.Get().(*[]byte)
+	defer errBufPool.Put(&errBuf)
 	var errLen C.size_t
 
 	var bodyPtr *C.uchar
@@ -184,7 +186,8 @@ func ExecuteStep(plan, ctxBytes, respBytes []byte, caller ServiceCaller) (*StepO
 	outBuf := *outputBufPool.Get().(*[]byte)
 	defer outputBufPool.Put(&outBuf)
 	var outLen C.size_t
-	errBuf := make([]byte, 4096)
+	errBuf := *errBufPool.Get().(*[]byte)
+	defer errBufPool.Put(&errBuf)
 	var errLen C.size_t
 	var pendingSvcID C.uint16_t
 	pendingBodyBuf := *outputBufPool.Get().(*[]byte)
@@ -210,14 +213,13 @@ func ExecuteStep(plan, ctxBytes, respBytes []byte, caller ServiceCaller) (*StepO
 		(*C.uchar)(unsafe.Pointer(&ctxOutBuf[0])), C.size_t(cap(ctxOutBuf)), &ctxOutLen,
 	)
 
-	out := &StepOutput{
-		Result:      StepResult(rc),
-		Output:      copyBytes(outBuf, int(outLen)),
-		PendingSvc:  uint16(pendingSvcID),
-		PendingBody: copyBytes(pendingBodyBuf, int(pendingBodyLen)),
-		TimeoutMs:   uint64(pendingTimeoutMs),
-		CtxBytes:    copyBytes(ctxOutBuf, int(ctxOutLen)),
-	}
+	out := stepOutputPool.Get().(*StepOutput)
+	out.Result = StepResult(rc)
+	out.Output = copyBytes(outBuf, int(outLen))
+	out.PendingSvc = uint16(pendingSvcID)
+	out.PendingBody = copyBytes(pendingBodyBuf, int(pendingBodyLen))
+	out.TimeoutMs = uint64(pendingTimeoutMs)
+	out.CtxBytes = copyBytes(ctxOutBuf, int(ctxOutLen))
 
 	if rc == -8 || rc == -1 {
 		out.Error = string(errBuf[:errLen])
@@ -231,4 +233,21 @@ func (o *StepOutput) DelayMs() uint64 {
 		return 0
 	}
 	return binary.LittleEndian.Uint64(o.PendingBody[:8])
+}
+
+// Reset clears the StepOutput for reuse. Call Release() to return to pool.
+func (o *StepOutput) Reset() {
+	o.Result = 0
+	o.Output = o.Output[:0]
+	o.Error = ""
+	o.PendingSvc = 0
+	o.PendingBody = o.PendingBody[:0]
+	o.TimeoutMs = 0
+	o.CtxBytes = o.CtxBytes[:0]
+}
+
+// Release returns the StepOutput to the pool. Must not be used after this call.
+func (o *StepOutput) Release() {
+	o.Reset()
+	stepOutputPool.Put(o)
 }

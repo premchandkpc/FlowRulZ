@@ -24,7 +24,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/metadata"
 )
 
 var (
@@ -52,12 +51,14 @@ func TraceIDFromContext(ctx context.Context) string {
 
 // ServiceCaller handles protocol-aware service calls.
 type ServiceCaller struct {
-	httpClient  *http.Client
-	grpcConns   sync.Map // map[string]*grpc.ClientConn
-	tcpConns    map[string]*tcpConnPool
-	tcpConnsMu  sync.Mutex
-	tlsCertFile string
-	tlsKeyFile  string
+	httpClient      *http.Client
+	grpcConns       sync.Map // map[string]*grpc.ClientConn
+	tcpConns        map[string]*tcpConnPool
+	tcpConnsMu      sync.Mutex
+	tlsCertFile     string
+	tlsKeyFile      string
+	maxBodyBytes    int64
+	maxResponseBytes int64
 }
 
 type tcpConnPool struct {
@@ -83,18 +84,22 @@ func defaultHTTPClient() *http.Client {
 // NewServiceCaller creates a new ServiceCaller with default HTTP client.
 func NewServiceCaller() *ServiceCaller {
 	return &ServiceCaller{
-		httpClient: defaultHTTPClient(),
-		tcpConns:   make(map[string]*tcpConnPool),
+		httpClient:       defaultHTTPClient(),
+		tcpConns:         make(map[string]*tcpConnPool),
+		maxBodyBytes:     10 * 1024 * 1024, // 10 MB
+		maxResponseBytes: 10 * 1024 * 1024, // 10 MB
 	}
 }
 
 // NewServiceCallerWithTLS creates a new ServiceCaller with TLS for gRPC connections.
 func NewServiceCallerWithTLS(certFile, keyFile string) *ServiceCaller {
 	return &ServiceCaller{
-		httpClient:  defaultHTTPClient(),
-		tcpConns:    make(map[string]*tcpConnPool),
-		tlsCertFile: certFile,
-		tlsKeyFile:  keyFile,
+		httpClient:       defaultHTTPClient(),
+		tcpConns:         make(map[string]*tcpConnPool),
+		tlsCertFile:      certFile,
+		tlsKeyFile:       keyFile,
+		maxBodyBytes:     10 * 1024 * 1024, // 10 MB
+		maxResponseBytes: 10 * 1024 * 1024, // 10 MB
 	}
 }
 
@@ -368,7 +373,7 @@ func (sc *ServiceCaller) callHTTP(
 		return nil, fmt.Errorf("http status %d", resp.StatusCode)
 	}
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, sc.maxResponseBytes))
 	if err != nil {
 		cb.Failure()
 		return nil, fmt.Errorf("http read: %w", err)
@@ -390,22 +395,15 @@ func (sc *ServiceCaller) callGRPC(
 ) ([]byte, error) {
 	addr := fmt.Sprintf("%s:%d", inst.Endpoint.Address, inst.Endpoint.Port)
 
-	conn, err := sc.getGRPCConn(addr)
-	if err != nil {
-		cb.Failure()
-		sc.evictGRPCConn(addr)
-		return nil, fmt.Errorf("grpc connect: %w", err)
+	// Validate inputs before opening any connections
+	if err := validateServiceName(inst.Name); err != nil {
+		return nil, err
+	}
+	if err := validateMethodName(method); err != nil {
+		return nil, err
 	}
 
-	// Propagate trace ID via gRPC metadata
-	md := metadata.NewOutgoingContext(ctx, metadata.New(map[string]string{
-		"x-trace-id":     TraceIDFromContext(ctx),
-		"x-service-name": inst.Name,
-		"x-method":       method,
-	}))
-	_ = conn
-	_ = md
-
+	// Don't open a connection for unimplemented transport
 	return nil, fmt.Errorf("grpc transport: not implemented for service %s method %s at %s — configure generated proto client or use HTTP protocol", inst.Name, method, addr)
 }
 
@@ -460,7 +458,7 @@ func (sc *ServiceCaller) callTCP(
 	}
 	respLen := binary.BigEndian.Uint32(lenBuf)
 
-	if respLen > 10*1024*1024 { // 10MB max
+	if respLen > uint32(sc.maxResponseBytes) {
 		conn.Close()
 		cb.Failure()
 		return nil, fmt.Errorf("tcp response too large: %d bytes", respLen)
@@ -522,7 +520,7 @@ func (sc *ServiceCaller) evictGRPCConn(addr string) {
 	}
 }
 
-// Close closes all gRPC connections and TCP pools.
+// Close closes all gRPC connections, TCP pools, and the HTTP client transport.
 func (sc *ServiceCaller) Close() {
 	sc.grpcConns.Range(func(key, value any) bool {
 		value.(*grpc.ClientConn).Close()
@@ -536,4 +534,9 @@ func (sc *ServiceCaller) Close() {
 		delete(sc.tcpConns, addr)
 	}
 	sc.tcpConnsMu.Unlock()
+
+	// Close idle HTTP connections
+	if sc.httpClient != nil {
+		sc.httpClient.CloseIdleConnections()
+	}
 }

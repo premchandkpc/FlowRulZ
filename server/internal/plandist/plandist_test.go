@@ -246,7 +246,7 @@ func TestQuorumZeroNoProvider(t *testing.T) {
 	pd := New("leader")
 	err := pd.WaitForAcks(context.Background(), "rule-1", 1, 0, 100*time.Millisecond)
 	if err == nil {
-		t.Fatal("expected timeout (fallback quorum=1 > acks=0)")
+		t.Fatal("expected error when no QuorumProvider configured")
 	}
 }
 

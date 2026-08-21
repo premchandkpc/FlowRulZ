@@ -315,3 +315,260 @@ The VM has `defer recover()` — panics write error to `ResultCh`, callers never
 ### Work Stealing
 
 When a lane is idle, workers steal from other lanes' queues. This prevents starvation and improves CPU utilization across cores.
+
+## Complete Execution Walkthrough
+
+### Step-by-Step: `n:validate t500 | g:status==ok n:process f:dlq`
+
+```
+1. VM reads instruction 0: Next(service_id=0, timeout=500)
+2. VM looks up service_id=0 in ServiceTable → "validate"
+3. VM emits StepPending { svc_id: 0, body: <original_payload> }
+4. Go bridge receives pending
+5. Go bridge looks up "validate" in service registry → HTTP endpoint
+6. Go bridge calls HTTP POST with body, 500ms timeout
+7. Go bridge receives response
+8. Go bridge feeds response back into VM
+9. VM stores response as new body
+10. VM advances to instruction 1
+
+11. VM reads instruction 1: Gate(field="status", op=Eq, value="ok")
+12. VM extracts "status" from body using JMESPath
+13. VM compares status == "ok"
+14. If TRUE: VM advances to instruction 2 (ip += 1)
+15. If FALSE: VM skips instruction 2 (ip += 2)
+
+16. VM reads instruction 2: Next(service_id=1, timeout=0)
+17. VM calls "process" service
+18. VM continues to instruction 3
+
+19. VM reads instruction 3: Drop (or whatever follows)
+20. Execution complete
+```
+
+### Step-by-Step: `p:fraud,inventory | c | n:fulfill`
+
+```
+1. VM reads Parallel(count=2, first_svc=0)
+2. VM emits StepPending for svc_id=0 ("fraud")
+3. VM emits StepPending for svc_id=1 ("inventory")
+4. Go bridge calls both concurrently
+5. Results arrive (any order) → stored in ExecutionContext.outputs
+
+6. VM reads Collect
+7. VM merges outputs into array: [fraud_result, inventory_result]
+8. Array becomes new body
+
+9. VM reads Next(service_id=2, timeout=0)
+10. VM calls "fulfill" with merged array as input
+```
+
+### Step-by-Step: `dag:{a:[],b:[a],c:[a,b]}`
+
+```
+1. VM reads Dag(dag_table_id=0)
+2. VM loads DAGTable from plan
+3. VM topological sorts: layers = [[0], [1], [2]]
+4. VM executes Layer 0: node "a" (no parents)
+   → emit StepPending for "a"
+   → wait for response
+5. VM executes Layer 1: node "b" (parent: a)
+   → emit StepPending for "b" with "a"'s result as input
+   → wait for response
+6. VM executes Layer 2: node "c" (parents: a, b)
+   → emit StepPending for "c" with merged input
+   → wait for response
+7. VM applies merge strategy to combine results
+```
+
+## Error Propagation
+
+### VM Error Types
+
+| Error | Bytecode | Description |
+|-------|----------|-------------|
+| `InvalidOpcode` | any | Unknown instruction byte |
+| `OutOfBounds` | any | IP exceeds instruction count |
+| `SchemaMismatch` | TypeGuard | Payload doesn't match schema |
+| `ServiceNotFound` | Next/Async/Emit | Unknown service ID |
+| `Timeout` | any | Deadline exceeded |
+| `Serialization` | Map | JSON serialization failed |
+| `GateEvalError` | Gate | Field not found or type mismatch |
+
+### Error Flow
+
+```
+VM error
+  → StepFailed { error: "...", ip: N }
+  → Go bridge receives failure
+  → Go bridge checks for f: fallback
+  → If fallback exists: route to fallback service
+  → If no fallback: check onError handler
+  → If no handler: write error to ResultCh
+  → Caller receives error
+```
+
+### Panic Safety
+
+The VM has `defer recover()` at the execution boundary:
+```go
+func execTask(ctx *ExecutionContext) (Result, error) {
+    defer func() {
+        if r := recover(); r != nil {
+            // Write panic to result channel
+            resultCh <- Result{Error: fmt.Sprintf("panic: %v", r)}
+        }
+    }()
+    // ... VM execution
+}
+```
+
+This means:
+- Panics in Rust VM code write error to `ResultCh`
+- Callers never hang waiting for a response
+- The Go process never crashes from a VM panic
+
+## Memory Layout
+
+### Execution Plan (in memory)
+
+```
+ExecutionPlan {
+    rule_id: String (heap)
+    instructions: Vec<Instruction> (heap, 8 bytes each)
+    const_pool: ConstantPool {
+        strings: Vec<String> (heap)
+    }
+    services: ServiceTable {
+        names: Vec<String> (heap)
+    }
+    dag_tables: Vec<DAGTable> (heap)
+    retry_configs: Vec<RetryConfig> (heap)
+    chunk_configs: Vec<ChunkConfig> (heap)
+    schema: Option<Schema> (heap)
+}
+```
+
+### ExecutionContext (per-execution)
+
+```
+ExecutionContext {
+    event: Event {
+        id: String (heap)
+        topic: String (heap)
+        payload: Vec<u8> (heap)
+        headers: HashMap (heap)
+        metadata: EventMetadata (stack)
+    }
+    body: Vec<u8> (heap) ← working payload
+    variables: HashMap<String, Vec<u8>> (heap)
+    outputs: HashMap<String, Vec<u8>> (heap) ← service call results
+    headers: HashMap<String, String> (heap)
+    ip: usize (stack)
+    failed: bool (stack)
+    errors: Vec<String> (heap)
+    hop_count: u16 (stack)
+    retry_count: u32 (stack)
+    deadline_ms: u64 (stack)
+}
+```
+
+### Arena Allocator Layout
+
+```
+Arena {
+    blocks: Vec<Block> (heap)
+        Block 0: [0..65535] bytes (heap)
+        Block 1: [0..65535] bytes (heap)
+        ...
+    current: usize (stack) ← bump pointer
+}
+```
+
+Allocation:
+```rust
+fn alloc(&mut self, size: usize) -> *mut u8 {
+    if self.current + size > BLOCK_SIZE {
+        self.new_block();
+    }
+    let ptr = self.blocks.last().unwrap().as_ptr().add(self.current);
+    self.current += size;
+    ptr
+}
+```
+
+Deallocation: drop entire arena at once (O(1)).
+
+## Tracing Integration
+
+### Span Lifecycle
+
+```
+VM starts execution
+  → SpanRingBuffer.push(Span::start("exec", trace_id))
+  → Each instruction
+    → SpanRingBuffer.push(Span::event("step", ip))
+  → VM completes
+    → SpanRingBuffer.push(Span::end("exec"))
+  → Go bridge drains buffer
+    → Sends to OpenTelemetry collector
+```
+
+### Trace Context Propagation
+
+```
+HTTP request
+  → X-Trace-ID header
+  → Go bridge extracts trace_id
+  → Passes to VM via Event.metadata.trace_id
+  → VM includes trace_id in all spans
+  → Go bridge propagates to downstream services
+```
+
+## Plugin System Deep Dive
+
+### WASM Plugin Loading
+
+```rust
+pub struct PluginLoader {
+    plugins_dir: PathBuf,
+    loaded: HashMap<String, Plugin>,
+}
+
+impl PluginLoader {
+    pub fn load(&mut self, name: &str) -> Result<&Plugin, PluginError> {
+        if let Some(p) = self.loaded.get(name) {
+            return Ok(p);
+        }
+        let path = self.plugins_dir.join(format!("{}.wasm", name));
+        let bytes = std::fs::read(&path)?;
+        let module = wasmtime::Module::new(&engine, &bytes)?;
+        let plugin = Plugin::new(module)?;
+        self.loaded.insert(name.to_string(), plugin);
+        Ok(self.loaded.get(name).unwrap())
+    }
+}
+```
+
+### Plugin Execution
+
+```rust
+impl Plugin {
+    pub fn call(&self, function: &str, input: &[u8]) -> Result<Vec<u8>, PluginError> {
+        let mut store = Store::new(&self.engine, ());
+        let func = self.instance.get_func(&mut store, function)
+            .ok_or(PluginError::FunctionNotFound)?;
+        
+        // Allocate memory in WASM for input
+        let input_ptr = self.alloc_memory(&mut store, input)?;
+        
+        // Call the function
+        func.call(&mut store, &[Val::I32(input_ptr), Val::I32(input.len() as i32)], 
+                  &mut results)?;
+        
+        // Read output from WASM memory
+        let output = self.read_memory(&mut store, results[0].i32()?)?;
+        Ok(output)
+    }
+}
+```

@@ -1149,3 +1149,254 @@ output
     humidity
     alert_level
 ```
+
+---
+
+## Edge Cases & Gotchas
+
+### 1. Variable Scope
+Variables are workflow-scoped, not step-scoped. A variable set in one branch is visible everywhere:
+
+```
+workflow
+    -> step_a
+    if condition
+        -> step_b      # can read/write my_var
+    else
+        -> step_c      # can also read/write my_var
+    -> step_d          # sees whatever my_var was set to
+```
+
+### 2. Null Service Response
+If a service returns null/empty, downstream steps receive the null. Guard with conditions:
+
+```
+workflow
+    -> fetch_data
+    if fetch_data.result != null
+        -> process_data
+    else
+        -> handle_missing
+```
+
+### 3. Parallel Branch Failures
+When one parallel branch fails:
+- The failed branch's result is `null` in the collected array
+- Other branches continue to completion
+- The `onError` handler catches the failure AFTER join
+
+```
+parallel
+    -> might_fail
+    -> will_succeed
+join
+# If might_fail fails, will_succeed still completes
+# onError catches the failure
+```
+
+### 4. Wait Timeout
+If a `wait` times out, execution continues with the timeout error in the context:
+
+```
+wait PaymentConfirmed
+    timeout 30s
+# If timeout, PaymentConfirmed is null
+# Check for timeout in next step
+```
+
+### 5. Compensate Execution Order
+Compensations run in REVERSE order of the original steps:
+
+```
+workflow
+    -> step_a
+    -> step_b    # fails
+    -> step_c    # never ran
+
+compensate
+    step_a -> compensate_a
+    step_b -> compensate_b
+    step_c -> compensate_c
+
+# On failure of step_b:
+# 1. compensate_b runs (step_b's compensator)
+# 2. compensate_a runs (step_a's compensator)
+# 3. compensate_c does NOT run (step_c never executed)
+```
+
+### 6. Emit Before End
+`emit` is fire-and-forget — it does NOT block. Events may be lost if the node shuts down:
+
+```
+workflow
+    -> process_order
+    emit OrderCreated     # async — may not be sent if node crashes
+    -> return_result
+```
+
+For guaranteed delivery, use a service call instead of emit.
+
+### 7. Nested Conditionals
+There is no limit to nesting depth, but deep nesting hurts readability:
+
+```
+# Works but hard to read
+if a
+    if b
+        if c
+            -> deep_step
+
+# Better: flatten with switch or separate flows
+switch level
+    case "deep"
+        -> deep_step
+    case "shallow"
+        -> shallow_step
+```
+
+### 8. Service Type Mixing
+You can mix service types freely in a flow:
+
+```
+service grpc-svc
+    type grpc
+    address svc:50051
+
+service http-svc
+    type http
+    url https://api.example.com
+
+service kafka-svc
+    type kafka
+    brokers kafka:9092
+    topic events
+
+workflow
+    -> grpc-svc.Query      # gRPC call
+    -> http-svc.Fetch      # HTTP call
+    -> kafka-svc.Publish   # Kafka produce
+```
+
+### 9. Duration Suffixes
+All duration fields accept these suffixes:
+
+| Suffix | Meaning | Example |
+|--------|---------|---------|
+| `ms` | Milliseconds | `500ms` |
+| `s` | Seconds | `30s` |
+| `m` | Minutes | `5m` |
+| `h` | Hours | `2h` |
+| `d` | Days | `7d` |
+| `w` | Weeks | `2w` |
+| `M` | Months | `3M` |
+| `y` | Years | `1y` |
+
+### 10. Comments
+Three comment styles:
+
+```
+# Hash comment
+// Double slash comment
+/* Block comment */
+```
+
+Comments are stripped during parsing and have no effect on execution.
+
+---
+
+## Anti-Patterns
+
+### Don't: Orphaned steps
+```
+# BAD — step_b is unreachable
+workflow
+    -> step_a
+    -> step_c
+
+    -> step_b
+
+-> End
+```
+
+### Don't: Emit without handler
+```
+# BAD — nobody listens for OrderCreated
+emit OrderCreated
+
+# BETTER — ensure a consumer exists
+emit OrderCreated  # consumer: notification-service
+```
+
+### Don't: Missing onError
+```
+# BAD — unhandled errors crash the flow
+workflow
+    -> risky_operation
+    -> End
+
+# BETTER — always handle errors
+workflow
+    -> risky_operation
+    -> End
+
+onError
+    Default
+        -> log_and_alert
+```
+
+### Don't: Overly broad compensation
+```
+# BAD — compensates everything even for minor failures
+compensate
+    step_a -> undo_a
+    step_b -> undo_b
+    step_c -> undo_c
+    step_d -> undo_d
+
+# BETTER — only compensate what matters
+compensate
+    step_b -> undo_b    # only the critical step
+```
+
+### Don't: Missing timeout on external calls
+```
+# BAD — could hang forever
+service external
+    type http
+    url https://slow-api.com
+
+# BETTER — always set timeout
+service external
+    type http
+    url https://slow-api.com
+    timeout 10s
+```
+
+---
+
+## Compilation Pipeline
+
+Flow DSL goes through multiple stages:
+
+```
+.flow source
+  → [Lexer] → []Token
+  → [Parser] → *Flow AST
+  → [Analyzer] → []SemanticError
+  → [IR Compiler] → *IR (nodes + edges)
+  → [CodeGen] → Go/Rust/Java/Python source
+```
+
+### Semantic Errors
+
+Common semantic errors caught at compile time:
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `UndefinedService` | Referencing undeclared service | Add `service` declaration |
+| `UndefinedEvent` | Emitting undeclared event | Add `event` declaration |
+| `TypeMismatch` | Assigning wrong type to variable | Fix variable type |
+| `DuplicateStep` | Two steps with same name | Rename one step |
+| `UnreachableCode` | Step after Return | Remove unreachable step |
+| `MissingStart` | No Start step | Add `-> Start` |
+| `MissingEnd` | No End step | Add `-> End` |

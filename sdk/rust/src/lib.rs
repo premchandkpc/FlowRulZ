@@ -1,7 +1,44 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
 use std::time::Duration;
+
+#[derive(Debug)]
+pub enum SdkError {
+    Serialize(serde_json::Error),
+    Http(reqwest::Error),
+}
+
+impl fmt::Display for SdkError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SdkError::Serialize(e) => write!(f, "serialization failed: {e}"),
+            SdkError::Http(e) => write!(f, "http error: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for SdkError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            SdkError::Serialize(e) => Some(e),
+            SdkError::Http(e) => Some(e),
+        }
+    }
+}
+
+impl From<serde_json::Error> for SdkError {
+    fn from(e: serde_json::Error) -> Self {
+        SdkError::Serialize(e)
+    }
+}
+
+impl From<reqwest::Error> for SdkError {
+    fn from(e: reqwest::Error) -> Self {
+        SdkError::Http(e)
+    }
+}
 
 pub const MODE_PUBLISH: u8 = 0;
 pub const MODE_REQUEST: u8 = 1;
@@ -66,7 +103,7 @@ impl FlowRulZClient {
         }
     }
 
-    pub async fn publish(&self, topic: &str, payload: impl Into<serde_json::Value>) -> Result<(), reqwest::Error> {
+    pub async fn publish(&self, topic: &str, payload: impl Into<serde_json::Value>) -> Result<(), SdkError> {
         let evt = Event {
             id: None,
             topic: topic.into(),
@@ -82,7 +119,7 @@ impl FlowRulZClient {
         service: &str,
         payload: impl Into<serde_json::Value>,
         timeout: Option<Duration>,
-    ) -> Result<Vec<u8>, reqwest::Error> {
+    ) -> Result<Vec<u8>, SdkError> {
         let evt = Event {
             id: None,
             topic: service.into(),
@@ -98,7 +135,7 @@ impl FlowRulZClient {
         rule_id: &str,
         payload: impl Into<serde_json::Value>,
         opts: Option<ExecuteOpts>,
-    ) -> Result<Vec<u8>, reqwest::Error> {
+    ) -> Result<Vec<u8>, SdkError> {
         let opts = opts.unwrap_or_default();
         let evt = Event {
             id: None,
@@ -129,8 +166,8 @@ impl FlowRulZClient {
         Ok(())
     }
 
-    async fn send_event(&self, evt: &Event) -> Result<(), reqwest::Error> {
-        let body = serde_json::to_vec(evt).unwrap();
+    async fn send_event(&self, evt: &Event) -> Result<(), SdkError> {
+        let body = serde_json::to_vec(evt)?;
         let mut req = self
             .http
             .post(format!("{}/event", self.cfg.address))
@@ -144,8 +181,8 @@ impl FlowRulZClient {
         Ok(())
     }
 
-    async fn round_trip(&self, evt: &Event, timeout: Option<Duration>) -> Result<Vec<u8>, reqwest::Error> {
-        let body = serde_json::to_vec(evt).unwrap();
+    async fn round_trip(&self, evt: &Event, timeout: Option<Duration>) -> Result<Vec<u8>, SdkError> {
+        let body = serde_json::to_vec(evt)?;
         let mut req = self
             .http
             .post(format!("{}/event", self.cfg.address))
@@ -365,5 +402,40 @@ mod tests {
         let json = serde_json::to_string(&evt).unwrap();
         assert!(json.contains("my-topic"));
         assert!(json.contains("test-id"));
+    }
+
+    #[tokio::test]
+    async fn test_send_event_serialization_error() {
+        use serde::ser::Error as _;
+
+        struct BrokenPayload;
+
+        impl Serialize for BrokenPayload {
+            fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+                Err(S::Error::custom("deliberate serialization failure"))
+            }
+        }
+
+        #[derive(Serialize)]
+        struct BrokenEvent {
+            topic: String,
+            #[serde(flatten)]
+            payload: BrokenPayload,
+            mode: u8,
+        }
+
+        let evt = BrokenEvent {
+            topic: "test".into(),
+            payload: BrokenPayload,
+            mode: MODE_PUBLISH,
+        };
+
+        let result = serde_json::to_vec(&evt);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("deliberate serialization failure"),
+            "unexpected error: {err}"
+        );
     }
 }

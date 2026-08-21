@@ -1,12 +1,10 @@
-# Bytecode Format Specification
+# Bytecode Format
 
-## Overview
+Instruction encoding, opcodes, execution plan structure.
 
-The `ExecutionPlan` is the compiled output of the DSL compiler. Bincode-serialized for FFI transfer. Every operation — publish, request, rule execution — becomes an ExecutionPlan. The difference is only which bytecode gets emitted.
+## Instruction Format
 
-## Instruction Encoding
-
-Each instruction is **8 bytes** packed:
+Each instruction is 8 bytes (64 bits), packed:
 
 ```
 Bit:  63..48  47..32  31..16  15..8  7..0
@@ -16,66 +14,84 @@ Bit:  63..48  47..32  31..16  15..8  7..0
        u16     u16     u16     u8     u8
 ```
 
-### Fields
+| Field | Width | Description |
+|-------|-------|-------------|
+| `opcode` | u8 | Operation code (0-255) |
+| `flags` | u8 | Modifier flags |
+| `a` | u16 | First operand |
+| `b` | u16 | Second operand |
+| `c` | u16 | Third operand |
 
-| Field | Bits | Type | Description |
-|-------|------|------|-------------|
-| `opcode` | 7:0 | u8 | Operation code (0–24) |
-| `flags` | 15:8 | u8 | Per-opcode modifier flags |
-| `a` | 31:16 | u16 | Primary operand |
-| `b` | 47:32 | u16 | Secondary operand |
-| `c` | 63:48 | u16 | Tertiary operand |
+## Complete Opcode Table
 
-### Rust Representation
+| # | Opcode | a | b | c | flags | Description |
+|---|--------|---|---|---|-------|-------------|
+| 0 | `Next` | service_id | timeout_hi | timeout_lo | bit0=has_retry | Synchronous service call |
+| 1 | `Parallel` | count | first_svc | — | — | Fan-out to multiple services |
+| 2 | `Collect` | — | — | — | — | Merge parallel results |
+| 3 | `Fallback` | service_id | — | — | — | Route on failure |
+| 4 | `Gate` | field_const_id | value_const_id | — | gate_op (0-6) | Conditional branch |
+| 6 | `Map` | expr_const_id | — | — | — | Transform payload |
+| 7 | `Emit` | count | first_svc | — | — | Fire-and-forget publish |
+| 8 | `Drop` | — | — | — | — | Halt execution |
+| 9 | `Buffer` | n | — | — | — | Accumulate N messages |
+| 10 | `Key` | field_const_id | — | — | — | Set routing key |
+| 14 | `Async` | service_id | timeout_hi | timeout_lo | bit0=has_retry | Fire-and-forget call |
+| 15 | `Chunk` | count | mode | — | — | Split into chunks |
+| 16 | `Dag` | dag_table_id | — | — | — | DAG execution |
+| 17 | `Jmp` | ip_offset | — | — | — | Unconditional jump |
+| 18 | `Label` | — | — | — | — | Jump target (no-op) |
+| 19 | `SvcArg` | svc_id | — | — | — | Service argument |
+| 21 | `JumpOffset` | offset | — | — | — | Relative jump |
+| 22 | `TypeGuard` | strict | — | — | — | Schema validation |
+| 23 | `SvcCall` | service_id | — | — | — | Service call (alt) |
+| 24 | `Delay` | — | delay_hi | delay_lo | — | Delayed execution |
 
-```rust
-#[repr(C)]
-pub struct Instruction {
-    pub op: OpCode,
-    pub flags: u8,
-    pub a: u16,
-    pub b: u16,
-    pub c: u16,
-}
-```
+## Gate Operators
 
-## Opcode Table
+| Value | Operator | Description |
+|-------|----------|-------------|
+| 0 | `Eq` | Equal |
+| 1 | `Ne` | Not equal |
+| 2 | `Gt` | Greater than |
+| 3 | `Lt` | Less than |
+| 4 | `Gte` | Greater or equal |
+| 5 | `Lte` | Less or equal |
+| 6 | `Contains` | Substring/membership |
 
-| # | Opcode | a | b | c |
-|---|--------|---|---|---|
-| 0 | Next | service_id | timeout_hi | timeout_lo |
-| 1 | Parallel | count | first_svc | — |
-| 2 | Collect | — | — | — |
-| 3 | Fallback | service_id | — | — |
-| 4 | Gate | field_const_id | value_const_id | — |
-| 5 | Split | field_const_id | — | — |
-| 6 | Map | expr_const_id | — | — |
-| 7 | Emit | count | first_svc | — |
-| 8 | Drop | — | — | — |
-| 9 | Buffer | n | — | — |
-| 10 | Key | field_const_id | — | — |
-| 11 | Retry | flags | — | — |
-| 12 | Pipe | — | — | — |
-| 13 | Timeout | — | ms_hi | ms_lo |
-| 14 | Async | service_id | timeout_hi | timeout_lo |
-| 15 | Chunk | count | mode | — |
-| 16 | Dag | dag_table_id | — | — |
-| 17 | Jmp | ip_offset | — | — |
-| 18 | Label | — | — | — |
-| 19 | SvcArg | svc_id | — | — |
-| 20 | RetryData | flags(max_attempts,strategy) | fixed_ms_hi | fixed_ms_lo |
-| 21 | JumpOffset | offset | — | — |
-| 22 | TypeGuard | strict(0/1) | — | — |
-| 23 | SvcCall | service_id | — | — |
-| 24 | Delay | delay_ms_hi | delay_ms_lo | — |
+## Retry Strategies
 
-### TypeGuard
+| Value | Strategy | Behavior |
+|-------|----------|----------|
+| 0 | `Exponential` | 100ms → 200ms → 400ms (doubles) |
+| 1 | `Linear` | 100ms → 200ms → 300ms (adds 100ms) |
+| 2 | `Fixed` | Configurable fixed delay |
 
-Opcode 22 validates the message body against the schema stored in `ExecutionPlan.schema`. When `strict=1`, a missing schema produces an error. Reads the plan's schema directly (no field/value operands). Validates enum values against allowed set.
+## Chunk Modes
 
-The schema is also used by the compiler's pre-pass for **compile-time type inference** — validating Gate operators and Map expressions against declared field types before any bytecode is emitted (`type_check_gate()` and `type_check_map()` in `runtime/src/dsl/compiler.rs`).
+| Value | Mode | Behavior |
+|-------|------|----------|
+| 0 | `Sequential` | Process chunks one at a time |
+| 1 | `Parallel` | Process chunks concurrently |
 
-## ExecutionPlan
+## DAG Failure Policies
+
+| Value | Policy | Behavior |
+|-------|--------|----------|
+| 0 | `AbortAll` | Cancel all on first failure |
+| 1 | `ContinueOthers` | Let non-dependent finish |
+| 2 | `SkipDependents` | Skip downstream of failed |
+
+## DAG Merge Strategies
+
+| Value | Strategy | Behavior |
+|-------|----------|----------|
+| 0 | `LastWins` | Last result overwrites |
+| 1 | `ArrayConcat` | Concatenate results |
+| 2 | `DeepMerge` | Recursive merge |
+| 3 | `ExplicitMap` | Map by node name |
+
+## Execution Plan Structure
 
 ```rust
 pub struct ExecutionPlan {
@@ -93,66 +109,43 @@ pub struct ExecutionPlan {
 }
 ```
 
-## Event & ExecutionContext
-
-The VM operates on an `ExecutionContext` rather than a raw body:
+### Instruction
 
 ```rust
-pub struct Event {
-    pub id: String,
-    pub topic: String,
-    pub payload: Vec<u8>,
-    pub headers: HashMap<String, String>,
-    pub metadata: EventMetadata,
-}
-
-pub enum Mode {
-    Publish = 0,
-    Request = 1,
-    Reply = 2,
-    Stream = 3,
-    Workflow = 4,
-    Internal = 5,
-}
-
-pub struct ExecutionContext {
-    pub event: Event,
-    pub body: Vec<u8>,
-    pub variables: HashMap<String, Vec<u8>>,
-    pub outputs: HashMap<String, Vec<u8>>,
-    pub headers: HashMap<String, String>,
-    pub failed: bool,
-    pub errors: Vec<String>,
-    pub hop_count: u16,
-    pub retry_count: u32,
-    pub deadline_ms: u64,
+pub struct Instruction {
+    pub op: u8,
+    pub flags: u8,
+    pub a: u16,
+    pub b: u16,
+    pub c: u16,
 }
 ```
 
-## ConstantPool
+### Constant Pool
 
 ```rust
 pub struct ConstantPool {
-    pub strings: Vec<String>,
-    pub lookup: HashMap<String, u16>,
+    strings: Vec<String>,
 }
 ```
 
-## ServiceTable
+- Indexed by u16
+- Deduplicated on insert
+- Used for field names, expressions, values
+
+### Service Table
 
 ```rust
 pub struct ServiceTable {
-    pub services: Vec<ServiceEntry>,
-    pub lookup: HashMap<String, u16>,
-}
-
-pub struct ServiceEntry {
-    pub id: u16,
-    pub name: String,
+    names: Vec<String>,
 }
 ```
 
-## DAGTable
+- Indexed by u16
+- Maps service_id to service name
+- Used by Go bridge to resolve actual service endpoints
+
+### DAG Table
 
 ```rust
 pub struct DAGTable {
@@ -166,28 +159,13 @@ pub struct DAGTable {
 }
 
 pub struct DAGNode {
-    pub id: u16,
     pub service_id: u16,
+    pub layer: u16,
     pub parent_ids: Vec<u16>,
-}
-
-pub enum DAGFailurePolicy {
-    AbortAll,
-    ContinueOthers,
-    SkipDependents,
-}
-
-pub enum MergeStrategy {
-    LastWins,
-    ArrayConcat,
-    DeepMerge,
-    ExplicitMap,
 }
 ```
 
-`parent_ids` on DAGNode is populated during compile from the deps map, with `#[serde(default)]` for backward compatibility.
-
-## Schema & ResolvedType
+### Schema
 
 ```rust
 pub struct Schema {
@@ -199,79 +177,126 @@ pub struct FieldSchema {
     pub r#type: ResolvedType,
     pub required: bool,
 }
-
-pub enum ResolvedType {
-    String,
-    Integer,
-    Float,
-    Boolean,
-    Object,
-    Array,
-    Null,
-    Any,
-    Enum(Vec<String>),  // enum[val1|val2|...]
-}
 ```
 
-**Compile-time use:** `Schema` is read by the compiler's pre-pass to type-check Gate operators (`type_check_gate()`) and Map expressions (`type_check_map()`) before final bytecode emission.
+### ResolvedType
 
-**`ResolvedType::Any` semantics at compile time:**
-- `Any` fields pass all type checks: ordering operators (`>`, `<`, `>=`, `<=`), `contains`, and equality (`==`, `!=`) are all allowed
-- No compile-time error is emitted for `Any` fields regardless of Gate operator
-- This defers type safety to runtime TypeGuard, which accepts any value for `Any` fields
-- Intended as an escape hatch for fields that need to be declared for routing/documentation but don't need type enforcement
-
-**`ResolvedType::Any` semantics at runtime:**
-- `TypeGuard` validates the field exists (if required) but accepts any JSON value type
-- `Schema::is_valid()` returns `true` for any `Any` field regardless of the actual value
-
-Enum values are validated at runtime by the TypeGuard opcode.
-
-### SvcCall
-
-Opcode 23 is a direct service call dispatched by the VM but **never emitted by the compiler**. Reserved for future use or manual plan construction.
-
-### Delay
-
-Opcode 24 yields `StepResult::Delay` via the `step()` execution path. Used for deferred execution. At the VM level it is a no-op in `run()` mode — handled via the step API. `delay_ms` is encoded in the `b` and `c` fields (hi/lo u16).
-
-### RetryConfig / ChunkConfig
-
-```rust
-pub struct RetryConfig {
-    pub max_attempts: u8,
-    pub strategy: RetryStrategy,  // Exp | Linear | Fixed
-    pub fixed_ms: u32,
-}
-
-pub struct ChunkConfig {
-    pub count: u8,
-    pub mode: ChunkMode,  // Seq | Par
-}
-```
+| Variant | Description |
+|---------|-------------|
+| `String` | Text |
+| `Integer` | Integer |
+| `Float` | Floating point |
+| `Boolean` | Boolean |
+| `Object` | JSON object |
+| `Array` | JSON array |
+| `Null` | Null value |
+| `Any` | Any type |
+| `Enum(Vec<String>)` | Restricted values |
 
 ## Serialization
 
-Bincode across FFI boundary:
+Plans are serialized using bincode for compact binary encoding:
 
-```rust
-let bytes = bincode::serialize(&plan).unwrap();
-let plan: ExecutionPlan = bincode::deserialize(&bytes).unwrap();
+```
+DSL string → Lexer → Tokens → Parser → Pipeline → Optimizer → Compiler → ExecutionPlan → bincode → bytes
+```
+
+### Deserialization
+
+```
+bytes → bincode → ExecutionPlan → VM execution
+```
+
+## Instruction Examples
+
+### Next (service call)
+
+```
+n:validate t500
+
+opcode: 0 (Next)
+a: service_id for "validate"
+b: 500 >> 8 = 1 (timeout high byte)
+c: 500 & 0xFF = 244 (timeout low byte)
+flags: 0 (no retry)
+```
+
+### Gate
+
+```
+g:amount>10000
+
+opcode: 4 (Gate)
+a: const_id for "amount"
+b: const_id for "10000"
+c: 0
+flags: 2 (Gt)
+```
+
+### Parallel
+
+```
+p:fraud,inventory
+
+opcode: 1 (Parallel)
+a: 2 (count)
+b: service_id for "fraud"
+c: 0
+flags: 0
+```
+
+### Map
+
+```
+m:{status: "processed"}
+
+opcode: 6 (Map)
+a: const_id for the JMESPath expression
+b: 0
+c: 0
+flags: 0
+```
+
+### Emit
+
+```
+e:notify,analytics
+
+opcode: 7 (Emit)
+a: 2 (count)
+b: service_id for "notify"
+c: 0
+flags: 0
 ```
 
 ## Complexity Scoring
 
-Computed at compile time by `calc_complexity()`:
+Each instruction contributes to the plan's complexity score:
 
 | Opcode | Score |
 |--------|-------|
-| Next, Async | 10 |
-| Parallel, DAG | 20 |
+| Next | 10 |
+| Async | 10 |
+| Parallel | 20 |
+| DAG | 20 |
 | Chunk | 25 |
+| Collect | 1 |
+| Fallback | 1 |
 | Gate | 5 |
 | Map | 3 |
 | Emit | 8 |
 | Buffer | 15 |
-| All others | 1 |
+| Drop | 1 |
+| Key | 1 |
+| Label | 1 |
+| Jmp | 1 |
+| TypeGuard | 1 |
+| Delay | 1 |
 
-Used by the Go engine for lane routing (`flowrulz_plan_complexity` FFI).
+The total score determines lane assignment:
+
+| Score | Lane | Concurrency |
+|-------|------|-------------|
+| < 10 | Fast | 50 |
+| 10-50 | Normal | 20 |
+| > 50 | Heavy | 5 |

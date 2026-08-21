@@ -1,111 +1,122 @@
-# DSL Syntax Specification
+# Bytecode DSL Reference
+
+The compact pipeline DSL compiles to Rust VM bytecode. Single-line, infix syntax.
 
 ## Overview
 
-A compact, single-line DSL for defining message routing pipelines. The compiler compiles DSL → AST → optimized AST → bytecode `ExecutionPlan`.
+```
+<op>:<args> <op>:<args> ...
+```
 
-## Pipeline Structure
-
-A pipeline is a sequence of **operations** separated by spaces:
+Operations execute left-to-right. Output of one feeds the next. Use `|` as a visual separator (removed by optimizer).
 
 ```
-[schema:{...}] [t<timeout>] <operations...>
+t500 n:validate | p:fraud,inventory | c | f:dlq | n:fulfill | e:notify,analytics
 ```
 
 ## Operations
 
+### Service Calls
+
+| Op | Syntax | Description | Bytecode |
+|----|--------|-------------|----------|
+| Next | `n:<service>` | Synchronous call — blocks until response | `OpCode::Next` |
+| Async | `a:<service>` | Fire-and-forget — returns immediately | `OpCode::Async` |
+| Emit | `e:<svc1>,<svc2>` | Publish to one or more services | `OpCode::Emit` |
+
+```
+n:validate          # call "validate", wait for result
+a:audit-log         # call "audit-log", don't wait
+e:notify,analytics  # publish to both "notify" and "analytics"
+```
+
+### Parallelism
+
+| Op | Syntax | Description | Bytecode |
+|----|--------|-------------|----------|
+| Parallel | `p:<svc1>,<svc2>` | Fan-out to multiple services concurrently | `OpCode::Parallel` |
+| Collect | `c` | Merge parallel results into array | `OpCode::Collect` |
+
+```
+p:fraud,inventory   # call both simultaneously
+c                   # merge their results
+```
+
+### Control Flow
+
+| Op | Syntax | Description | Bytecode |
+|----|--------|-------------|----------|
+| Gate | `g:<field><op><value>` | Conditional branch | `OpCode::Gate` |
+| Fallback | `f:<service>` | Route to service on failure | `OpCode::Fallback` |
+| Drop | `d` | Halt execution immediately | `OpCode::Drop` |
+| Label | `<name>:` | Define a jump target | `OpCode::Label` |
+| Jump | `j:<label>` | Unconditional jump to label | `OpCode::Jmp` |
+
+```
+g:amount>10000 n:manual-review    # only if amount > 10000
+f:dlq                             # if anything fails, send to DLQ
+start: n:auth j:end               # labels for structured jumps
+```
+
+### Data Operations
+
+| Op | Syntax | Description | Bytecode |
+|----|--------|-------------|----------|
+| Map | `m:<expr>` | Transform payload via JMESPath | `OpCode::Map` |
+| Key | `k:<field>` | Set routing key from field | `OpCode::Key` |
+| Split | `s:<field>` | Split array by field | `OpCode::Key` |
+| Buffer | `b<N>` | Accumulate N messages before processing | `OpCode::Buffer` |
+| Chunk | `chunk:<N>:<mode>` | Split into chunks of N | `OpCode::Chunk` |
+
+```
+m:{status: "processed"}           # transform to new shape
+k:order_id                        # route by order_id field
+b10                               # buffer 10 messages, then process
+chunk:100:seq                     # split into chunks of 100, sequentially
+```
+
+### DAG
+
+| Op | Syntax | Description | Bytecode |
+|----|--------|-------------|----------|
+| DAG | `dag:{<edges>}` | Directed acyclic graph execution | `OpCode::Dag` |
+
+```
+dag:{enrich:[],validate:[enrich],store:[validate],notify:[store]}
+```
+
+Format: `dag:{node:[parent1,parent2],...}` — nodes without parents execute first.
+
+### Schema
+
+| Op | Syntax | Description | Bytecode |
+|----|--------|-------------|----------|
+| Schema | `schema:{<fields>}` | Type-guard the incoming payload | `OpCode::TypeGuard` |
+
+```
+schema:{!order_id:string,!amount:float,metadata:any}
+```
+
+Fields prefixed with `!` are required.
+
+### Modifiers
+
 | Op | Syntax | Description |
 |----|--------|-------------|
-| **Next** | `n:<service>` | Forward message to service |
-| **Async** | `a:<service>` | Fire-and-forget with no wait |
-| **Parallel** | `p:<svc1>,<svc2>,...` | Fan-out to multiple services |
-| **Collect** | `c` | Collect parallel results into JSON array |
-| **Fallback** | `f:<service>` | Route on failure |
-| **Gate** | `g:<field><op><value>` | Conditional jump |
-| **Split** | `s:<field>` | Split array message by field |
-| **Map** | `m:<expr>` | Transform message fields |
-| **WASM** | `w:<plugin>.<func>` | Call WASM plugin function |
-| **Emit** | `e:<svc1>,<svc2>` | Fire-and-forget publish |
-| **Drop** | `d` | Halt processing (dead end) |
-| **Key** | `k:<field>` | Routing key field |
-| **Pipe** | `\|` | Pass-thru (nop, removed by optimizer) |
-| **Timeout** | `t<ms>` | Set timeout for subsequent calls |
-| **Retry** | `r<N>:<strategy>` | Attach retry policy to preceding call |
-| **Chunk** | `chunk:<N>:<mode>` | Split payload into chunks |
-| **DAG** | `dag:{<edges>}` | Directed acyclic graph routing |
-| **Schema** | `schema:{<field specs>}` | Attach type schema (TypeGuard) |
-| **Label** | `<name>:` | Target for Jmp |
-| **Jmp** | `j:<label>` | Unconditional jump |
-
-## Detailed Reference
-
-### Next (Service Call)
+| Retry | `r<N>:<strategy>` | Retry policy for preceding call |
+| Timeout | `t<ms>` | Timeout in milliseconds for preceding call |
+| Delay | `delay:<ms>` | Delay execution by N milliseconds |
 
 ```
-n:<service_name[.method]>
+n:validate t500           # 500ms timeout on validate
+r3:exp                    # 3 retries, exponential backoff
+r5:lin                    # 5 retries, linear backoff
+r3:fixed:200              # 3 retries, 200ms fixed delay
+delay:5000 n:svc          # wait 5s before calling svc
 ```
 
-Synchronous call to a named service. Waits for response. Optionally include a method suffix to target a specific method on the service:
+## Gate Operators
 
-```
-n:payment              # calls any method on payment
-n:payment.authorize    # calls the authorize method on payment
-```
-
-The method name is embedded in the service string and split on the Go side via `bridge.ParseServiceMethod()`. No service code changes needed.
-
-### Async
-
-```
-a:<service_name>
-```
-
-Non-blocking call; execution continues immediately.
-
-### Timeout
-
-```
-t<milliseconds>
-```
-
-Sets the timeout for the next service call. The optimizer hoists timeouts to precede their associated `n:` operation.
-
-**Examples:**
-```
-t500 n:validate
-t1000 n:ship
-```
-
-### Retry
-
-```
-r<N>:<strategy>[:<param>]
-```
-
-Attaches a retry policy to the preceding service call. Must directly follow a Next or Fallback.
-
-**Strategies:**
-| Strategy | Syntax | Behavior |
-|----------|--------|----------|
-| Exponential | `r3:exp` | 2^x backoff (1s, 2s, 4s) |
-| Fixed | `r3:fixed:200` | Fixed 200ms interval |
-| Linear | `r3:lin:500` | Linear 500ms, 1000ms, 1500ms |
-
-**Examples:**
-```
-n:validate r3:exp
-n:payment r3:fixed:100
-```
-
-### Gate (Conditional Branch)
-
-```
-g:<field><operator><value> <on-true> [f:<on-false>]
-```
-
-Evaluates a JSON field against a value. On match, executes the next operation; on failure, jumps to Fallback. Field path navigation emits a structured `FieldNotFound` error (not silent null) for missing intermediate fields.
-
-**Operators:**
 | Op | Meaning |
 |----|---------|
 | `==` | Equal |
@@ -114,316 +125,130 @@ Evaluates a JSON field against a value. On match, executes the next operation; o
 | `<` | Less than |
 | `>=` | Greater or equal |
 | `<=` | Less or equal |
-| `contains` | Substring/array membership |
-
-**Field paths** support dotted navigation:
-```
-g:user.role==admin n:admin-panel f:user-panel
-g:amount>10000 n:manual-review f:auto-approve
-g:tags.containsurgent n:priority-queue
-```
-
-**Compile-time type checking:** When a `schema:{...}` is present, the compiler validates Gate operators against field types at compile time:
-- `>`, `<`, `>=`, `<=` require the field type to be `int`, `float`, or `string` (rejects `bool`, `object`, `array`)
-- `contains` requires the field type to be `string` or `array`
-- `==`, `!=` are always allowed (any scalar)
-- Fields not in the schema are allowed (assumed dynamic)
-- Errors are reported as `TypeMismatch` during compilation and surfaced via the admin validate endpoint
-
-### Pipe
+| `contains` | Substring or list membership |
 
 ```
-<operation1> | <operation2>
+g:status==active n:activate
+g:role!=admin f:access-denied
+g:amount>10000 n:manual-review
+g:tags.contains vip n:priority-queue
 ```
 
-A no-op separator. The optimizer removes pipe nodes.
+## Retry Strategies
 
-### Parallel / Collect
+| Strategy | Syntax | Behavior |
+|----------|--------|----------|
+| Exponential | `r3:exp` | 100ms → 200ms → 400ms (doubles each attempt) |
+| Linear | `r5:lin` | 100ms → 200ms → 300ms → 400ms → 500ms |
+| Fixed | `r3:fixed:200` | 200ms → 200ms → 200ms |
 
-```
-p:<svc_a>,<svc_b>,<svc_c> c
-```
+## Chunk Modes
 
-Fan-out to multiple services in parallel. `c` (collect) merges all responses into a JSON array under the `_parallel` field.
+| Mode | Syntax | Behavior |
+|------|--------|----------|
+| Sequential | `chunk:10:seq` | Process chunks one at a time |
+| Parallel | `chunk:4:par` | Process chunks concurrently |
 
-**Validation:** `c` must immediately follow a Parallel.
+## Schema Types
 
-### Fallback
+| Type | Supports |
+|------|----------|
+| `string` | Ordering, contains |
+| `int` | Ordering, numeric comparisons |
+| `float` | Ordering, numeric comparisons |
+| `bool` | Equality only |
+| `object` | Equality only |
+| `array` | Contains only |
+| `null` | Equality only |
+| `any` | All operators pass |
+| `enum[v1\|v2]` | Equality against allowed values |
 
-```
-f:<service_name>
-```
+## Built-in Map Functions
 
-Executed when the preceding operation fails.
+### String
 
-### Split
+`lower(s)`, `upper(s)`, `trim(s)`, `length(s)`, `substring(s,start,end)`, `replace(s,from,to)`, `split(s,delim)`, `concat(a,b)`, `contains(list,val)`
 
-```
-s:<field>
-```
+### Numeric
 
-Split a message by the specified field. Each element of the array field is processed independently.
+`abs(n)`, `round(n)`, `ceil(n)`, `floor(n)`, `min(a,b)`, `max(a,b)`
 
-### Map (Field Transformation)
+### Type Conversion
 
-```
-m:<expr>
-```
+`to_string(v)`, `parse_int(s)`, `parse_float(s)`, `parse_bool(s)`, `typeof(v)`
 
-Evaluates an expression and transforms the message. Expressions use dots for field paths and support function calls.
+### Encoding
 
-**Built-in functions (31 total):**
+`base64(s)`, `base64_decode(s)`, `hash(s)`, `json(s)`
 
-| Function | Description |
-|----------|-------------|
-| `uuid()` | Generate UUID v4 |
-| `now()` | Current ISO timestamp |
-| `epoch()` | Unix timestamp (seconds since epoch) |
-| `lower(s)` | Lowercase string |
-| `upper(s)` | Uppercase string |
-| `trim(s)` | Trim whitespace |
-| `length(s)` | String length |
-| `concat(a, b)` | Concatenate strings |
-| `base64(s)` | Base64 encode |
-| `json(s)` | Parse JSON string |
-| `substring(s, start, end)` | Substring |
-| `replace(s, from, to)` | String replace |
-| `to_string(v)` | Coerce any value to string |
-| `parse_int(s)` | Parse string → integer |
-| `parse_float(s)` | Parse string → float |
-| `coalesce(a, b)` | First non-null value |
-| `default(field, val)` | Field or default value if null/missing |
-| `contains(list, val)` | Array membership check |
-| `keys(obj)` | Object key extraction |
-| `merge(a, b)` | Deep merge two objects |
-| `hash(s)` | Consistent hash (u64) |
-| `abs(n)` | Absolute value |
-| `round(n)` | Round to nearest integer |
-| `ceil(n)` | Ceiling |
-| `floor(n)` | Floor |
-| `min(a, b)` | Minimum of two numbers |
-| `max(a, b)` | Maximum of two numbers |
-| `base64_decode(s)` | Base64 decode |
-| `parse_bool(s)` | Parse string → bool ("true"/"false"/"1"/"0") |
-| `split(s, delim)` | Split string by delimiter into array |
-| `typeof(v)` | Runtime type name ("null"/"bool"/"int"/"float"/"string"/"array"/"object") |
+### Object/Array
 
-`call_builtin` takes `&[serde_json::Value]` (not `&[&str]`).
+`keys(obj)`, `merge(a,b)`, `coalesce(a,b)`, `default(field,val)`
 
-**Examples:**
-```
-m:.processed_at=now()
-m:.user_id=.id
-m:.display=upper(.name)
-m:.greeting='hello ' + .name
-m:.payload=json(.raw_json)
-m:.hash=hash(.email)
-```
+### Utility
 
-### WASM Plugin Call
+`uuid()`, `now()`, `epoch()`
+
+## Complete Examples
+
+### Order Processing Pipeline
 
 ```
-w:<plugin_name>.<function_name>
+t500 n:validate | p:fraud,inventory | c | g:fraud_score>0.8 f:dlq | n:fulfill | e:notify,analytics
 ```
 
-Calls a WASM plugin function with the current message body as input. The plugin is a compiled WebAssembly module registered at startup via `FLOWRULZ_PLUGIN_DIR`. The function receives the body bytes and returns transformed bytes.
+### High-Value Order Review
 
-**Calling convention:**
-- Plugin exports `memory` and `process(ptr: i32, len: i32) → i64`
-- Host writes input at the end of linear memory, passes `(input_offset, input_len)`
-- Function returns `(output_ptr << 32) | output_len` packed in i64
-- Execution is sandboxed — 100k fuel limit prevents infinite loops
-
-**Examples:**
-```
-schema:{!msg:string} w:sig.verify n:svc
-schema:{!data:string} w:transform.enhance() e:notify
-```
-
-The lexer treats `w:` identically to `m:` — it emits a `Token::Map` with the full expression string. At runtime, `exec_map` detects the `w:` prefix and dispatches to the WASM plugin runtime instead of evaluating a JSON expression.
-
-### Emit
-
-```
-e:<service_a>,<service_b>,...
-```
-
-Fire-and-forget publish to one or more services.
-
-### Drop
-
-```
-d
-```
-
-Terminates pipeline execution immediately.
-
-### Key (Routing Key)
-
-```
-k:<field>
-```
-
-Sets the routing key used for partitioning.
-
-### Chunk
-
-```
-chunk:<N>:<mode> <operation>
-```
-
-Splits the message into chunks of size N before the subsequent operation.
-
-**Modes:**
-| Mode | Description |
-|------|-------------|
-| `seq` | Process chunks sequentially |
-| `par` | Process chunks in parallel |
-
-### DAG (Directed Acyclic Graph)
-
-```
-dag:{<node>: [<dependencies>], ...} e:<output>
-```
-
-Declarative DAG routing. Each node is a service; dependencies are listed as a comma-separated list.
-
-**Syntax:**
-```
-dag:{A:[],B:[A],C:[A],D:[B,C]} e:output
-```
-
-Creates:
-```
-Layer 0: A
-Layer 1: B, C (parallel, depend on A)
-Layer 2: D (depends on B and C)
-```
-
-After all layers complete, results are merged. `e:<service>` emits the merged result.
-
-**Validation at compile time:**
-- Cycle detection (error on cycles)
-- Unknown service references
-- Compile-time DAGTable fields: `failure_policy` (AbortAll/ContinueOthers/SkipDependents), `node_timeouts`, `merge_strategy` (LastWins/ArrayConcat/DeepMerge/ExplicitMap), `distributed`
-
-### Schema (Type Guard)
-
-```
-schema:{field:type,!required_field:type}
-```
-
-Attaches a type schema to the pipeline. The compiler emits a `TypeGuard` opcode that validates the incoming message body against the schema at runtime.
-
-**Type tags:**
-| Tag | Rust Type |
-|-----|-----------|
-| `string` | `ResolvedType::String` |
-| `int` | `ResolvedType::Integer` |
-| `float` | `ResolvedType::Float` |
-| `bool` | `ResolvedType::Boolean` |
-| `object` | `ResolvedType::Object` |
-| `array` | `ResolvedType::Array` |
-| `null` | `ResolvedType::Null` |
-| `any` | `ResolvedType::Any` |
-| `enum[val1\|val2\|...]` | `ResolvedType::Enum(Vec<String>)` |
-
-Fields prefixed with `!` are required (error if missing). Non-required fields default to `Null` when absent.
-
-**Compile-time type inference:** When a schema is present, the compiler runs a pre-pass that type-checks all Gate and Map operations before emitting bytecode. See "Compile-time Type Checking" above for Gate rules. For Map expressions, `concat()` and `+` operators require all field arguments to be `string` type. Fields not declared in the schema are assumed dynamic (no compile-time check).
-
-**`any` escape hatch:** Fields typed as `any` pass all compile-time checks silently — ordering, contains, and equality operators are all allowed. Type errors are deferred to runtime TypeGuard, which validates only that the field exists (if required) but accepts any value. This is the recommended pattern for fields you route on but don't need type safety for:
-
-```
-schema:{!order_id:string,!amount:int,metadata:any}
-  g:amount>10000 n:manual-review f:auto-approve
-```
-
-Here `amount` gets compile-time type checking on the `>` operator; `metadata` passes through as opaque.
-
-### When To Use Schema
-
-Schema is **optional** — the runtime handles opaque `Vec<u8>` payloads without it:
-
-- **Use schema when:** you own both the producer and the DSL rule; you have Gate operators on typed fields (`>`, `<`, `>=`, `<=`); you need enum validation; it's a boundary/ingress rule (first hop in the pipeline)
-- **Skip schema when:** you're routing third-party payloads; the shape varies per event; you're doing pure routing (`g:`, `e:`, `n:`) with no type-sensitive operators; payload is non-JSON (Protobuf, Avro, binary)
-
-**Examples:**
-```
-schema:{name:string,!age:int,!amount:float} n:validate
-schema:{id:string} n:process
-```
-
-### Labels and Jumps
-
-```
-<label_name>: <operation> j:<label_name>
-```
-
-Labels mark a position in the pipeline. Jumps transfer control unconditionally.
-
-**Example:**
-```
-start: n:auth g:role==admin n:admin-panel j:end n:user-panel end: e:done
-```
-
-## Full Pipeline Examples
-
-**Simple validation and routing:**
-```
-t500 n:validate t1000 p:fraud,inventory c f:dlq n:fulfill e:notify,analytics
-```
-
-**Gate with retry:**
 ```
 g:amount>10000 n:manual-review r3:exp f:auto-reject
 ```
 
-**DAG with downstream emit:**
+### DAG with Dependencies
+
 ```
-dag:{enrich:[],validate:[enrich],store:[validate]} e:audit-log
+dag:{enrich:[],validate:[enrich],store:[validate],notify:[store]} e:audit-log
 ```
 
-**Schema-typed pipeline:**
+### Schema-Validated Pipeline
+
 ```
 schema:{!order_id:string,!amount:float,!user:string} t500 n:validate e:notify
 ```
 
-## Complexity Scoring
+### Labeled Jump Flow
 
-`complexity_score` is computed at compile time for lane routing:
+```
+start: n:auth g:role==admin n:admin-panel j:end n:user-panel end: e:done
+```
 
-| Opcode | Score |
-|--------|-------|
-| Next, Async | 10 |
-| Parallel, DAG | 20 |
-| Chunk | 25 |
-| Gate | 5 |
-| Map, WASM | 3 |
-| Emit | 8 |
-| Buffer | 15 |
-| All others | 1 |
+### Batch Processing
 
-**Lane assignment:**
-| Score | Lane |
-|-------|------|
-| < 10 | fast |
-| ≤ 50 | normal |
-| > 50 | heavy |
+```
+chunk:10:seq n:storage
+```
 
-## Error Handling
+### Delayed Execution
 
-| Error | Cause |
-|-------|-------|
-| Empty pipeline | No operations provided |
-| Invalid token | Unrecognized syntax |
-| FieldNotFound | Missing field in path navigation |
-| Collect without parallel | `c` not preceded by `p:` |
-| Retry without service | `r:` not following a call |
-| Unknown service in DAG | Dependency references missing node |
-| Cycle detected | DAG has directed cycles |
-| Duplicate label | Label name used twice |
-| Undefined jump target | `j:` references non-existent label |
-| SchemaParseError | Invalid schema field spec |
-| TypeGuard | Runtime type validation failure |
-| TypeMismatch | Compile-time type check failure (operator/field type incompatibility) |
+```
+delay:5000 n:svc
+```
+
+### Buffered Aggregation
+
+```
+b100 m:{batch: @, count: length(@)} n:analytics
+```
+
+## Bytecode Representation
+
+Each operation compiles to an 8-byte instruction:
+
+```
+Bit:  63..48  47..32  31..16  15..8  7..0
+      +-------+-------+-------+------+------+
+      |   c   |   b   |   a   |flag  |opcode|
+      +-------+-------+-------+------+------+
+       u16     u16     u16     u8     u8
+```
+
+See [bytecode-format.md](bytecode-format.md) for full instruction set details.

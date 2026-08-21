@@ -31,6 +31,9 @@ func (b *NodeBuilder) WithDefaults() *NodeBuilder {
 }
 
 func (b *NodeBuilder) Build() (*node.ProdNode, error) {
+	if err := b.cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("bootstrap: invalid config: %w", err)
+	}
 	if len(b.errs) > 0 {
 		return nil, fmt.Errorf("bootstrap: %d errors: %v", len(b.errs), b.errs[0])
 	}

@@ -1,6 +1,7 @@
 package node
 
 import (
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -163,6 +164,35 @@ func (c *Config) NumPartitions() int {
 // HasTLS returns true if TLS certificate and key are configured.
 func (c *Config) HasTLS() bool {
 	return c.TLSCertFile != "" && c.TLSKeyFile != ""
+}
+
+// Validate checks the config for unsafe or invalid combinations.
+func (c *Config) Validate() error {
+	if c.NodeID == "" {
+		return fmt.Errorf("node ID is required")
+	}
+	if c.NodeID == "node-1" && len(c.Seeds) > 0 {
+		// Warn but don't fail — "node-1" is a valid ID in small clusters
+	}
+	if c.TLSCertFile != "" && c.TLSKeyFile == "" {
+		return fmt.Errorf("TLS key file is required when certificate is configured")
+	}
+	if c.TLSKeyFile != "" && c.TLSCertFile == "" {
+		return fmt.Errorf("TLS certificate file is required when key is configured")
+	}
+	if len(c.KafkaBrokers) > 0 && c.KafkaGroupID == "" {
+		return fmt.Errorf("Kafka group ID is required when brokers are configured")
+	}
+	if c.AgentMinAgents <= 0 {
+		return fmt.Errorf("agent min agents must be > 0")
+	}
+	if c.AgentMaxAgents < c.AgentMinAgents {
+		return fmt.Errorf("agent max agents must be >= min agents")
+	}
+	if c.AgentQueueSize <= 0 {
+		return fmt.Errorf("agent queue size must be > 0")
+	}
+	return nil
 }
 
 // AdvertiseHost returns the host portion of the advertise address.

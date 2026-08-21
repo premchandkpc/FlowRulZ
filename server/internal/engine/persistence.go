@@ -7,8 +7,9 @@ import (
 )
 
 type rulePersistence struct {
-	ID       string               `json:"id"`
-	Versions []versionPersistence `json:"versions"`
+	ID            string               `json:"id"`
+	Versions      []versionPersistence `json:"versions"`
+	ActiveVersion int                  `json:"active_version"`
 }
 
 type versionPersistence struct {
@@ -31,7 +32,7 @@ func (e *Engine) loadRules() {
 		rule := &Rule{
 			ID:            r.ID,
 			Versions:      make([]*VersionedPlan, len(r.Versions)),
-			ActiveVersion: len(r.Versions) - 1,
+			ActiveVersion: r.ActiveVersion,
 		}
 		for i, v := range r.Versions {
 			result, err := e.compiler.Compile(v.DSL, r.ID)
@@ -50,6 +51,9 @@ func (e *Engine) loadRules() {
 			}
 		}
 		if len(rule.Versions) > 0 {
+			if rule.ActiveVersion < 0 || rule.ActiveVersion >= len(rule.Versions) {
+				rule.ActiveVersion = len(rule.Versions) - 1
+			}
 			e.rules[r.ID] = rule
 		}
 	}
@@ -71,7 +75,7 @@ func (e *Engine) saveRules() {
 				Lane:    v.Lane,
 			}
 		}
-		rules = append(rules, rulePersistence{ID: r.ID, Versions: vps})
+		rules = append(rules, rulePersistence{ID: r.ID, Versions: vps, ActiveVersion: r.ActiveVersion})
 	}
 	e.mu.RUnlock()
 	data, err := json.Marshal(rules)
